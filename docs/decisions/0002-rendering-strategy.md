@@ -1,6 +1,7 @@
 # ADR 0002: Chrome-style CEF window with GPUI interface in attached child windows
 
-- Status: accepted, gated by spike S1 (Phase 1)
+- Status: accepted; S1 run in Phase 1 (layering revised 2026-11-18, see
+  "S1 outcome")
 - Date: 2026-11-18
 - Deciders: owner (kuya-egg); principal engineer (agent)
 
@@ -57,8 +58,8 @@ an open-ended reimplementation of Chrome.
 - **Engine seam.** `aeri-cef` owns `CefWindow` creation and exposes the
   window's `NSWindow`. The GPUI layer attaches its child windows and keeps
   their frames in sync with layout.
-- **Tabs.** Each tab is a `CefBrowser`, and switching tabs swaps the browser
-  view in the window. S1 must prove the swap is cheap and flicker-free.
+- **Tabs.** Each tab is a `CefBrowser` in its own Chrome-style `CefWindow`
+  (see "S1 outcome": views cannot be swapped in one window).
 - **Positioning Chrome UI.** Extension popups, the Web Store install prompt,
   and permission and passkey sheets are Chrome UI that Aeri positions but
   does not draw. Visual consistency is limited to what Chrome allows.
@@ -71,3 +72,49 @@ an open-ended reimplementation of Chrome.
   - Live resize and full screen show no gaps or flicker.
   - Keyboard focus moves between the address bar and the page correctly.
   - Swapping between two tabs' browser views works.
+
+## S1 outcome (Phase 1, 2026-11-18)
+
+Observed on the bundled app (CEF 156.0.30, macOS 27.2, arm64):
+
+- **One Chrome-style browser view per window, for the window's lifetime.**
+  Adding a second `CefBrowserView` to a window logs "Cannot add multiple
+  Chrome style BrowserViews" (`browser_view_impl.cc:324`), and the app
+  exits. The check fires once the window has hosted a Chrome browser, even
+  if the first view was removed. Swapping views in one window is
+  impossible.
+- **Chrome opens its own windows for tabs it creates.** CDP
+  `Target.createTarget` (and so `chrome.tabs.create`) opened a full Chrome
+  window, with tab strip and toolbar, beside Aeri's window. Phase 2 must
+  catch these (`GetDefaultClient`, popup handling) and turn them into Aeri
+  tabs.
+- **Transparent GPUI pixels do not pass clicks through.** A click on a
+  fully transparent margin of a GPUI window did not reach the page below.
+  Overlay windows are therefore sized to their content, and they ignore the
+  mouse while hidden.
+
+Revised layering, approved by the owner ("stacked" option):
+
+```text
+  address bar   GPUI child window (pop-up kind, re-levelled to the frame)
+  active tab    frameless Chrome-style CefWindow, child window covering the frame
+  other tabs    CefWindows, ordered out (Chromium reports them hidden)
+  frame         GPUI window: owns size, position, minimise, full screen, Space
+```
+
+- Tab windows show their own traffic lights, because the frame's are
+  covered. Close and minimise are retargeted to the frame (target/action).
+  The zoom button ignores target/action, so an app-local mouse-down monitor
+  sends it to the frame. Option-click zooms instead.
+- A 10 pt strip along the top of the page drags the frame (same monitor).
+  A double-click there zooms.
+- When the frame becomes key, it hands the keyboard to the address bar if
+  shown, otherwise to the active tab.
+- `NSWindowDidResize` and the full-screen notifications on the frame refit
+  every child. Child windows follow the frame into its full-screen Space
+  (`FullScreenAuxiliary`). Traffic lights are hidden in full screen.
+- Checked: drag, edge resize, minimise and restore, full screen from the
+  green button and Ctrl-Cmd-F, tab switching (the hidden tab reports
+  `visibilityState: hidden`), close button, Cmd-Q.
+- Not yet measured: per-tab cost of the extra window (Phase 13), and
+  flicker during live resize at 120 fps (owner's manual check).

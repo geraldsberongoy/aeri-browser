@@ -26,11 +26,34 @@ Rust. Evidence: `docs/research/cef.md`, `docs/research/gpui.md`.
    - Pros: full control.
    - Cons: a non-goal. It means a Chromium build pipeline and rebasing
      patches every milestone.
-3. **System WebKit (Search's route).**
-   - Pros: ~10 MB app, very light.
-   - Cons: not Chrome. Extensions run through a different engine and need
-     many shims.
-4. **Writing CEF bindings by hand (C API or ObjC++ shim).**
+3. **System WebKit / WKWebView (Search's route), re-checked 2026-11-18 at the
+   owner's request** (`docs/research/wkwebview.md`).
+   - Pros:
+     - The engine ships with the OS, so there is nothing to build or update.
+     - H.264/AAC/HEVC and FairPlay are included.
+     - An extra profile costs about 4 MB (measured: one shared Networking
+       and GPU process across 10 data stores).
+     - Embedding a native view in GPUI is already proven.
+   - Cons:
+     - Safari, not Chrome: no WebUSB/Bluetooth/Serial/HID/MIDI/File System
+       Access (WebKit "oppose").
+     - No http(s) request interception. Blocking is limited to
+       `WKContentRuleList` (150,000-rule cap; no redirects, `$removeparam`,
+       scriptlets or procedural cosmetics).
+     - Chrome Web Store extensions need a large shim layer. Search carries
+       12,030 lines and a 229 KB JS prelude, and Bitwarden/1Password still
+       have open bugs.
+     - Passkeys still need the same Apple entitlement.
+4. **Microsoft WebView2 for Windows, re-checked 2026-11-18**
+   (`docs/research/webview2.md`).
+   - Pros: Edge's Chromium, updated by Windows.
+   - Cons:
+     - Windows only.
+     - No Chrome Web Store install ("by design", WebView2Feedback #3694).
+     - No extension popup hosting (#5805).
+     - `WebResourceRequested` has open gaps that break a blocker (#5765,
+       #5787, #5764).
+5. **Writing CEF bindings by hand (C API or ObjC++ shim).**
    - Pros: no third-party binding risk.
    - Cons: much more unsafe code to own, and it duplicates cef-rs.
 
@@ -45,7 +68,10 @@ engine only through a small command/event seam. CEF types stay inside the
 
 It is the only option that meets both "Chrome compatible including Web Store
 extensions" and "no fork". cef-rs removes the largest pile of unsafe FFI and
-already handles the macOS helper bundle layout.
+already handles the macOS helper bundle layout. The 2026-11-18 re-check of
+WKWebView and WebView2 confirmed this. They win on maintenance, media and
+(for WebKit) per-profile cost, but each fails the Chrome-compatibility,
+Web Store and blocking-quality requirements that the owner ranked first.
 
 ## Tradeoffs and consequences
 
@@ -59,4 +85,8 @@ already handles the macOS helper bundle layout.
 - **Lightness:** this has to come from Aeri's behaviour (lazy tabs, rest,
   blocking, shared engine), not from the engine itself.
 - **Revisit** if CEF drops Chrome-style extension support or cef-rs goes
-  unmaintained.
+  unmaintained. Also revisit if WebKit gains request interception and
+  Chrome-compatible extension APIs, or WebView2 gains Web Store install and
+  extension UI hosting.
+- **Benchmark:** WebKit's measured ~4 MB per extra profile is the benchmark
+  for spike S4 on CEF's per-profile cost.

@@ -1,10 +1,9 @@
 # Phase plan — Aeri
 
-Status: **approved** 2026-11-18 (owner). Phase 1 is on hold while the owner's
-request to reconsider WKWebView (macOS) and WebView2 (Windows) is researched
-(`docs/research/wkwebview.md`, `docs/research/webview2.md`). If the engine
-changes, ADRs 0001/0002/0005 and phases 1–4 and 14 are revised and
-re-approved.
+Status: **approved** 2026-11-18 (owner). The engine re-check the owner asked
+for (WKWebView / WebView2, `docs/research/wkwebview.md`,
+`docs/research/webview2.md`) confirmed CEF on both platforms (ADR 0001
+updated). The plan stands unchanged.
 Inputs: stages 1–3 (approved), ADRs 0001–0005 in `docs/decisions/`.
 
 Sizes: S (one concern, few files) · M (one boundary) · L (several modules or
@@ -32,15 +31,21 @@ task list is written then, not here.
   screen, swapping between two browser views) and S3 (run loop, clean
   shutdown). If S1 fails, stop and bring options C/A to the owner.
 - size: M
+- outcome (2026-11-18): S1 found that Chrome-style windows hold one browser
+  view for life. The owner approved the "stacked" layering: one CEF window
+  per tab under a GPUI frame window (ADR 0002 "S1 outcome").
 
 ## Phase 2: Install extensions from the Chrome Web Store
 - id: 2
 - intent: In a non-default profile, the Person installs uBlock Origin Lite,
   Bitwarden and a dark-mode extension from their store pages. Extensions
   persist across restart. Their buttons and popups work in an Aeri window
-  without a Chrome toolbar.
-- affected: `crates/aeri-cef` (extension UI placement, task costs),
-  `apps/aeri` (extension buttons in the GPUI chrome)
+  without a Chrome toolbar. Tabs and windows that Chrome or extensions open
+  (`chrome.tabs.create`, `window.open`, CDP) become Aeri tabs. They must
+  never open as Chrome-UI windows.
+- affected: `crates/aeri-cef` (extension UI placement, task costs,
+  `GetDefaultClient` and popup routing into tab windows), `apps/aeri`
+  (extension buttons in the GPUI chrome)
 - prereqs: 1
 - playbook: feature
 - risk: high — S2, the crux of the extension requirement; failure reopens
@@ -50,7 +55,8 @@ task list is written then, not here.
 ## Phase 3: Background tabs behave
 - id: 3
 - intent: Tabs not on screen are created lazily and slowed when hidden, and
-  Aeri knows when a tab is playing audio or capturing.
+  Aeri knows when a tab is playing audio or capturing. With one CEF window
+  per tab, "lazy" means the tab's window is not created until first shown.
 - affected: `crates/aeri-cef` (visibility, audio and capture signals),
   `crates/aeri-core` (tab visibility state)
 - prereqs: 1

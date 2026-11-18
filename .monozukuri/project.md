@@ -24,15 +24,17 @@ open at once, one window per profile, inside one running app.
 - Operating system.
 
 ## Current phase
-The blueprint is complete: all four stages were approved on 2026-11-18.
-Phase 1 is on hold pending an engine re-check that the owner asked for:
-WKWebView/WebView2 vs CEF (`docs/research/wkwebview.md`,
-`docs/research/webview2.md`).
+Phase 1 (Browse one page) is built and verified by scripted checks, except
+the owner's 120 fps resize recording and the first CI run on GitHub.
+Evidence: `.monozukuri/specifications/phase-1-browse-one-page.md`. Next:
+Phase 2 (Web Store extensions, spike S2). Phase 2 also routes Chrome-opened
+tabs into Aeri tabs.
 
 ## Stack in one line
-Rust · CEF (Chromium) via cef-rs, Chrome-style Views windows · GPUI interface
-in attached child windows (ADR 0002, gated by spike S1) · SQLite per profile ·
-adblock-rust · OS keychain.
+Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·
+GPUI frame window with the tab windows and GPUI overlays as AppKit child
+windows (ADR 0002 "S1 outcome") · SQLite per profile · adblock-rust · OS
+keychain ("Aeri Safe Storage").
 
 ## Constraints from the owner
 - Individual Apple Developer account. Without an organisation account there
