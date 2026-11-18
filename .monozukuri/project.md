@@ -39,7 +39,12 @@ live camera/microphone check from `open aeri.app`. Evidence:
 `.monozukuri/specifications/phase-3-background-tabs.md`.
 Phase 4 (blocking) is done the light way: Aeri offers uBlock Origin Lite at a
 profile's first launch; the built-in blocker and S5 are dropped (ADR 0008,
-owner 2026-11-18). Next: Phase 5 (profiles, S4).
+owner 2026-11-18). Phase 5 (profiles, S4) is built: profile badge and native
+menu in the strip, Profiles menu, profile manager window, dormancy, deferred
+deletion, orderly quit on SIGTERM, `cargo xtask isolation` (11/11). Still to
+drive live: rename, recolour, delete, Dock reopen. Evidence:
+`.monozukuri/specifications/phase-5-profiles.md`. Next: Phase 6 (tabs and
+session).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

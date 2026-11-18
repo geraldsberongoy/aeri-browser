@@ -1,6 +1,6 @@
 # Profile isolation
 
-Status: Phase 0. Decision: [ADR 0004](../decisions/0004-profile-storage.md).
+Status: built in Phase 5; S4 measured (below). Decision: [ADR 0004](../decisions/0004-profile-storage.md).
 Evidence: [`cef.md` §5, §6](../research/cef.md). Requirements:
 [01-business-logic.md](../../.monozukuri/blueprint/01-business-logic.md).
 Isolation is a security boundary. It is built in Phase 5 and measured by
@@ -102,25 +102,31 @@ same sign-ins. Aeri shows a notice when a profile selects it.
 
 When a profile's last window closes, it becomes Dormant. Aeri releases its
 request context. A dormant profile runs no pages and no extensions. Opening it,
-switching to it or opening a link in it makes it Active again.
+switching to it or opening a link in it makes it Active again. Aeri keeps
+running with no windows open; the Dock icon or the Profiles menu opens one.
 
-Release lets Chromium's `ProfileManager` unload the profile. Whether memory
-returns to baseline is **unmeasured** ([cef.md §5](../research/cef.md)). S4
-measures it.
+Release lets Chromium unload the profile (S4, Observed): within 0.3 s it has
+no DevTools targets left (pages and its extension service worker), its
+renderers exit, and the browser process closes every file under
+`Chromium/<id>/` (103 open files before, 0 after). About 11 MB per dormant
+profile stays in the browser process (S4 table).
 
 ## Deletion
 
-Deleting a profile needs confirmation. Then Aeri:
+Deleting a profile needs confirmation naming it. Then Aeri:
 
-1. closes the profile's windows and browsers;
-2. releases its request context;
-3. deletes `Profiles/<id>/`;
-4. deletes `Chromium/<id>/`;
-5. deletes the profile's Keychain or Credential Manager items;
-6. removes its row from `app.db`.
+1. removes its row from `app.db` and records the id in `deleted_profiles`;
+2. closes the profile's windows and browsers, which releases its request
+   context (if no window of another profile is left, the last-used profile
+   opens);
+3. once CEF has shut down (at quit), deletes `Profiles/<id>/` and
+   `Chromium/<id>/`; anything left over (a crash, a locked file) is deleted
+   at the next launch before CEF starts;
+4. (Phase 10) deletes the profile's Keychain or Credential Manager items.
 
-Chromium may keep its own history copy inside `Chromium/<id>/`. Step 4
-removes it either way ([ADR 0004](../decisions/0004-profile-storage.md)).
+Directories are never deleted while Chromium runs, so Chromium can never
+write into a profile being deleted. Chromium's own history copy inside
+`Chromium/<id>/` goes with step 3 ([ADR 0004](../decisions/0004-profile-storage.md)).
 Deletion is terminal. The id is never reused.
 
 ## Security notes
@@ -137,35 +143,54 @@ Deletion is terminal. The id is never reused.
 - Secrets are never stored in SQLite. They stay in OS-protected storage.
 - Settings and profile-manager screens are GPUI windows, not web pages, so
   websites cannot reach them.
-- Chrome-style network services that send data to Google are turned off.
-  The claim "nothing leaves the machine" is verified by a network audit in
-  S4 (not yet run).
+- Chrome services that call Google while Aeri sits idle are turned off
+  (`--disable-features`: AI-mode eligibility and search preconnects for
+  Chrome's own omnibox, network time). The S4 network audit (an idle
+  browser on `about:blank`, net log, 3 minutes) then shows one host:
+  `update.googleapis.com`, Chrome's component updater, which delivers
+  certificate revocation lists and other security components. Safe
+  Browsing list updates (`safebrowsing.googleapis.com`) also stay on; they
+  send no browsing data. Both are kept on purpose.
 
-## Isolation test plan
+## Isolation tests and S4 results
 
-Spike S4 (Phase 5) plus automated integration tests on local test sites
-(handoff §11). No test depends on an external site.
+`cargo xtask isolation` runs the bundled app with two profiles, A and B,
+against a local test site it serves itself, drives each profile's page over
+the DevTools protocol, quits (SIGTERM, handled as an orderly quit),
+relaunches and checks again. No check depends on an external site.
 
-**S4 measurements** with 1, 2, 5 and 10 request contexts, one page on the
-same site in each:
+| Test | Pass condition | Result |
+| --- | --- | --- |
+| Two sessions | A and B stay signed in to one local site as different users, also after restart | pass |
+| Cookies | A sets a cookie; B sends none; A keeps it after restart | pass |
+| Local storage and IndexedDB | A writes values; B reads none, also after restart | pass |
+| HTTP cache | A caches a resource; B's request reaches the server | pass |
+| Dormancy | After B's last window closes, B has no targets; A keeps running | pass |
+| Permissions | A grants a permission; B is asked again | Phase 9: DevTools cannot grant in a profile's context |
+| Extensions | An extension installed in A is absent in B | Phase 2 (installed in one profile only) |
+| Aeri records | A's history and bookmarks never appear in B | Phase 6/8 (no records yet) |
+| Deletion | After deleting A and quitting, its directories are gone; B unchanged | unit test + manual check (spec) |
+| Renderers | The same site in A and B runs in separate renderers | Chromium rule; S4 counts two renderers per profile |
 
-- memory per process type (`CefTaskManager` and `ps`) and process counts;
-- startup time per new profile;
-- memory after a profile goes dormant;
-- whether Chromium's own history can be switched off;
-- a network audit of an idle browser with no page open.
+**S4: cost per profile** (Observed). One window per profile, each showing
+the same local page; memory is `phys_footprint` summed per process type;
+profiles had been opened once before (warm).
 
-**Integration tests** against a local test server on two profiles, A and B:
+| Profiles | Processes | Total MB | Browser | GPU | Page renderers | Extension renderers |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 9 | 490 | 104 | 157 | 3 × (122 MB) | 2 × (63 MB) |
+| 2 | 12 | 775 | 151 | 269 | 5 × (215 MB) | 3 × (94 MB) |
+| 5 | 21 | 1600 | 276 | 581 | 11 × (505 MB) | 6 × (188 MB) |
+| 10 | 36 | 2958 | 491 | 1106 | 21 × (970 MB) | 11 × (335 MB) |
 
-| Test | Pass condition |
-| --- | --- |
-| Cookies | A sets a cookie. B sends none. A keeps it after restart. |
-| Local storage and IndexedDB | A writes values. B reads none. |
-| HTTP cache | A caches a resource. B's request reaches the server. |
-| Same account, two sessions | A and B stay signed in to one local site as different users. |
-| Permissions | A grants a permission. B is asked again. |
-| Extensions | An extension installed in A is absent in B. |
-| Aeri records | A's history and bookmarks never appear in B. |
-| Deletion | After deleting A, `Profiles/<A>/` and `Chromium/<A>/` do not exist and B is unchanged. |
-| Renderers | The same site in A and B runs in separate renderer processes. |
-| Dormancy | After A's last window closes, A has no running processes. |
+- Each extra profile with one window costs about 275 MB: about 105 MB of GPU
+  memory for its window, 45 MB in the browser process, two renderers and one
+  extension renderer (Aeri's tab-signals worker, about 30 MB). The network
+  and storage services are shared (about 55 MB in all).
+- Waking a profile takes 13–60 ms when it is the only one; profiles opened
+  together initialise one after another, about 55 ms each (10 profiles: the
+  last is ready after 0.8 s).
+- After 9 of 10 profiles went dormant: 9 processes and 600 MB, against 490 MB
+  for one profile alone.
+- Not measured yet: switching Chromium's own history off. Its copy is
+  deleted with the profile.

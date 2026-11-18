@@ -17,6 +17,7 @@ futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 raw-window-handle = "0.6"
+libc.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 unicode-segmentation = "1.10"

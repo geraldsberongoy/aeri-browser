@@ -196,6 +196,13 @@ wrap_app! {
         ) {
             let browser_process = process_type.is_none_or(|kind| kind.to_string().is_empty());
             let Some(command_line) = command_line else { return };
+            if browser_process {
+                // Chrome features Aeri does not use that call Google while
+                // idle (S4 network audit): AI-mode eligibility and search
+                // preconnects for Chrome's own omnibox (Aeri has its own and
+                // its own search provider), and network time queries.
+                append_to_list(command_line, "disable-features", DISABLED_FEATURES);
+            }
             if browser_process && self.devtools_pipe.load(Ordering::Relaxed) {
                 // See `devtools`: the pipe is a browser-target session, and
                 // this switch lets it open extension popups.
@@ -204,7 +211,7 @@ wrap_app! {
                     .append_switch(Some(&CefString::from("enable-unsafe-extension-debugging")));
                 // Tab signals report through the pipe, so they need it too.
                 if let Some(dir) = &self.tab_signals {
-                    load_extension(command_line, dir);
+                    append_to_list(command_line, "load-extension", dir);
                 }
             } else if browser_process {
                 tracing::warn!("no DevTools pipe: tabs will not report sound");
@@ -217,14 +224,18 @@ wrap_app! {
     }
 }
 
-/// Adds `dir` to `--load-extension`, keeping any directories already there.
-fn load_extension(command_line: &mut CommandLine, dir: &str) {
-    let switch = CefString::from("load-extension");
+/// See `on_before_command_line_processing`.
+const DISABLED_FEATURES: &str =
+    "AimEnabled,PreconnectToSearch,SearchEnginePreconnect2,NetworkTimeServiceQuerying";
+
+/// Adds `value` to a comma-separated switch, keeping what is already there.
+fn append_to_list(command_line: &mut CommandLine, name: &str, value: &str) {
+    let switch = CefString::from(name);
     let existing = CefString::from(&command_line.switch_value(Some(&switch))).to_string();
     let value = if existing.is_empty() {
-        dir.to_owned()
+        value.to_owned()
     } else {
-        format!("{existing},{dir}")
+        format!("{existing},{value}")
     };
     command_line.append_switch_with_value(Some(&switch), Some(&CefString::from(value.as_str())));
 }

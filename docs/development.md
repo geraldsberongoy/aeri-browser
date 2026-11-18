@@ -45,7 +45,7 @@ apps/aeri/          the binary: GPUI windows and views, AppKit glue (mac.rs)
 apps/aeri-helper/   CEF subprocess binary
 crates/aeri-core/   domain model, rules, persistence; no GPUI, no CEF
 crates/aeri-cef/    CEF adapter for the engine seam
-xtask/              `cargo xtask bundle`
+xtask/              `cargo xtask bundle`, `cargo xtask isolation`
 docs/               architecture, decisions, research, roadmap
 .monozukuri/        blueprint (requirements, stack, plan) and phase specs
 ```
@@ -90,8 +90,8 @@ Development switches:
 | `AERI_DATA_DIR=/tmp/aeri-data` | Use a throwaway data directory instead of `~/Library/Application Support/Aeri`. |
 | `AERI_START_URL=https://example.com` | First tab's address (default `about:blank`, which opens the address bar). |
 | `AERI_REMOTE_DEBUGGING_PORT=9334` | Expose the DevTools protocol for scripted checks. |
-| `AERI_PROFILE=Work` | Open (or create) the profile with this name instead of the first one. Stopgap until Phase 5's profile UI. |
-| `AERI_LOG=info,aeri=debug` | `tracing` filter (stderr). |
+| `AERI_PROFILE=Work,Client` | Open (or create) these profiles, each in its own window, instead of the last-used one. For scripted checks; the Profiles menu is the Person's way. |
+| `AERI_LOG=info,aeri=debug` | `tracing` filter (stdout; colours only on a terminal). |
 | `--use-mock-keychain` | Chromium switch: skip the Keychain. Use it for scripted runs; see below. |
 | `--autoplay-policy=no-user-gesture-required` | Chromium switch: let a script play sound without a click (tab-signals checks). |
 
@@ -105,6 +105,12 @@ Run the bundle binary directly to see logs:
 AERI_DATA_DIR=/tmp/aeri-data AERI_REMOTE_DEBUGGING_PORT=9334 \
   ./target/bundle/aeri.app/Contents/MacOS/aeri --use-mock-keychain
 ```
+
+`kill <pid>` (SIGTERM) and Ctrl-C quit like the Quit menu: browsers close
+and CEF shuts down, so cookies are written to disk. Aeri replaces
+Chromium's own handlers, which end the process at once and lose recent
+cookies. Closing the last window does not quit; the Dock icon opens a
+window again.
 
 Running under `lldb` (launch or attach) raises a system "Developer Tools
 Access" dialog and stalls until it is answered. Aeri also needs fds 3 and 4
@@ -159,7 +165,7 @@ From handoff §11 and the stack map.
 | --- | --- | --- |
 | Unit | `crates/aeri-core` | Profile lifecycle, tab and space state, session serialisation, navigation state, address classification, download-path cleaning, migrations. Each runs on an **in-memory SQLite**. No GPUI, no CEF. |
 | Integration | `crates/aeri-cef` and `apps/aeri` | Chromium lifecycle, request-context isolation, navigation events, downloads, permissions, popups, crashes, session restore. Run against **local test pages** served from the repo. |
-| End to end | workspace `tests/` | Forms, cookie persistence, local storage, IndexedDB, multi-profile isolation, uploads, downloads, keyboard input, restart. Local sites only. |
+| End to end | `cargo xtask isolation` (profiles); more to come | Two profiles on a local site the task serves: sign-ins, cookies, local storage, IndexedDB, HTTP cache, restart, dormancy. Runs the bundled app; needs a logged-in macOS session. Not in CI yet. |
 
 Rules:
 

@@ -70,7 +70,8 @@ Facts from CEF 156 (evidence in the Phase 3 spec ledger):
 ## Consequences
 
 - One extra service worker per loaded profile, kept alive by the DevTools
-  attachment. Its cost belongs in the Phase 13 measurements.
+  attachment. S4 (Phase 5) measured it: one extension renderer of about
+  30 MB per open profile; it exits when the profile goes dormant.
 - The extension is visible on `chrome://extensions` as "Aeri tab signals".
   It shows no button: Aeri lists only extensions with an action.
 - Without the DevTools pipe (it failed to open) or outside the bundle

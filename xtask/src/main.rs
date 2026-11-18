@@ -1,7 +1,13 @@
-//! `cargo xtask bundle` — builds `aeri` and `aeri-helper` and assembles
-//! `target/bundle/Aeri.app` with the CEF framework and helper apps in place.
-//! CEF finds its framework and child processes through this layout, so the
-//! app cannot run outside it on macOS.
+//! Developer tasks.
+//!
+//! - `cargo xtask bundle` — builds `aeri` and `aeri-helper` and assembles
+//!   `target/bundle/Aeri.app` with the CEF framework and helper apps in
+//!   place. CEF finds its framework and child processes through this
+//!   layout, so the app cannot run outside it on macOS.
+//! - `cargo xtask isolation` — profile isolation checks against a local
+//!   test site, on the bundled app (see `isolation.rs`).
+
+mod isolation;
 
 use anyhow::{Result, bail};
 
@@ -9,7 +15,8 @@ fn main() -> Result<()> {
     let task = std::env::args().nth(1).unwrap_or_default();
     match task.as_str() {
         "bundle" => bundle(),
-        _ => bail!("usage: cargo xtask bundle"),
+        "isolation" => isolation::run(),
+        _ => bail!("usage: cargo xtask bundle | isolation"),
     }
 }
 

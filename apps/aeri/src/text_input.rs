@@ -111,6 +111,10 @@ impl TextInput {
         cx.notify();
     }
 
+    pub fn text(&self) -> &str {
+        &self.content
+    }
+
     /// Selects everything, as when the address bar takes focus.
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
         self.selected_range = 0..self.content.len();

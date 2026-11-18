@@ -6,6 +6,8 @@
 
 mod address_bar;
 mod mac;
+mod native_menu;
+mod profile_manager;
 mod shell;
 mod text_input;
 mod window_frame;
@@ -23,13 +25,21 @@ fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::try_from_env("AERI_LOG")
                 .unwrap_or_else(|_| "info".into()),
         )
+        // Plain text when logging to a file, so logs stay greppable.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .init();
 
     let config = shell::Config {
         data_dir: data_dir()?,
-        profile: std::env::var("AERI_PROFILE")
-            .ok()
-            .filter(|name| !name.trim().is_empty()),
+        // Development and tests: `AERI_PROFILE=Work,Client` opens (creating
+        // if needed) these profiles, each in a window.
+        profiles: std::env::var("AERI_PROFILE")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect(),
         start_url: std::env::var("AERI_START_URL").unwrap_or_else(|_| "about:blank".to_owned()),
         remote_debugging_port: std::env::var("AERI_REMOTE_DEBUGGING_PORT")
             .ok()
@@ -41,7 +51,9 @@ fn main() -> Result<()> {
     }
     mac::prefer_overlay_scrollers();
 
-    gpui_platform::application().run(move |cx| {
+    let app = gpui_platform::application();
+    app.on_reopen(|_| shell::reopen());
+    app.run(move |cx| {
         if let Err(err) = shell::start(runtime.clone(), config, cx) {
             tracing::error!("{err:#}");
             cx.quit();

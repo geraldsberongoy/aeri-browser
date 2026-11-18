@@ -1,12 +1,15 @@
 //! The GPUI frame window of an Aeri window. It owns the window's size,
 //! position, full screen and Space, and draws the strip along the top: the
-//! window's own traffic lights, back, forward and reload. Below the strip the
-//! active tab's window sits inset as a rounded card (`mac::Frame::layout`).
+//! window's own traffic lights, back, forward and reload, and at the right
+//! the window's profile (stage 1: every window shows its profile). Below the
+//! strip the active tab's window sits inset as a rounded card
+//! (`mac::Frame::layout`).
 
+use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    Context, MouseButton, MouseDownEvent, Pixels, SharedString, Window, div, point, prelude::*, px,
-    rgb, rgba,
+    ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, Window,
+    div, point, prelude::*, px, rgb, rgba,
 };
 
 use crate::shell::{AppMsg, Nav};
@@ -23,6 +26,7 @@ const PAGE_EDGE: f32 = 6.;
 pub struct WindowFrame {
     window_id: u64,
     tx: UnboundedSender<AppMsg>,
+    profile: Profile,
     can_go_back: bool,
     can_go_forward: bool,
 }
@@ -30,6 +34,7 @@ pub struct WindowFrame {
 impl WindowFrame {
     pub fn new(
         window_id: u64,
+        profile: Profile,
         tx: UnboundedSender<AppMsg>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -43,8 +48,17 @@ impl WindowFrame {
         Self {
             window_id,
             tx,
+            profile,
             can_go_back: false,
             can_go_forward: false,
+        }
+    }
+
+    /// Shows the profile's current name and colour.
+    pub fn set_profile(&mut self, profile: Profile, cx: &mut Context<Self>) {
+        if self.profile != profile {
+            self.profile = profile;
+            cx.notify();
         }
     }
 
@@ -94,6 +108,60 @@ impl WindowFrame {
                     }))
             })
     }
+
+    /// The window's profile: its avatar and name. A click opens the profile
+    /// menu under it.
+    fn profile_badge(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let window = self.window_id;
+        div()
+            .id("profile")
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(7.))
+            .h(px(28.))
+            .max_w(px(220.))
+            .pl(px(4.))
+            .pr(px(10.))
+            .rounded(px(8.))
+            .hover(|style| style.bg(rgba(0xffffff14)))
+            .active(|style| style.bg(rgba(0xffffff22)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
+                // The menu hangs from the badge, right edges aligned.
+                let _ = this.tx.unbounded_send(AppMsg::ProfileMenu {
+                    window,
+                    x: f32::from(win.viewport_size().width) - PAGE_EDGE,
+                    y: STRIP_HEIGHT as f32 - 6.,
+                });
+            }))
+            .child(avatar(&self.profile, 20.))
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(px(13.))
+                    .text_color(rgb(0xc9cbd1))
+                    .child(SharedString::from(self.profile.name.clone())),
+            )
+    }
+}
+
+/// A profile's avatar: its monogram on its accent colour.
+pub fn avatar(profile: &Profile, size: f32) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(size))
+        .rounded_full()
+        .bg(rgb(profile.accent))
+        .text_size(px(size * 0.55))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(0xffffff))
+        .child(SharedString::from(profile.monogram()))
 }
 
 impl Render for WindowFrame {
@@ -129,7 +197,9 @@ impl Render for WindowFrame {
             .child(self.button("back", "←", self.can_go_back, Nav::Back, cx))
             .child(self.button("forward", "→", self.can_go_forward, Nav::Forward, cx))
             .child(self.button("reload", "↻", true, Nav::Reload, cx))
-            .child(drag().flex_1());
+            .child(drag().flex_1())
+            .child(self.profile_badge(cx))
+            .child(drag().w(px(PAGE_EDGE)));
         div()
             .size_full()
             .flex()

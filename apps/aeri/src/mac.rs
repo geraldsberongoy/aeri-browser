@@ -28,16 +28,18 @@ use block2::RcBlock;
 use futures::channel::mpsc::UnboundedSender;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{msg_send, sel};
+use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
-    NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
-    NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
-    NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
+    NSApplication, NSColor, NSView, NSWindow, NSWindowCollectionBehavior,
+    NSWindowDidBecomeKeyNotification, NSWindowDidEnterFullScreenNotification,
+    NSWindowDidExitFullScreenNotification, NSWindowDidResizeNotification, NSWindowOrderingMode,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
 };
 
+use crate::native_menu;
 use crate::shell::AppMsg;
 use crate::window_frame::STRIP_HEIGHT;
 
@@ -64,6 +66,13 @@ fn window_of(view: *mut c_void) -> Option<Retained<NSWindow>> {
     // SAFETY: callers pass a live content NSView (from GPUI or CEF) on the
     // main thread.
     unsafe { (*(view as *const NSView)).window() }
+}
+
+/// Brings the window of a GPUI content view to the front and makes it key.
+pub fn bring_to_front(view: *mut c_void) {
+    if let Some(window) = window_of(view) {
+        window.makeKeyAndOrderFront(None);
+    }
 }
 
 thread_local! {
@@ -389,6 +398,43 @@ impl Frame {
             frame.removeChildWindow(&window);
         }
         window.orderOut(None);
+    }
+
+    /// Brings the window to the front and gives it the keyboard.
+    pub fn bring_forward(&self) {
+        if let Some(frame) = self.frame.borrow().as_ref() {
+            frame.makeKeyAndOrderFront(None);
+        }
+    }
+
+    /// Whether this window, or one of its tab or bar windows, is key.
+    pub fn is_key(&self) -> bool {
+        let Some(frame) = self.frame.borrow().clone() else {
+            return false;
+        };
+        let Some(key) =
+            NSApplication::sharedApplication(MainThreadMarker::from(&*frame)).keyWindow()
+        else {
+            return false;
+        };
+        std::ptr::eq(&*key, &*frame)
+            || key
+                .parentWindow()
+                .is_some_and(|parent| std::ptr::eq(&*parent, &*frame))
+    }
+
+    /// Pops up a native menu at (`x`, `y`) points from the frame's top-left.
+    pub fn pop_up_menu(
+        &self,
+        x: f64,
+        y: f64,
+        entries: &[native_menu::Entry],
+        on_pick: impl Fn(usize) + 'static,
+    ) {
+        let Some(view) = self.frame.borrow().as_ref().and_then(|f| f.contentView()) else {
+            return;
+        };
+        native_menu::pop_up(&view, x, y, entries, on_pick);
     }
 
     /// Releases AppKit hooks once the window is closing.

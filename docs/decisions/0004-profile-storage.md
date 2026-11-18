@@ -84,3 +84,19 @@ mechanical.
   deleted with the profile either way.
 - **Second launch.** A second app launch must forward to the running
   instance (`OnAlreadyRunningAppRelaunch`).
+
+## Outcome (Phase 5, S4)
+
+- Per-profile cost is measured: about 275 MB per extra profile with one
+  window, most of it the window's GPU memory and its renderers. Dormant
+  profiles are unloaded: their processes exit and Chromium closes every file
+  in `Chromium/<id>/`; about 11 MB each stays in the browser process.
+  Numbers: [profile-isolation.md](../architecture/profile-isolation.md).
+- Deletion is deferred, not immediate: the row leaves `app.db` at once and
+  the directories are removed after CEF shuts down (at quit, or at the next
+  launch), so Chromium never runs on a profile being deleted. Observed: a
+  deleted profile's directories are gone after the next launch and Chromium
+  does not recreate them.
+- Second launch: Chromium's process singleton hands it to the running Aeri
+  (Observed); the second process logs "cef::initialize failed" and exits.
+- Duplicate history: not switched off yet; it is deleted with the profile.
