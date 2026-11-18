@@ -1,0 +1,28 @@
+[package]
+name = "aeri"
+description = "The Aeri browser application: GPUI shell over CEF."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.cef.bundle]
+helper_name = "aeri-helper"
+
+[dependencies]
+aeri-core.workspace = true
+aeri-cef.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+raw-window-handle = "0.6"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+unicode-segmentation = "1.10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit.workspace = true

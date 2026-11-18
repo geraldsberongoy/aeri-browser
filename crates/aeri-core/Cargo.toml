@@ -1,0 +1,13 @@
+[package]
+name = "aeri-core"
+description = "Aeri's domain model, rules and persistence. No UI, no engine types."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+thiserror.workspace = true
+url.workspace = true
+uuid.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "aeri-helper"
+description = "CEF subprocess entry point (renderer, GPU, utility processes)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cef.workspace = true

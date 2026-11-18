@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["apps/aeri", "apps/aeri-helper", "crates/aeri-core", "crates/aeri-cef", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+aeri-core = { path = "crates/aeri-core" }
+aeri-cef = { path = "crates/aeri-cef" }
+
+# Engine (ADR 0001). The crate version pins the CEF binary: 156.0.30.
+cef = { version = "=156.6.0", default-features = false, features = ["sandbox"] }
+
+# UI (ADR 0002). Pinned Zed commit; bump deliberately.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "96362135eb98a011ac17b56a5c90cf77f9f597f1" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "96362135eb98a011ac17b56a5c90cf77f9f597f1", features = ["font-kit"] }
+
+anyhow = "1"
+thiserror = "2"
+futures = "0.3"
+rusqlite = { version = "0.43", features = ["bundled"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+uuid = { version = "1", features = ["v7"] }
+core-foundation = "0.10"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+
+[profile.dev.package."*"]
+opt-level = 1
