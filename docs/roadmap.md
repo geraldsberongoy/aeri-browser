@@ -20,11 +20,11 @@ Risk levels: low, medium, high, critical. Sizes are in the detailed plan.
 | 5 | Profiles | Create, rename, switch, delete and open profiles, one window each. Two profiles stay signed in to one site with different accounts. Dormant profiles release resources. S4. | high |
 | 6 | Tabs and session | Sidebar tabs (slide-over or pinned): open, close, reopen, duplicate, reorder, pin. Session restores on relaunch with only visible tabs loading. History is recorded. | medium |
 | 7 | Spaces and favourites | Spaces with colours and icons per profile, tab moves between spaces, favourites visible in every space. | medium |
-| 8 | Address bar, library, palette | The address bar tells addresses from searches and suggests from local data only. Bookmarks. A command palette over tabs, history, bookmarks, spaces, profiles and commands. | medium |
+| 8 | Address bar, library, palette | The address bar tells addresses from searches and suggests from local data only. It rests in the sidebar and floats over the page centre when called, like Zen's. Bookmarks. A command palette over tabs, history, bookmarks, spaces, profiles and commands. | medium |
 | 9 | Trust | Per-site, per-profile permission prompts. Certificate warnings never auto-bypassed. Gesture-only popups. Confined, collision-safe downloads. Per-profile data clearing. "Open in system browser" for DRM-refusing sites. | high |
 | 10 | Passwords | A password provider per profile (basic store in the OS keychain, an extension, or none). Save after submit; fill only on pick, on the matching secure site, after OS confirmation. S6. | high |
 | 11 | Resource stewardship | Idle and memory-pressure rest, per-site keep-awake, and a resource view of each tab, extension and profile. | medium |
-| 12 | Appearance and customisation | Tabs on side or top, sidebar placement, light/dark/system, accents, theme import/export, bindable shortcuts with conflict refusal. | low |
+| 12 | Appearance and customisation | Tabs on side or top, sidebar placement, the address bar's floating behaviour (as in Zen), light/dark/system, accents, theme import/export, bindable shortcuts with conflict refusal. | low |
 | 13 | Benchmarks and optimisation | A repeatable harness compares Aeri with Helium and Chrome on handoff §8.3 scenarios. Hot spots are fixed and results published. | medium |
 | 14 | Self-built CEF with H.264/AAC | Aeri ships on a CEF built with `proprietary_codecs=true ffmpeg_branding=Chrome` from a reproducible pipeline. ADR 0005. | high |
 | 15 | Public macOS beta | Notarised, signed build with a secure update channel, security review, third-party notices, and README, CONTRIBUTING and SECURITY docs. | critical |

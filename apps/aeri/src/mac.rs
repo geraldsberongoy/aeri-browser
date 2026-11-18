@@ -41,11 +41,16 @@ use objc2_foundation::{
 use crate::shell::AppMsg;
 use crate::window_frame::STRIP_HEIGHT;
 
-/// Address bar geometry, in points.
+/// Address bar geometry, in points. Like Zen's floating URL bar, the bar
+/// floats over the page, centred across and with its middle
+/// [`BAR_FROM_TOP`] of the way down the page, leaving room below for
+/// suggestions.
 const BAR_MAX_WIDTH: f64 = 760.0;
 const BAR_SIDE_MARGIN: f64 = 96.0;
 pub const BAR_HEIGHT: f64 = 56.0;
-const BAR_TOP_MARGIN: f64 = 8.0;
+const BAR_FROM_TOP: f64 = 0.4;
+/// The bar never comes closer than this to the page's top edge.
+const BAR_MIN_TOP: f64 = 8.0;
 /// Margin between the page card and the frame's left, right and bottom
 /// edges, and the card's corner radius, in points.
 const PAGE_INSET: f64 = 8.0;
@@ -293,11 +298,11 @@ impl Frame {
         }
         if let Some(bar) = self.bar.borrow().as_ref() {
             let width = (rect.size.width - 2.0 * BAR_SIDE_MARGIN).clamp(240.0, BAR_MAX_WIDTH);
+            let page_top = page.origin.y + page.size.height;
+            let y = (page_top - page.size.height * BAR_FROM_TOP - BAR_HEIGHT / 2.0)
+                .min(page_top - BAR_MIN_TOP - BAR_HEIGHT);
             let bar_rect = NSRect::new(
-                NSPoint::new(
-                    rect.origin.x + (rect.size.width - width) / 2.0,
-                    rect.origin.y + rect.size.height - BAR_TOP_MARGIN - BAR_HEIGHT,
-                ),
+                NSPoint::new(rect.origin.x + (rect.size.width - width) / 2.0, y),
                 NSSize::new(width, BAR_HEIGHT),
             );
             bar.setFrame_display(bar_rect, true);

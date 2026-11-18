@@ -123,7 +123,9 @@ task list is written then, not here.
 - intent: The address bar classifies input as an address or a search and
   suggests only from local history, bookmarks and tabs. Bookmarks are
   available, and the command palette reaches tabs, history, bookmarks, spaces,
-  profiles and commands.
+  profiles and commands. The address bar rests at the top of the sidebar
+  and floats over the page centre when called, like Zen's (owner,
+  2026-11-18; the floating position is built).
 - affected: `crates/aeri-core` (`browsing::omnibox`, `library`),
   `apps/aeri` (address bar, palette, bookmarks panel)
 - prereqs: 6, 7
@@ -179,7 +181,9 @@ task list is written then, not here.
 - intent: Tabs on the side or top, sidebar left or right, a hiding sidebar,
   and full-screen chrome hiding. Light/dark/system, density, accents and space
   colours. Theme import/export (look only). Every command can have a shortcut,
-  and conflicts are refused.
+  and conflicts are refused. The address bar's floating behaviour is a
+  setting, as in Zen: float only when called from the keyboard or New Tab,
+  always float, or stay attached (owner, 2026-11-18).
 - affected: `crates/aeri-core` (`appearance`), `apps/aeri` (`theme`,
   `shell::keymap`, settings window)
 - prereqs: 7, 8
