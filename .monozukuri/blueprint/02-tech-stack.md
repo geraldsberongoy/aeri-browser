@@ -1,7 +1,7 @@
 # Tech stack — Aeri
 
-Status: **approved** 2026-11-18 (owner), except codecs/DRM, which is being
-researched at the owner's request (`docs/research/codecs-drm.md`).
+Status: **approved** 2026-11-18 (owner), including the codecs/DRM plan
+(decision 1 below, ADR 0005).
 Evidence: `docs/research/gpui.md`, `docs/research/cef.md`,
 `docs/research/blocking-and-credentials.md` (all 2026-11-18, primary sources,
 labelled Observed / Reported / Inferred). Requirements:
@@ -162,18 +162,25 @@ More crates only when an ownership boundary appears (handoff §9).
 
 ## Owner decisions (2026-11-18)
 
-1. **Video codecs and DRM — pending.** Standard CEF builds cannot play
-   H.264/AAC video or Widevine DRM (Observed in a probe). The owner needs
-   them and asked for workarounds; research is in progress and the choice
-   (self-built CEF with codecs, OS decoders, Widevine licence route) will be
-   added here for approval before stage 3 closes.
+1. **Video codecs and DRM — decided** (`docs/research/codecs-drm.md`, ADR
+   0005). Early phases use stock CEF. A self-built CEF with
+   `proprietary_codecs=true ffmpeg_branding=Chrome` (H.264/AAC, the same
+   approach as Helium, Brave and ungoogled-chromium) is its own phase before
+   the first public release. The build machine is decided at that phase, and
+   licensing gets legal advice there. Widevine stays as stock CEF delivers it
+   (the component downloads and works without VMP signing), with an "Open in
+   system browser" fallback for services that refuse unsigned clients.
+   Official Widevine signing is deferred until there is a company.
 2. **Apple developer account: individual.** Apple grants the browser
    passkey entitlement only to organisation accounts. Consequences until an
    organisation account exists (needs a legal entity and a D-U-N-S number):
    no iCloud Keychain passkeys, and no Apple Passwords (macOS refuses to start
    Apple's helper for an app without the entitlement — Observed). Security
    keys still work and phone passkeys probably do (Inferred, untested).
-   Nothing else in the stack depends on it.
+   Nothing else in the stack depends on it. **Decided:** iCloud passkeys and
+   Apple Passwords are deferred until an organisation account exists.
+   Meanwhile passkeys work through password-manager extensions (1Password,
+   Bitwarden), phone sign-in (QR code), and security keys.
 3. **Mac password default:** Apple Passwords via Apple's official extension
    once the entitlement is granted. Until then, and on Windows, the default
    is Aeri's basic store in the Keychain / Credential Manager. Password-
@@ -189,6 +196,9 @@ More crates only when an ownership boundary appears (handoff §9).
   process, runtime lists.
 - `docs/decisions/0004-profile-storage.md` — request context + per-profile
   SQLite + layout above.
+- `docs/decisions/0005-media-codecs-and-drm.md` — stock CEF first, then a
+  self-built CEF with H.264/AAC before the public release; Widevine unsigned
+  with a system-browser fallback.
 
 (ADRs live in `docs/decisions/` per the handoff, not `.monozukuri/decisions/`,
 to keep one convention in a public repo.)

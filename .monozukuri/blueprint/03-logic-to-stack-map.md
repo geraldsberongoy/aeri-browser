@@ -1,8 +1,8 @@
 # Logic → stack map — Aeri
 
-Status: **proposed** (awaiting owner approval).
+Status: **approved** 2026-11-18 (owner).
 Inputs: `01-business-logic.md` (approved), `02-tech-stack.md` (approved,
-codecs/DRM pending).
+including ADR 0005 for codecs/DRM).
 
 Every stage-1 element maps to exactly one *owning* home. "Owning" means the
 place whose code or data decides the behaviour; other layers may carry it.
@@ -205,8 +205,10 @@ lacks a home.
   can move between two Views windows of the same profile. **S1** decides;
   the fallback is the stage-1 edge case's "showing in another window"
   placeholder.
-- **Video codecs and DRM** — Chrome-compatible media depends on the pending
-  codecs decision.
+- **Video codecs and DRM** — home is the CEF build (`cef::` + the build
+  pipeline). Stock CEF lacks H.264/AAC until the codec-build phase (ADR
+  0005). DRM services that refuse unsigned Widevine get `app::shell`'s
+  "Open in system browser" fallback.
 
 ## Unused components
 

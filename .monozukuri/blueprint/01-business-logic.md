@@ -549,6 +549,9 @@ Profile:
   look choices -> refused with the reason; the current theme stays.
 - Binding a shortcut already used by another command -> refused, naming the
   other command, with an offer to swap.
+- A streaming site refuses protected playback in Aeri -> Aeri offers to open
+  that page in the system's default browser, passing only the address.
+  (Decided with the codecs plan, 2026-11-18)
 - System switches between light and dark, or turns on reduced motion, while
   Aeri runs -> Aeri follows immediately.
 
