@@ -52,9 +52,10 @@ S1 changed the layering; see
 
 ```text
   address bar   GPUI child window (pop-up kind, re-levelled to the frame)
-  active tab    frameless Chrome-style CefWindow, child window covering the frame
+  active tab    borderless CefWindow, child window inset below the strip
   other tabs    CefWindows, ordered out
-  frame         GPUI window: size, position, minimise, full screen, Space
+  frame         GPUI window: the strip (traffic lights, back, forward,
+                reload); size, position, minimise, full screen, Space
 ```
 
 - **One tab, one CEF window.** A Chrome-style window hosts exactly one
@@ -65,9 +66,10 @@ S1 changed the layering; see
   - refitting children on `NSWindowDidResize` and the full-screen
     notifications;
   - ordering the active tab in and the previous one out;
-  - retargeting the tab windows' close and minimise buttons to the frame;
-  - an app-local mouse-down monitor for the zoom button and a 10 pt drag
-    strip;
+  - styling tab windows as borderless rounded cards with no buttons, and
+    keeping the frame's active look while a child is key
+    (`_sharesParentKeyState`);
+  - forcing overlay scrollbars for pages (`preferredScrollerStyle`);
   - forwarding key status when the frame itself becomes key.
 - **Stock GPUI has no `addChildWindow` call**, and its pop-up kind uses a
   global float level ([gpui.md Q4](../research/gpui.md)). Aeri attaches

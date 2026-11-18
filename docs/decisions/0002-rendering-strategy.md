@@ -97,27 +97,46 @@ Revised layering, approved by the owner ("stacked" option):
 
 ```text
   address bar   GPUI child window (pop-up kind, re-levelled to the frame)
-  active tab    frameless Chrome-style CefWindow, child window covering the frame
+  active tab    frameless Chrome-style CefWindow, child window inset as a card
   other tabs    CefWindows, ordered out (Chromium reports them hidden)
   frame         GPUI window: owns size, position, minimise, full screen, Space
 ```
 
-- Tab windows show their own traffic lights, because the frame's are
-  covered. Close and minimise are retargeted to the frame (target/action).
-  The zoom button ignores target/action, so an app-local mouse-down monitor
-  sends it to the frame. Option-click zooms instead.
-- A 10 pt strip along the top of the page drags the frame (same monitor).
-  A double-click there zooms.
+- *Superseded 2026-11-18 (owner: "shouldn't it be like this?", a Codex
+  screenshot).* Tab windows first covered the frame and carried their own
+  traffic lights, retargeted to the frame, with a 10 pt drag strip over the
+  page; the lights then sat on top of page content. Now the frame draws a
+  44 pt GPUI strip with its own traffic lights, back, forward and reload,
+  and the active tab sits below it as a card inset 8 pt, every corner
+  rounded 10 pt like Search's cards. Tab windows are borderless (CEF's
+  frameless windows are titled, and macOS rounds titled windows its own,
+  wider way) and have no buttons. The strip drags the frame through
+  `start_window_move` (`app_owns_titlebar_drag`, so AppKit does not delay
+  button clicks); a double-click zooms.
+- Child windows override AppKit's private `_sharesParentKeyState`, so the
+  frame keeps its active look (coloured lights) while a tab or the bar is
+  key. Observed: `_hasActiveAppearance` is false without it, true with it.
+- Pages draw overlay scrollbars: `+[NSScroller preferredScrollerStyle]`
+  answers "overlay" in the browser process, which Chromium forwards to
+  every renderer. A connected mouse otherwise gives every page a wide,
+  always-on track along the card's edge (owner: "scrollbar looks shi").
 - When the frame becomes key, it hands the keyboard to the address bar if
   shown, otherwise to the active tab.
 - `NSWindowDidResize` and the full-screen notifications on the frame refit
   every child. Child windows follow the frame into its full-screen Space
-  (`FullScreenAuxiliary`). Traffic lights are hidden in full screen.
+  (`FullScreenAuxiliary`). In full screen the strip's controls move left
+  into the lights' place, and a full-screen change hands the keyboard back
+  to the page.
 - Checked: drag, edge resize, minimise and restore, full screen from the
   green button and Ctrl-Cmd-F, tab switching (the hidden tab reports
   `visibilityState: hidden`), close button, Cmd-Q.
-- Not yet measured: per-tab cost of the extra window (Phase 13), and
-  flicker during live resize at 120 fps (owner's manual check).
+- Live resize at 120 fps (ScreenCaptureKit, sRGB, 2026-11-18): frames
+  arrive every 8.4 ms (median) while resizing. No other colour shows
+  between frame and page, but the card trails the frame: its 7 pt margin
+  widened by up to 10 pt in 18 of 314 frames of a 1.5 s corner drag.
+  Residual; fixing it means resizing the CEF window in the same Core
+  Animation transaction as the frame.
+- Not yet measured: per-tab cost of the extra window (Phase 13).
 
 ## S2 outcome (Phase 2, 2026-11-18)
 

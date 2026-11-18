@@ -333,9 +333,9 @@ wrap_window_delegate! {
             1
         }
 
-        // Shown on every tab window; the frame retargets them to itself.
+        // The frame's strip carries the traffic lights (`apps/aeri` mac.rs).
         fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int {
-            1
+            0
         }
 
         // The frame window resizes, minimises and zooms; tab windows follow.

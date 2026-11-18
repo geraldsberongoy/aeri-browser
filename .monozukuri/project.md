@@ -24,8 +24,10 @@ open at once, one window per profile, inside one running app.
 - Operating system.
 
 ## Current phase
-Phase 1 (Browse one page) is built and verified; CI is green. Open: the
-owner's 120 fps resize recording.
+Phase 1 (Browse one page) is built and verified; CI is green. The 120 fps
+resize recording shows the page trailing the frame by up to 10 pt in some
+frames (residual). The window now has a strip with its own traffic lights,
+back, forward and reload, and the page is a rounded card below it.
 Phase 2 (Web Store extensions, S2) is built and verified by scripted
 checks: uBO Lite, Bitwarden and Dark Reader install, persist, and open
 popups from GPUI buttons; page- and Chrome-opened tabs become Aeri tabs

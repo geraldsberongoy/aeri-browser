@@ -101,7 +101,7 @@ Stop and re-plan at roughly twice that.
 | 4 | GPUI shell | Done; stacked layering (ADR 0002 "S1 outcome") |
 | 5 | Focus hand-off | Done (scripted checks) |
 | 6 | Errors and crash | Done (Chromium error page and sad tab; Aeri marks the tab crashed) |
-| 7 | Resize and full screen | Done, except the 120 fps flicker recording (owner) |
+| 7 | Resize and full screen | Done. 120 fps recording: no gap of another colour; the page trails the frame by up to 10 pt in some frames (residual) |
 | 8 | Two tabs | Done, as two windows; the hidden tab reports `hidden` |
 | 9 | Clean shutdown | Done |
 | 10 | Signing and CI | Ad-hoc signing done; workflow written, not run on GitHub |
@@ -128,8 +128,9 @@ Stop and re-plan at roughly twice that.
 | Verified | Cmd-Q, the close button and an Apple-event quit all close the browsers and run `CefShutdown`. No Aeri process remains after 0.5–1.5 s, and there is no `Singleton*` lock. |
 | Verified | A cookie persists across restart in `Chromium/<profile-id>`. |
 | Verified | `cargo test --workspace` (17 passed), `cargo clippy --workspace --all-targets -D warnings`, `cargo fmt --check`, `codesign --verify --deep --strict`. |
-| Residual risk | Live-resize flicker at 120 fps not recorded (owner's manual check). Per-tab cost of a window per tab not measured (Phase 13). |
-| Residual risk | Tab windows' green-button hover menu (tiling) acts on the tab window, not the frame. Traffic lights look inactive while the address bar is key. |
+| Measured | Live resize recorded at 120 fps with ScreenCaptureKit (2026-11-18, sRGB, card layout): frames 8.4 ms apart (median) during a 1.5 s corner drag. No foreign colour between frame and page. The card's 7 pt margin widened by up to 10 pt in 18 of 314 frames (page trails the frame). |
+| Residual risk | Page trails the frame by up to 10 pt during live resize; needs the CEF window resized in the frame's Core Animation transaction. Per-tab cost of a window per tab not measured (Phase 13). |
+| Changed | 2026-11-18: tab windows lost their traffic lights and drag strip. The frame draws a strip with its own lights, back, forward and reload; the page is a rounded card below it ([ADR 0002](../../docs/decisions/0002-rendering-strategy.md)). This removes the tab windows' tiling-menu and inactive-lights residuals. |
 | Residual risk | Sidebar click-through (Phase 6) needs per-region `ignoresMouseEvents`. GPUI cannot pass transparent clicks. |
 | Residual risk | Chromium logs "Signature validation of current process failed (-67030)" on ad-hoc builds; recheck with real signing (Phase 15). |
 | Residual risk | `Chromium/Default` is still created under the root; check what it holds during profile isolation (Phase 5). |

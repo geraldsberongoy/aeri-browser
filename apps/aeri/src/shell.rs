@@ -39,7 +39,7 @@ use gpui::{
 use crate::address_bar::{self, AddressBar};
 use crate::mac::{self, BAR_HEIGHT, Frame};
 use crate::text_input;
-use crate::window_frame::WindowFrame;
+use crate::window_frame::{TRAFFIC_LIGHTS, WindowFrame};
 
 /// Neutral default search provider (stage 1, open question 1).
 const SEARCH_TEMPLATE: &str = "https://duckduckgo.com/?q={query}";
@@ -58,7 +58,16 @@ pub enum AppMsg {
     Shortcut { window: u64, shortcut: Shortcut },
     ExtensionsChanged,
     ExtensionAction { window: u64, extension: String },
+    Nav { window: u64, nav: Nav },
     Quit,
+}
+
+/// The strip's history buttons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Nav {
+    Back,
+    Forward,
+    Reload,
 }
 
 pub struct Config {
@@ -244,6 +253,7 @@ impl Shell {
             AppMsg::AddressDismissed { window } => self.hide_bar(window, cx),
             AppMsg::Shortcut { window, shortcut } => self.shortcut(window, shortcut, cx),
             AppMsg::ExtensionsChanged => self.extensions_changed(cx),
+            AppMsg::Nav { window, nav } => self.nav(window, nav),
             AppMsg::ExtensionAction { window, extension } => {
                 self.extension_action(window, extension, cx)
             }
@@ -330,7 +340,7 @@ impl Shell {
             titlebar: Some(TitlebarOptions {
                 title: Some("Aeri".into()),
                 appears_transparent: true,
-                traffic_light_position: None,
+                traffic_light_position: Some(TRAFFIC_LIGHTS),
             }),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
@@ -338,6 +348,9 @@ impl Shell {
                 cx,
             ))),
             window_min_size: Some(size(px(480.), px(320.))),
+            // The strip drags with `start_window_move`; AppKit must not hold
+            // back clicks on its buttons to tell a drag from a double-click.
+            app_owns_titlebar_drag: true,
             ..Default::default()
         };
         let tx = self.tx.clone();
@@ -549,6 +562,7 @@ impl Shell {
         }
     }
 
+    /// Mirrors the active tab in the address bar and the strip.
     fn refresh_bar(&self, window_id: u64, cx: &mut App) {
         let Some(w) = self.window(window_id) else {
             return;
@@ -556,9 +570,26 @@ impl Shell {
         let Some(tab) = w.entry(w.active).map(|entry| entry.model.clone()) else {
             return;
         };
+        let _ = w.frame_window.update(cx, |frame, _, cx| {
+            frame.show_history(tab.can_go_back, tab.can_go_forward, cx)
+        });
         let _ = w
             .bar
             .update(cx, |bar, window, cx| bar.show_tab(&tab, window, cx));
+    }
+
+    fn nav(&mut self, window_id: u64, nav: Nav) {
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        let Some(page) = w.active_cef() else { return };
+        let tab = w.active;
+        let command = match nav {
+            Nav::Back => Command::GoBack { tab },
+            Nav::Forward => Command::GoForward { tab },
+            Nav::Reload => Command::Reload { tab },
+        };
+        self.later(move |_| page.execute(&command));
     }
 
     fn show_bar(&mut self, window_id: u64, cx: &mut App) {

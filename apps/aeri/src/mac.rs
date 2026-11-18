@@ -2,14 +2,16 @@
 //!
 //! ```text
 //!   address bar   GPUI child window, above everything, shown when called
-//!   active tab    CEF window (one browser), child window covering the frame
+//!   active tab    CEF window (one browser), child window inset as a card
 //!   other tabs    CEF windows, ordered out
-//!   frame         GPUI window: owns resize, minimise, full screen, Spaces
+//!   frame         GPUI window: the strip with the traffic lights; owns
+//!                 resize, minimise, full screen, Spaces
 //! ```
 //!
-//! Child windows move with the frame and follow it into full screen. Tab
-//! windows show their own traffic lights (the frame's are covered), retargeted
-//! to act on the frame. A strip along the top of the page drags the frame.
+//! Child windows move with the frame and follow it into full screen. The
+//! active tab's window sits below the frame's strip, inset by [`PAGE_INSET`]
+//! with rounded corners, so the frame's own traffic lights stay uncovered.
+//! Tab windows have no title bar buttons of their own.
 //!
 //! Everything here runs on the main thread and touches only AppKit, so it is
 //! safe from CEF callbacks. It must not run inside a GPUI update: moving or
@@ -18,7 +20,7 @@
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 use aeri_cef::TabObserver;
 use aeri_core::ids::TabId;
@@ -26,10 +28,9 @@ use block2::RcBlock;
 use futures::channel::mpsc::UnboundedSender;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{MainThreadMarker, sel};
+use objc2::{msg_send, sel};
 use objc2_app_kit::{
-    NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSView, NSWindow, NSWindowButton,
-    NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
+    NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
     NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
     NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
 };
@@ -38,14 +39,17 @@ use objc2_foundation::{
 };
 
 use crate::shell::AppMsg;
+use crate::window_frame::STRIP_HEIGHT;
 
 /// Address bar geometry, in points.
 const BAR_MAX_WIDTH: f64 = 760.0;
 const BAR_SIDE_MARGIN: f64 = 96.0;
 pub const BAR_HEIGHT: f64 = 56.0;
 const BAR_TOP_MARGIN: f64 = 8.0;
-/// Height of the strip along the top of the page that drags the window.
-const DRAG_STRIP: f64 = 10.0;
+/// Margin between the page card and the frame's left, right and bottom
+/// edges, and the card's corner radius, in points.
+const PAGE_INSET: f64 = 8.0;
+const PAGE_RADIUS: f64 = 10.0;
 
 /// The `NSWindow` owning a content `NSView`.
 fn window_of(view: *mut c_void) -> Option<Retained<NSWindow>> {
@@ -117,6 +121,44 @@ pub fn allow_termination() {
     TERMINATION_ALLOWED.with(|allowed| allowed.set(true));
 }
 
+/// `NSScrollerStyleOverlay`.
+const SCROLLER_STYLE_OVERLAY: isize = 1;
+
+extern "C-unwind" fn overlay_scroller_style(
+    _class: *mut AnyObject,
+    _sel: objc2::runtime::Sel,
+) -> isize {
+    SCROLLER_STYLE_OVERLAY
+}
+
+/// Pages draw thin overlay scrollbars that fade when idle, whatever pointing
+/// device is attached. Chromium asks `+[NSScroller preferredScrollerStyle]`
+/// in this (the browser) process and sends the answer to every renderer, so
+/// answering "overlay" here covers every page. A connected mouse otherwise
+/// gives pages a wide, always-on track along the card's edge. Call before
+/// CEF initializes.
+pub fn prefer_overlay_scrollers() {
+    // SAFETY: objc runtime calls on the main thread before any window
+    // exists; the IMP matches the `q@:` encoding (NSInteger return, Class
+    // self, SEL).
+    unsafe {
+        let class = objc2::ffi::objc_getClass(c"NSScroller".as_ptr());
+        let meta = objc2::ffi::object_getClass(class.cast());
+        if meta.is_null() {
+            tracing::warn!("no NSScroller; pages keep the system scrollbar style");
+            return;
+        }
+        objc2::ffi::class_replaceMethod(
+            meta as *mut objc2::runtime::AnyClass,
+            sel!(preferredScrollerStyle),
+            std::mem::transmute::<*const c_void, unsafe extern "C-unwind" fn()>(
+                overlay_scroller_style as *const c_void,
+            ),
+            c"q@:".as_ptr(),
+        );
+    }
+}
+
 pub struct Frame {
     window_id: u64,
     tx: UnboundedSender<AppMsg>,
@@ -129,7 +171,6 @@ pub struct Frame {
     shown: RefCell<Option<Retained<NSWindow>>>,
     bar_visible: Cell<bool>,
     notifications: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
-    monitor: RefCell<Option<Retained<AnyObject>>>,
 }
 
 impl Frame {
@@ -144,7 +185,6 @@ impl Frame {
             shown: RefCell::default(),
             bar_visible: Cell::new(false),
             notifications: RefCell::default(),
-            monitor: RefCell::default(),
         })
     }
 
@@ -164,10 +204,10 @@ impl Frame {
         }
         bar.setAlphaValue(0.0);
         bar.setIgnoresMouseEvents(true);
+        share_parent_key_state(&bar);
         *self.frame.borrow_mut() = Some(frame.clone());
         *self.bar.borrow_mut() = Some(bar);
         self.observe(&frame);
-        self.install_drag_monitor();
         self.layout();
     }
 
@@ -184,13 +224,18 @@ impl Frame {
                 NSWindowDidBecomeKeyNotification,
             ] {
                 let this = Rc::downgrade(self);
+                let resized = std::ptr::eq(name, NSWindowDidResizeNotification);
                 let becomes_key = std::ptr::eq(name, NSWindowDidBecomeKeyNotification);
                 let block = RcBlock::new(move |_: NonNull<NSNotification>| {
                     let Some(this) = this.upgrade() else { return };
-                    if becomes_key {
-                        this.forward_key();
-                    } else {
+                    if !becomes_key {
                         this.layout();
+                    }
+                    // A full-screen transition can leave the frame key
+                    // without a fresh becomes-key, e.g. after the green
+                    // button: hand the keyboard back either way.
+                    if !resized {
+                        this.forward_key();
                     }
                 });
                 tokens.push(center.addObserverForName_object_queue_usingBlock(
@@ -215,75 +260,16 @@ impl Frame {
         }
     }
 
-    /// Mouse-down in the strip along the top of the active page drags the
-    /// frame (and with it every child window); the green button acts on the
-    /// frame.
-    fn install_drag_monitor(self: &Rc<Self>) {
-        let this: Weak<Self> = Rc::downgrade(self);
-        let block = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
-            // SAFETY: AppKit hands us a live event on the main thread.
-            let event_ref = unsafe { event.as_ref() };
-            if let Some(this) = this.upgrade()
-                && this.handle_mouse_down(event_ref)
-            {
-                return std::ptr::null_mut();
-            }
-            event.as_ptr()
-        });
-        // SAFETY: registering a local monitor on the main thread.
-        let monitor = unsafe {
-            NSEvent::addLocalMonitorForEventsMatchingMask_handler(
-                NSEventMask::LeftMouseDown,
-                &block,
-            )
-        };
-        *self.monitor.borrow_mut() = monitor;
-    }
-
-    /// Returns true when the event was handled here and must not reach the
-    /// tab window.
-    fn handle_mouse_down(&self, event: &NSEvent) -> bool {
-        if event.r#type() != NSEventType::LeftMouseDown {
-            return false;
-        }
-        let (Some(frame), Some(tab)) = (self.frame.borrow().clone(), self.active_window()) else {
-            return false;
-        };
-        let Some(mtm) = MainThreadMarker::new() else {
-            return false;
-        };
-        let Some(window) = event.window(mtm) else {
-            return false;
-        };
-        if !std::ptr::eq(&*window, &*tab) {
-            return false;
-        }
-        let point = event.locationInWindow();
-        // The zoom button ignores target/action, so route it here.
-        if button_contains(&tab, NSWindowButton::ZoomButton, point) {
-            if event.modifierFlags().contains(NSEventModifierFlags::Option) {
-                frame.performZoom(None);
-            } else {
-                frame.toggleFullScreen(None);
-            }
-            return true;
-        }
-        let height = tab.frame().size.height;
-        let over_buttons = [
-            NSWindowButton::CloseButton,
-            NSWindowButton::MiniaturizeButton,
-        ]
-        .into_iter()
-        .any(|kind| button_contains(&tab, kind, point));
-        if point.y < height - DRAG_STRIP || over_buttons {
-            return false;
-        }
-        if event.clickCount() >= 2 {
-            frame.performZoom(None);
-        } else {
-            frame.performWindowDragWithEvent(event);
-        }
-        true
+    /// Where the active tab's card goes, in screen coordinates.
+    fn page_rect(frame: &NSWindow) -> NSRect {
+        let rect = frame.frame();
+        NSRect::new(
+            NSPoint::new(rect.origin.x + PAGE_INSET, rect.origin.y + PAGE_INSET),
+            NSSize::new(
+                (rect.size.width - 2.0 * PAGE_INSET).max(1.0),
+                (rect.size.height - STRIP_HEIGHT - PAGE_INSET).max(1.0),
+            ),
+        )
     }
 
     fn active_window(&self) -> Option<Retained<NSWindow>> {
@@ -295,25 +281,15 @@ impl Frame {
             .map(|(_, w)| w.clone())
     }
 
-    /// Fits every tab window to the frame and places the address bar.
+    /// Fits every tab window to the page card and places the address bar.
     pub fn layout(&self) {
         let Some(frame) = self.frame.borrow().clone() else {
             return;
         };
         let rect = frame.frame();
-        // Full screen has no traffic lights.
-        let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
+        let page = Self::page_rect(&frame);
         for (_, tab) in self.tabs.borrow().iter() {
-            tab.setFrame_display(rect, true);
-            for kind in [
-                NSWindowButton::CloseButton,
-                NSWindowButton::MiniaturizeButton,
-                NSWindowButton::ZoomButton,
-            ] {
-                if let Some(button) = tab.standardWindowButton(kind) {
-                    button.setHidden(fullscreen);
-                }
-            }
+            tab.setFrame_display(page, true);
         }
         if let Some(bar) = self.bar.borrow().as_ref() {
             let width = (rect.size.width - 2.0 * BAR_SIDE_MARGIN).clamp(240.0, BAR_MAX_WIDTH);
@@ -335,7 +311,7 @@ impl Frame {
             // Not created yet: `created` activates it.
             return;
         };
-        next.setFrame_display(frame.frame(), true);
+        next.setFrame_display(Self::page_rect(&frame), true);
         // SAFETY: AppKit calls on the main thread.
         unsafe { frame.addChildWindow_ordered(&next, NSWindowOrderingMode::Above) };
         next.orderFront(None);
@@ -417,41 +393,68 @@ impl Frame {
             // SAFETY: removing our own observer tokens on the main thread.
             unsafe { center.removeObserver(token.as_ref()) };
         }
-        if let Some(monitor) = self.monitor.borrow_mut().take() {
-            // SAFETY: removing our own monitor on the main thread.
-            unsafe { NSEvent::removeMonitor(&monitor) };
-        }
     }
+}
 
-    /// Points a tab window's close and minimise buttons at the frame. (The
-    /// zoom button ignores target/action; `handle_mouse_down` routes it.)
-    fn retarget_buttons(frame: &NSWindow, tab: &NSWindow) {
-        let actions = [
-            (NSWindowButton::CloseButton, sel!(performClose:)),
-            (NSWindowButton::MiniaturizeButton, sel!(performMiniaturize:)),
-        ];
-        for (kind, action) in actions {
-            if let Some(button) = tab.standardWindowButton(kind) {
-                // SAFETY: NSControl target/action on the main thread; the
-                // frame outlives its tab windows.
-                unsafe {
-                    button.setTarget(Some(frame));
-                    button.setAction(Some(action));
-                }
-            }
+/// Makes a tab window a card like Search's: every corner rounded by
+/// [`PAGE_RADIUS`] (the page's scrollbars are overlays, see
+/// [`prefer_overlay_scrollers`], so the corners clip nothing), clear around
+/// them, no shadow of its own (the frame casts the window's). CEF's
+/// frameless windows are still titled, and macOS rounds a titled window's
+/// corners its own (wider) way, so drop the title bar.
+fn style_card(window: &NSWindow) {
+    window.setStyleMask(NSWindowStyleMask::Borderless);
+    window.setOpaque(false);
+    window.setBackgroundColor(Some(&NSColor::clearColor()));
+    window.setHasShadow(false);
+    let Some(view) = window.contentView() else {
+        return;
+    };
+    view.setWantsLayer(true);
+    // SAFETY: CALayer messages on the main thread; `layer` is live while the
+    // view is, and a layer-backed view always has one.
+    unsafe {
+        let layer: *mut AnyObject = msg_send![&*view, layer];
+        if let Some(layer) = layer.as_ref() {
+            let _: () = msg_send![layer, setCornerRadius: PAGE_RADIUS];
+            // `kCACornerCurveContinuous`, Search's `.continuous` style.
+            let curve = objc2_foundation::ns_string!("continuous");
+            let _: () = msg_send![layer, setCornerCurve: curve];
+            let _: () = msg_send![layer, setMasksToBounds: true];
         }
     }
 }
 
-/// Whether `point` (window coordinates) is on one of `window`'s traffic lights.
-fn button_contains(window: &NSWindow, kind: NSWindowButton, point: NSPoint) -> bool {
-    window.standardWindowButton(kind).is_some_and(|button| {
-        let rect = button.convertRect_toView(button.bounds(), None);
-        point.x >= rect.origin.x
-            && point.x <= rect.origin.x + rect.size.width
-            && point.y >= rect.origin.y
-            && point.y <= rect.origin.y + rect.size.height
-    })
+extern "C-unwind" fn shares_parent_key_state(
+    this: *mut AnyObject,
+    _sel: objc2::runtime::Sel,
+) -> objc2::runtime::Bool {
+    // SAFETY: AppKit sends this to a live window on the main thread.
+    let parent: *mut AnyObject = unsafe { msg_send![this, parentWindow] };
+    objc2::runtime::Bool::new(!parent.is_null())
+}
+
+/// While a child window of `window`'s class (a tab or the address bar) is
+/// key, its parent keeps the key appearance, so the frame's traffic lights
+/// stay coloured. Overrides AppKit's private `_sharesParentKeyState` (NO by
+/// default; Chromium uses the same hook for its child widgets) once per
+/// class; windows without a parent are unaffected.
+fn share_parent_key_state(window: &NSWindow) {
+    // SAFETY: objc runtime calls on the main thread; the IMP matches the
+    // `B@:` encoding (BOOL return, id self, SEL).
+    unsafe {
+        let class = objc2::ffi::object_getClass((window as *const NSWindow).cast());
+        let imp = std::mem::transmute::<*const c_void, unsafe extern "C-unwind" fn()>(
+            shares_parent_key_state as *const c_void,
+        );
+        // Fails harmlessly when the class already has it (a later window).
+        objc2::ffi::class_addMethod(
+            class as *mut objc2::runtime::AnyClass,
+            sel!(_sharesParentKeyState),
+            imp,
+            c"B@:".as_ptr(),
+        );
+    }
 }
 
 impl TabObserver for Frame {
@@ -461,9 +464,8 @@ impl TabObserver for Frame {
         };
         window.setExcludedFromWindowsMenu(true);
         window.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenAuxiliary);
-        if let Some(frame) = self.frame.borrow().as_ref() {
-            Self::retarget_buttons(frame, &window);
-        }
+        style_card(&window);
+        share_parent_key_state(&window);
         self.tabs.borrow_mut().push((tab, window));
         self.layout();
         if self.active.get() == Some(tab) {
