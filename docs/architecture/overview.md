@@ -28,7 +28,7 @@ The workspace maps them to crates as follows.
 | --- | --- | --- | --- |
 | A. Native interface | Windows, sidebar, address bar, palette, menus, shortcuts, themes, animation | `apps/aeri` (`app::shell`, `app::theme`) | GPUI, `aeri-core` |
 | B. Browser core | Tab and space state, profiles, session, history, bookmarks, settings, rules | `crates/aeri-core` | `rusqlite`, `serde`; **no GPUI, no CEF** |
-| C. Chromium integration | Browsers, request contexts, handlers, blocking hook, crash detection | `crates/aeri-cef` | `cef` crate, `aeri-core` |
+| C. Chromium integration | Browsers, request contexts, handlers, crash detection | `crates/aeri-cef` | `cef` crate, `aeri-core` |
 | D. Platform integration | Menus, Keychain, file dialogs, notifications, appearance, packaging | `apps/aeri` (`app::platform`), `scripts/` | `objc2`, `keyring-core` |
 
 `apps/aeri-helper` is a fifth, small binary. It is Chromium's subprocess
@@ -67,7 +67,7 @@ flowchart TB
     F -. addChildWindow .- G2
   end
   Core["aeri-core: profiles, spaces, tabs, rules, persistence"] --> W
-  CEF["aeri-cef: request contexts, tab windows, handlers, blocker hook"] --> T1
+  CEF["aeri-cef: request contexts, tab windows, handlers"] --> T1
 ```
 
 Chrome's own UI (extension popups, Web Store install prompt, permission and
@@ -130,7 +130,7 @@ Root: `~/Library/Application Support/Aeri/` on macOS,
 | `Profiles/<profile-id>/profile.db` | Spaces, tabs, trails, closed tabs, history, bookmarks, site settings, downloads, password-provider choice |
 | `Chromium/` | CEF `root_cache_path`. Not used as a profile. |
 | `Chromium/<profile-id>/` | That profile's cookies, cache, site data, extensions |
-| `Blocking/` | Downloaded filter lists and the serialised engine cache |
+| (no `Blocking/`) | Blocking is uBlock Origin Lite's, inside each profile's Chromium storage ([ADR 0008](../decisions/0008-blocking-through-ublock-origin-lite.md)) |
 
 Profile ids are UUID v7. Migrations are numbered SQL applied at open. Details
 and deletion rules are in [profile-isolation.md](profile-isolation.md).
@@ -151,7 +151,7 @@ and deletion rules are in [profile-isolation.md](profile-isolation.md).
 apps/aeri/          the binary: GPUI windows and views, macOS glue
 apps/aeri-helper/   CEF subprocess binary (renderer hooks)
 crates/aeri-core/   domain model, rules, persistence; no GPUI, no CEF
-crates/aeri-cef/    CEF adapter for the engine seam, plus the blocker hook
+crates/aeri-cef/    CEF adapter for the engine seam
 ```
 
 These are created in Phase 1 (planned).

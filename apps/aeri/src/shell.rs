@@ -44,6 +44,12 @@ use crate::window_frame::{TRAFFIC_LIGHTS, WindowFrame};
 /// Neutral default search provider (stage 1, open question 1).
 const SEARCH_TEMPLATE: &str = "https://duckduckgo.com/?q={query}";
 const NEW_TAB_URL: &str = "about:blank";
+/// Aeri blocks ads through uBlock Origin Lite (ADR 0008). Its store page
+/// opens once per profile, at the profile's first launch, unless it is
+/// already installed.
+const BLOCKER_ID: &str = "ddkjiahejlhfcafbddmgiahcphecmpfh";
+const BLOCKER_STORE_URL: &str =
+    "https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh";
 /// Accent for profiles created with `AERI_PROFILE` (development only).
 const DEV_PROFILE_ACCENT: u32 = 0x3fb68b;
 
@@ -119,6 +125,7 @@ impl AeriWindow {
 }
 
 struct Shell {
+    db: AppDb,
     root_cache_path: PathBuf,
     profile: Profile,
     context: Option<ProfileContext>,
@@ -185,6 +192,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     }]);
 
     let mut shell = Shell {
+        db,
         root_cache_path,
         profile,
         context: None,
@@ -237,6 +245,7 @@ impl Shell {
                 self.watch_extensions(cx);
                 let url = self.start_url.clone();
                 self.open_window(&url, cx);
+                self.offer_blocker(cx);
             }
             AppMsg::Signal(Signal::Engine(event)) => self.engine_event(event, cx),
             AppMsg::Signal(Signal::Shortcut { tab, shortcut }) => {
@@ -306,6 +315,28 @@ impl Shell {
                 .bar
                 .update(cx, |bar, _, cx| bar.set_extensions(extensions, cx));
         }
+    }
+
+    /// Opens uBlock Origin Lite's store page in a new tab, once per profile,
+    /// if it is not installed yet.
+    fn offer_blocker(&mut self, cx: &mut App) {
+        if self.extensions.iter().any(|e| e.id == BLOCKER_ID) {
+            return;
+        }
+        match self.db.take_blocker_offer(self.profile.id) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(err) => {
+                tracing::warn!(%err, "could not record the ad-blocker offer");
+                return;
+            }
+        }
+        let Some(window_id) = self.windows.last().map(|w| w.id) else {
+            return;
+        };
+        tracing::info!("offering uBlock Origin Lite");
+        let start = TabStart::Load(BLOCKER_STORE_URL.to_owned());
+        self.add_tab(window_id, TabId::next(), start, None, true, cx);
     }
 
     /// Runs an extension's action on the window's active tab, as Chrome's

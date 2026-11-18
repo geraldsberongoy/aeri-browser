@@ -65,18 +65,17 @@ task list is written then, not here.
   stage-1 resource rules are revisited with the owner
 - size: S
 
-## Phase 4: Built-in ad and tracker blocking
+## Phase 4: Ad and tracker blocking through uBlock Origin Lite
 - id: 4
-- intent: Blocking is on by default with uBO's lists downloaded at first
-  launch. It covers network and cosmetic filtering, can be switched off per
-  site, and has measured per-request cost.
-- affected: `crates/aeri-cef` (`blocking`, `OnBeforeResourceLoad`),
-  `apps/aeri-helper` (cosmetic injection), `crates/aeri-core` (filter-list
-  metadata, site settings), `Blocking/` cache
-- prereqs: 1
+- intent: A profile's first launch offers uBlock Origin Lite once (its store
+  page opens in a tab). No built-in blocker: ADR 0008 supersedes ADR 0003
+  (owner, 2026-11-18). The original plan (adblock-rust in
+  `OnBeforeResourceLoad`, lists, cosmetic injection, S5) is dropped.
+- affected: `crates/aeri-core` (`store`: the offer flag), `apps/aeri` (shell)
+- prereqs: 2
 - playbook: feature
-- risk: medium — S5; licence attribution in the UI
-- size: M
+- risk: low
+- size: XS
 
 ## Phase 5: Profiles
 - id: 5
@@ -252,7 +251,8 @@ task list is written then, not here.
 - **Phases 2–4** are small probes-with-outcomes, each depending only on
   phase 1. Phase 2 goes first: it tests the extension promise that ADR 0002
   exists for. Phase 3 (S7) decides whether two stage-1 resource rules hold.
-  Phase 4 (S5) measures blocking cost while the codebase is still small.
+  Phase 4 was to measure blocking cost (S5); ADR 0008 replaced it with
+  uBO Lite, so it only offers the extension.
 - **Phase 5** comes before tabs because profile isolation is a security
   boundary and defines where every later piece of data lives (`profile.db`).
   Building tabs first would mean migrating them into profiles later.

@@ -16,7 +16,7 @@ Risk levels: low, medium, high, critical. Sizes are in the detailed plan.
 | 1 | Browse one page | A dev build opens a page-first window: a GPUI frame with one frameless Chrome-style CEF window per tab and a GPUI address bar, all as child windows. It browses HTTPS, handles resize, full screen, errors and crashes, and quits with no orphan processes. Proves S1 and S3. Built; S1 revised the layering (ADR 0002). | high |
 | 2 | Chrome Web Store extensions | uBlock Origin Lite, Bitwarden and a dark-mode extension install from their store pages into a non-default profile, persist across restart, and show buttons and popups without a Chrome toolbar. Proves S2. Built: hidden Chrome toolbar, private DevTools pipe, Chrome-created tabs routed into Aeri tabs (ADR 0006). | high |
 | 3 | Background tabs behave | Unseen tabs are created lazily and slowed when hidden. Aeri knows when a tab plays audio or captures. S7. Built: background link tabs have no window until shown, Chromium throttles hidden tabs, sound comes from Aeri's tab-signals extension (ADR 0007). | medium |
-| 4 | Ad and tracker blocking | Built-in blocking is on by default with uBO lists downloaded at first launch. It covers network and cosmetic filtering, can be switched off per site, and has measured per-request cost. S5. | medium |
+| 4 | Ad and tracker blocking | Through uBlock Origin Lite, not a built-in blocker (ADR 0008, superseding ADR 0003). A profile's first launch opens uBO Lite's store page once. Built. | low |
 | 5 | Profiles | Create, rename, switch, delete and open profiles, one window each. Two profiles stay signed in to one site with different accounts. Dormant profiles release resources. S4. | high |
 | 6 | Tabs and session | Sidebar tabs (slide-over or pinned): open, close, reopen, duplicate, reorder, pin. Session restores on relaunch with only visible tabs loading. History is recorded. | medium |
 | 7 | Spaces and favourites | Spaces with colours and icons per profile, tab moves between spaces, favourites visible in every space. | medium |
@@ -43,7 +43,7 @@ later piece of data lives.
 | S2 | Web Store: install uBO Lite and Bitwarden end to end in a non-default profile. Popups without a toolbar. Run in Phase 2: passed with Chrome's toolbar kept hidden and `Extensions.triggerAction` over a private pipe (ADR 0006). | Phase 2 |
 | S3 | Run loop: CEF external pump inside GPUI. Live resize, menus, sheets, clean shutdown with N profiles. | Phase 1 |
 | S4 | Profile cost and isolation: 1/2/5/10 request contexts, storage does not cross, dormant profiles return memory. | Phase 5 |
-| S5 | Blocking hook: adblock-rust in `OnBeforeResourceLoad`, per-request latency, cosmetic injection timing. | Phase 4 |
+| S5 | Blocking hook: adblock-rust in `OnBeforeResourceLoad`. Dropped with the built-in blocker (ADR 0008). | — |
 | S6 | Passwords: Chrome's own manager in Chrome-style CEF without a toolbar, or a renderer-hook save and fill. | Phase 10 |
 | S7 | Background: hidden-view throttling and an audible-tab signal in Chrome-style CEF. Run in Phase 3: Chromium throttles ordered-out tabs on its own; CEF has no audible callback, so a bundled extension reports `chrome.tabs` audible over the private pipe (ADR 0007). | Phase 3 |
 
@@ -66,4 +66,4 @@ decision 2):
   ([ADR 0005](decisions/0005-media-codecs-and-drm.md)).
 
 Not planned for v1 (handoff §13 non-goals and the ADRs): a Chromium fork,
-WebSocket blocking in the built-in blocker, sync.
+a built-in blocker (ADR 0008), sync.

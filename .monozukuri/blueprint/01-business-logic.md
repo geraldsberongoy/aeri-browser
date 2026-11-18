@@ -130,12 +130,12 @@ sharing, generators, breach alerts) is out; basic save-and-fill is in.
 - **Certificate exception** — the Person's explicit choice to proceed past one
   certificate warning for one website.
 - **Site setting** — per-website choices in a profile beyond permissions:
-  content blocking on/off, keep awake.
+  keep awake. (Content blocking per site is uBlock Origin Lite's own; ADR 0008.)
 - **Installed extension** — one extension in one profile: identity, version,
   approved permissions, enabled flag, pinned-to-toolbar flag, its own stored
   data.
-- **Filter list** — a named, updatable list of advertising and tracking
-  patterns used by content blocking; global set chosen by the Person.
+- **Filter list** — dropped with the built-in blocker (ADR 0008): uBlock
+  Origin Lite brings its own lists.
 - **Download** — a file being or having been saved: source, destination,
   progress, outcome.
 - **Session** — the remembered arrangement of a profile's windows, spaces,
@@ -227,11 +227,11 @@ Trust
 - A website may open a new window only in response to a Person's action
   (click, key press); otherwise the attempt is blocked and the Person is told.
   Allowed popups open as tabs in the opener's space.
-- Advertising and tracking requests are stopped before they are made, using
-  the same community filter lists uBlock Origin uses, at the same blocking
-  quality (Decided: on by default). Blocking is switchable off per site in a
-  profile, and the Person can add, remove and refresh filter lists. Filter
-  lists refresh in the background without the Person waiting on them.
+- Advertising and tracking requests are stopped before they are made by
+  uBlock Origin Lite. Amended 2026-11-18 (ADR 0008, owner): Aeri has no
+  built-in blocker; it opens uBO Lite's store page once at a profile's first
+  launch, so blocking starts with one click instead of being on by default.
+  Per-site switching off and filter lists are uBO Lite's.
 - A downloaded file's name is cleaned of path separators and characters the
   file system forbids, and never lands outside the chosen download folder. A
   name that already exists gets a numbered suffix instead of overwriting.
@@ -513,10 +513,8 @@ Profile:
   load.
 - A web app that must stay live (chat, music, dashboard) -> the Person marks
   it keep-awake; it is never rested or slowed beyond what the system forces.
-- Content blocking breaks a site -> the Person turns it off for that site in
-  that profile, and the page reloads unblocked.
-- An extension that blocks content is installed while built-in blocking is on
-  -> both apply; the Person can turn built-in blocking off.
+- Content blocking breaks a site -> the Person turns uBlock Origin Lite off
+  for that site from its popup, and the page reloads unblocked.
 - An extension whose features need browser parts Aeri does not have -> Aeri
   tells the Person at install which features will not work, before they
   confirm.

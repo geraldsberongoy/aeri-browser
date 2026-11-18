@@ -44,6 +44,8 @@ const MIGRATIONS: &[&str] = &[
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         position   INTEGER NOT NULL
     );",
+    // 2: the one-time uBlock Origin Lite offer per profile (ADR 0008)
+    "ALTER TABLE profiles ADD COLUMN blocker_offered INTEGER NOT NULL DEFAULT 0;",
 ];
 
 pub struct AppDb {
@@ -140,6 +142,16 @@ impl AppDb {
             None => self.create_profile(FIRST_PROFILE_NAME, FIRST_PROFILE_ACCENT),
         }
     }
+
+    /// Claims the profile's one-time offer of an ad blocker (ADR 0008):
+    /// true the first time it is asked for this profile, false after.
+    pub fn take_blocker_offer(&self, profile: ProfileId) -> Result<bool> {
+        let claimed = self.conn.execute(
+            "UPDATE profiles SET blocker_offered = 1 WHERE id = ?1 AND blocker_offered = 0",
+            params![profile.to_string()],
+        )?;
+        Ok(claimed == 1)
+    }
 }
 
 #[cfg(test)]
@@ -193,5 +205,15 @@ mod tests {
             AppDb::with_connection(conn),
             Err(StoreError::TooNew { found: 99, .. })
         ));
+    }
+
+    #[test]
+    fn the_blocker_is_offered_once_per_profile() {
+        let db = AppDb::open_in_memory().unwrap();
+        let personal = db.ensure_first_profile().unwrap();
+        let work = db.create_profile("Work", 1).unwrap();
+        assert!(db.take_blocker_offer(personal.id).unwrap());
+        assert!(!db.take_blocker_offer(personal.id).unwrap());
+        assert!(db.take_blocker_offer(work.id).unwrap());
     }
 }

@@ -1,6 +1,7 @@
 # ADR 0003: Built-in blocking with adblock-rust in the browser process
 
-- Status: accepted
+- Status: superseded by [ADR 0008](0008-blocking-through-ublock-origin-lite.md)
+  (2026-11-18: Aeri blocks through uBlock Origin Lite; no built-in blocker)
 - Date: 2026-11-18
 - Deciders: owner (kuya-egg); principal engineer (agent)
 

@@ -62,9 +62,9 @@ Abbreviations:
 | Password provider | entity | `profile.db.settings.password_provider` | |
 | Site permission | entity | Chromium content settings of the profile's request context | Read and cleared through `cef::permissions`; prompts are Chrome UI |
 | Certificate exception | entity | Chromium (in-memory decision of the request context) | `cef::` clears exceptions at start-up to enforce "until quit" |
-| Site setting | entity | `profile.db.site_settings` | Blocking on/off, keep-awake |
+| Site setting | entity | `profile.db.site_settings` | Keep-awake (blocking per site is uBO Lite's own; ADR 0008) |
 | Installed extension | entity | Chromium extension registry under `Chromium/<profile-id>/` | |
-| Filter list | entity | `app.db.filter_lists` + files in `Blocking/` | |
+| Ad-blocker offer | flag | `app.db.profiles.blocker_offered` | uBO Lite's store page opens once per profile (ADR 0008) |
 | Download | entity | `profile.db.downloads` | Events from `cef::downloads` |
 | Session | entity | `profile.db` (windows, spaces, tabs, nav_entries) | No separate session store |
 | Appearance | entity | `app.db.appearance` (+ accent in `profiles`, colour in `spaces`) | |
@@ -97,7 +97,7 @@ Abbreviations:
 | Capabilities only after Person allows (per site, per profile) | rule | Chromium permission prompts (Chrome style) | Per profile via its content settings |
 | Certificate warning stops; deliberate proceed; until quit | rule | Chromium interstitial | `cef::` start-up clear enforces "until quit" |
 | Popups only from Person action; open as tabs | rule | Chromium popup blocker + `cef::` `OnBeforePopup` → `core::workspace` | |
-| Blocking with uBO lists, on by default, per-site off | rule | `cef::blocking` (adblock engine on the IO thread) | Cosmetic part in `helper::cosmetic` *(S5)* |
+| Ad and tracker blocking | rule | uBlock Origin Lite, offered at a profile's first launch | ADR 0008 supersedes the built-in blocker (S5 dropped) |
 | Download name cleaning, folder confinement, numbered suffix | rule | `core::trust::download_path` | Pure function |
 | Websites can't reach Aeri functions | rule | `cef::` (no JS bindings, no message router exposed to pages) | |
 | Install from Web Store with permission prompt | rule | Chromium (Chrome-style install flow) | *(S2)* |
@@ -219,8 +219,7 @@ None. Every stage-2 component is the home of at least one element:
 - `tracing` → diagnostics
 - `objc2` → `app::platform`
 - keyring crates → credentials
-- `adblock` → `cef::blocking`
-- `aeri-helper` → cosmetic filtering and forms
+- `aeri-helper` → forms
 
 ## New spikes found while mapping
 

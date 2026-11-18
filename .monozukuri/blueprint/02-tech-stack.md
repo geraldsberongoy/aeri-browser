@@ -18,7 +18,7 @@ labelled Observed / Reported / Inferred). Requirements:
 | Native UI | GPUI, git dependency pinned to a `zed-industries/zed` commit | Owner's choice; draws only when something changed (macOS 14+ display link pauses when idle), solid IME/text input, transparent windows, springs — over `gpui-pre` snapshots (third-party publisher) and crates.io `gpui` 0.2.2 (13 months stale) |
 | Platform glue | `objc2` + `objc2-app-kit` (macOS), `windows` crate (Windows) | Already in GPUI's and cef-rs's dependency trees; keeps everything in Rust — over Swift/ObjC++ bridges (second toolchain, nothing they do that objc2 can't) |
 | Aeri's own data | SQLite via `rusqlite` (bundled), one `app.db` + one `profile.db` per profile, WAL, migrations in code | Local-first, transactional, one file per profile makes deletion and isolation trivial — over separate history/bookmarks/session DBs (more files, no gain) and JSON files (no transactions, slow history search) |
-| Content blocking | `adblock` (brave/adblock-rust) 0.13 in the browser process; requests checked in CEF's `OnBeforeResourceLoad`; cosmetic CSS injected from the renderer helper; lists downloaded at runtime | ~3.9 µs per request and ~9 MB for one engine shared by every profile (measured) — over uBlock Origin Lite as the built-in (weaker rules, a copy per profile); classic uBO is dead on current Chromium |
+| Content blocking | uBlock Origin Lite from the Chrome Web Store, offered at each profile's first launch (ADR 0008, superseding ADR 0003's built-in adblock-rust blocker) | Classic uBO is dead on current Chromium; uBO Lite already works in Aeri and saves building and maintaining a blocker — over adblock-rust in the browser process (fresher lists, CNAME, fuller rules, one engine for all profiles, but a medium phase now and more later) |
 | Secrets (Aeri's basic store) | `keyring-core` + `apple-native-keyring-store` (data-protection Keychain) / `windows-native-keyring-store` | OS-protected, MIT/Apache, maintained — over storing ciphertext in SQLite (key management becomes ours) |
 | Diagnostics | `tracing` + `tracing-subscriber` to a local rotating file; nothing leaves the machine | Structured, per-profile spans; no telemetry by rule |
 | Errors | `thiserror` in libraries, `anyhow` at the app edge | Explicit, typed errors where callers branch on them |
@@ -96,7 +96,7 @@ implements them. No CEF type crosses into `aeri-core` or the UI.
   - `Chromium/` — CEF `root_cache_path`; `Chromium/<profile-id>/` is each
     profile's Chromium storage (cookies, cache, site data, extensions).
     CEF requires profile caches to be direct children of the root.
-  - `Blocking/` — downloaded filter lists and the serialised engine cache.
+  - (No `Blocking/`: blocking is uBO Lite's, inside each profile's Chromium storage; ADR 0008.)
 - Deleting a profile = close its windows, release its request context, delete
   `Profiles/<id>/`, `Chromium/<id>/` and its Keychain items.
 - Migrations: numbered SQL in code, applied at open, `user_version` pragma.
@@ -122,7 +122,7 @@ implements them. No CEF type crosses into `aeri-core` or the UI.
 
 - `cef` (cef-rs) — CEF bindings, bundler, sandbox loader.
 - `gpui` (zed, pinned commit) — native UI.
-- `adblock` 0.13 — filter-list engine (MPL-2.0, used unmodified).
+- (`adblock` dropped with the built-in blocker; ADR 0008.)
 - `rusqlite` (bundled) — SQLite.
 - `keyring-core`, `apple-native-keyring-store`, `windows-native-keyring-store`
   — OS secret storage.
@@ -193,7 +193,7 @@ More crates only when an ownership boundary appears (handoff §9).
 - `docs/decisions/0002-rendering-strategy.md` — Chrome-style Views window with
   GPUI child windows (option B), spike-gated, fallbacks C then A.
 - `docs/decisions/0003-content-blocking.md` — adblock-rust in the browser
-  process, runtime lists.
+  process, runtime lists. Superseded by `0008-blocking-through-ublock-origin-lite.md`.
 - `docs/decisions/0004-profile-storage.md` — request context + per-profile
   SQLite + layout above.
 - `docs/decisions/0005-media-codecs-and-drm.md` — stock CEF first, then a
@@ -215,8 +215,7 @@ to keep one convention in a public repo.)
 - **S4 Profile cost and isolation:** 1/2/5/10 request contexts — memory per
   process type, startup per profile, cookies/storage do not cross, dormant
   profile returns memory.
-- **S5 Blocking hook:** adblock-rust in `OnBeforeResourceLoad` — per-request
-  latency on a page corpus; cosmetic injection timing.
+- **S5 Blocking hook:** dropped with the built-in blocker (ADR 0008).
 - **S6 Passwords (found in stage 3):** Chrome's own password manager in
   Chrome-style CEF without a toolbar vs a renderer-hook save/fill.
 - **S7 Background (found in stage 3):** hidden-view throttling and an

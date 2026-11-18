@@ -49,11 +49,10 @@ app.db                              global records (ADR 0004)
 Profiles/<profile-id>/profile.db    that profile's Aeri records
 Chromium/                           CEF root_cache_path, not a profile
 Chromium/<profile-id>/              that profile's Chromium storage and extensions
-Blocking/                           filter lists and engine cache (global)
 ```
 
-`app.db` holds the profile list, appearance, themes, shortcuts, filter-list
-metadata and window placement. Migrations are numbered SQL, keyed on
+`app.db` holds the profile list (with each profile's one-time uBO Lite offer),
+appearance, themes, shortcuts and window placement. Migrations are numbered SQL, keyed on
 `user_version`, applied when a database opens. All database work runs off the
 UI thread.
 
@@ -69,7 +68,7 @@ UI thread.
 | Renderer processes | Yes | Chromium rule |
 | Browser, GPU, network and storage processes | **No** (shared) | One tree. S4 confirms process counts. |
 | Profile list, themes, shortcuts, appearance | **No** (global) | `app.db` |
-| Filter lists and the blocking engine | **No** (global) | `Blocking/`. One engine serves every profile. |
+| Ad and tracker blocking | **Yes** | uBlock Origin Lite is an extension, so each profile has its own copy and settings ([ADR 0008](../decisions/0008-blocking-through-ublock-origin-lite.md)). |
 | The system password manager | **No** (exception) | See below |
 
 ## The system-password-manager exception

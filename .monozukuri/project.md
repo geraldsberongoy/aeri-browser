@@ -37,22 +37,24 @@ window until shown, Chromium throttles hidden tabs, and tabs report sound
 (bundled tab-signals extension) and camera/microphone (ADR 0007). Open: a
 live camera/microphone check from `open aeri.app`. Evidence:
 `.monozukuri/specifications/phase-3-background-tabs.md`.
-Next: Phase 4 (ad and tracker blocking, S5).
+Phase 4 (blocking) is done the light way: Aeri offers uBlock Origin Lite at a
+profile's first launch; the built-in blocker and S5 are dropped (ADR 0008,
+owner 2026-11-18). Next: Phase 5 (profiles, S4).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·
 GPUI frame window with the tab windows and GPUI overlays as AppKit child
-windows (ADR 0002 "S1 outcome") · SQLite per profile · adblock-rust · OS
+windows (ADR 0002 "S1 outcome") · SQLite per profile · uBlock Origin Lite · OS
 keychain ("Aeri Safe Storage").
 
 ## Constraints from the owner
 - Individual Apple Developer account. Without an organisation account there
   are no iCloud passkeys and no Apple Passwords.
-- Filter lists are downloaded at first launch; none are bundled.
+- No built-in blocker: uBlock Origin Lite is offered instead (ADR 0008).
 
 ## Spikes the stack depends on
 S1 layering · S2 Web Store install · S3 run loop · S4 profile cost/isolation ·
-S5 blocking hook · S6 passwords · S7 background behaviour. Details are in
+S5 blocking hook (dropped, ADR 0008) · S6 passwords · S7 background behaviour. Details are in
 `02-tech-stack.md`.
 
 ## Deferred until an organisation Apple account exists
