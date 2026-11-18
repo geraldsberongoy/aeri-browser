@@ -122,6 +122,19 @@ wrap_display_handler! {
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             emit(&self.sink, Event::TitleChanged { tab: self.tab, title: text(title) });
         }
+
+        fn on_media_access_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            has_video_access: ::std::os::raw::c_int,
+            has_audio_access: ::std::os::raw::c_int,
+        ) {
+            emit(&self.sink, Event::MediaAccessChanged {
+                tab: self.tab,
+                camera: has_video_access != 0,
+                microphone: has_audio_access != 0,
+            });
+        }
     }
 }
 
@@ -143,6 +156,32 @@ wrap_request_handler! {
                 tab: self.tab,
                 reason: format!("{status:?} ({error_code}) {}", text(error_string)).trim().to_owned(),
             });
+        }
+
+        // A ⌘-, ⇧- or middle-clicked link. Chrome would open it as a tab of
+        // its own (an orphan browser, loaded at once); Aeri opens it as its
+        // own tab instead, a background one with no window or renderer until
+        // it is first shown.
+        fn on_open_urlfrom_tab(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            target_url: Option<&CefString>,
+            target_disposition: cef::WindowOpenDisposition,
+            _user_gesture: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            use cef::WindowOpenDisposition as To;
+            let foreground = match target_disposition {
+                To::NEW_BACKGROUND_TAB => false,
+                To::NEW_FOREGROUND_TAB | To::NEW_WINDOW | To::NEW_POPUP => true,
+                // The current tab, or Chrome-only targets: the navigation
+                // proceeds in this tab.
+                _ => return 0,
+            };
+            let url = text(target_url);
+            tracing::debug!(opener = %self.tab, url, foreground, "link opens a tab");
+            (self.sink)(Signal::OpenLink { opener: self.tab, url, foreground });
+            1
         }
     }
 }

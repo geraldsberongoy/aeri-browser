@@ -62,6 +62,18 @@ pub enum Event {
         tab: TabId,
         reason: String,
     },
+    /// The page started or stopped using the camera or the microphone.
+    MediaAccessChanged {
+        tab: TabId,
+        camera: bool,
+        microphone: bool,
+    },
+    /// The page started or stopped making sound (Chromium's "audible",
+    /// which stays on for a moment after the sound stops).
+    AudibleChanged {
+        tab: TabId,
+        audible: bool,
+    },
     /// The browser for this tab has been destroyed by the engine.
     Closed {
         tab: TabId,
@@ -77,6 +89,8 @@ impl Event {
             | Event::AddressChanged { tab, .. }
             | Event::TitleChanged { tab, .. }
             | Event::RendererGone { tab, .. }
+            | Event::MediaAccessChanged { tab, .. }
+            | Event::AudibleChanged { tab, .. }
             | Event::Closed { tab } => *tab,
         }
     }

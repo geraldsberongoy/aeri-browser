@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Aeri tab signals",
+  "description": "Part of Aeri: tells Aeri which tabs are playing sound. Sends nothing anywhere else.",
+  "version": "1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAui7eP0R3Dcue0eR5jGftwyKmRnqKI/pFjO5FaInkUjrSB6F8bI53fv1BZKo4a5QgRyOksy+C7eQKBwbzikcOEwMwuCs7XpU0RyngMRA22hHXWgan0Dd1Edakk5lajHQkqHfrTd+Lx3Vy8kIs8Kz/oK+rEeu6CpGgurmZYgGrYgCLFKlTihmtiylSOUGjS7oG/xYBUp+2YIwlOSKBS4RdK0iHcKvksqGmKqCu7O9wfG/912blAtORuEj1xgfUkstIFCS6GBZZKZFsVquUz44po+AaBktheM5iVChuZN86TVDX9FhNk3amFBDmImACczNLtbQavI6pjB2HCDqPQljQSwIDAQAB",
+  "permissions": ["tabs"],
+  "background": { "service_worker": "worker.js" }
+}

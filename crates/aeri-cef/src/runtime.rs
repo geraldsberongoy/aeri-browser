@@ -9,7 +9,7 @@
 //!    browsers may be created only after that.
 
 use std::cell::Cell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -67,7 +67,19 @@ pub fn load() -> Result<Runtime, Error> {
     let ready: ReadySlot = Arc::default();
     let sink: SinkSlot = Arc::default();
     let devtools_pipe = Arc::new(AtomicBool::new(false));
-    let mut app = AeriApp::new(ready.clone(), sink.clone(), devtools_pipe.clone());
+    // `Aeri.app/Contents/MacOS/aeri` → `Aeri.app/Contents/Resources/…`.
+    let tab_signals = exe
+        .parent()
+        .and_then(Path::parent)
+        .map(|contents| contents.join("Resources/tab-signals"))
+        .filter(|dir| dir.join("manifest.json").is_file())
+        .map(|dir| dir.to_string_lossy().into_owned());
+    let mut app = AeriApp::new(
+        ready.clone(),
+        sink.clone(),
+        devtools_pipe.clone(),
+        tab_signals,
+    );
     let args = Args::new();
     let code = execute_process(
         Some(args.as_main_args()),
@@ -150,6 +162,9 @@ impl Runtime {
         {
             return Err(Error::Initialize);
         }
+        if let Ok(devtools) = &self.devtools {
+            crate::signals::start(devtools);
+        }
         Ok(())
     }
 
@@ -169,6 +184,8 @@ wrap_app! {
         ready: ReadySlot,
         sink: SinkSlot,
         devtools_pipe: Arc<AtomicBool>,
+        // The bundled tab-signals extension (ADR 0007), if present.
+        tab_signals: Option<String>,
     }
 
     impl App {
@@ -185,6 +202,12 @@ wrap_app! {
                 command_line.append_switch(Some(&CefString::from("remote-debugging-pipe")));
                 command_line
                     .append_switch(Some(&CefString::from("enable-unsafe-extension-debugging")));
+                // Tab signals report through the pipe, so they need it too.
+                if let Some(dir) = &self.tab_signals {
+                    load_extension(command_line, dir);
+                }
+            } else if browser_process {
+                tracing::warn!("no DevTools pipe: tabs will not report sound");
             }
         }
 
@@ -192,6 +215,18 @@ wrap_app! {
             Some(AeriBrowserProcessHandler::new(self.ready.clone(), self.sink.clone()))
         }
     }
+}
+
+/// Adds `dir` to `--load-extension`, keeping any directories already there.
+fn load_extension(command_line: &mut CommandLine, dir: &str) {
+    let switch = CefString::from("load-extension");
+    let existing = CefString::from(&command_line.switch_value(Some(&switch))).to_string();
+    let value = if existing.is_empty() {
+        dir.to_owned()
+    } else {
+        format!("{existing},{dir}")
+    };
+    command_line.append_switch_with_value(Some(&switch), Some(&CefString::from(value.as_str())));
 }
 
 wrap_browser_process_handler! {

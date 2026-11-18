@@ -44,11 +44,13 @@ struct State {
     tab: TabId,
     view: BrowserView,
     observer: Rc<dyn TabObserver>,
+    /// Where this tab's out-of-band signals go (`signals`).
+    sink: SignalSink,
     window: RefCell<Option<Window>>,
     /// Chrome's toolbar: hidden, kept only as the anchor for extension UI.
     toolbar: RefCell<Option<View>>,
     /// Chrome's id for this tab's Chrome window, read once from the page's
-    /// own DevTools session, plus what waits for it.
+    /// own DevTools session when the window opens, plus what waits for it.
     chrome_window_id: Cell<Option<i64>>,
     window_id_request: RefCell<Option<WindowIdRequest>>,
 }
@@ -110,7 +112,7 @@ impl TabWindow {
         sink: SignalSink,
         observer: Rc<dyn TabObserver>,
     ) -> Result<Self, Error> {
-        let mut client = tab_client(tab, sink);
+        let mut client = tab_client(tab, sink.clone());
         let mut view_delegate = AeriBrowserViewDelegate::new();
         let mut request_context = context.context.clone();
         let view = browser_view_create(
@@ -122,7 +124,7 @@ impl TabWindow {
             Some(&mut view_delegate),
         )
         .ok_or(Error::BrowserView)?;
-        Self::host(tab, view, observer)
+        Self::host(tab, view, observer, sink)
     }
 
     /// Takes the window made for a tab a page opened ([`Signal::TabOpened`]).
@@ -135,11 +137,17 @@ impl TabWindow {
             .ok_or(Error::BrowserView)
     }
 
-    fn host(tab: TabId, view: BrowserView, observer: Rc<dyn TabObserver>) -> Result<Self, Error> {
+    fn host(
+        tab: TabId,
+        view: BrowserView,
+        observer: Rc<dyn TabObserver>,
+        sink: SignalSink,
+    ) -> Result<Self, Error> {
         let state = Rc::new(State {
             tab,
             view,
             observer,
+            sink,
             window: RefCell::default(),
             toolbar: RefCell::default(),
             chrome_window_id: Cell::default(),
@@ -196,24 +204,7 @@ impl TabWindow {
             request.waiting.push(waiting);
             return;
         }
-        let Some(host) = self.browser().and_then(|browser| browser.host()) else {
-            tracing::warn!(tab = ?self.state.tab, "no browser for extension action");
-            return;
-        };
-        let mut observer = WindowIdObserver::new(Rc::downgrade(&self.state));
-        let registration = host.add_dev_tools_message_observer(Some(&mut observer));
-        // The request is stored before the call: the result may arrive
-        // re-entrantly.
-        *self.state.window_id_request.borrow_mut() = Some(WindowIdRequest {
-            _registration: registration,
-            message_id: 0,
-            waiting: vec![waiting],
-        });
-        let method = CefString::from("Browser.getWindowForTarget");
-        let message_id = host.execute_dev_tools_method(0, Some(&method), None);
-        if let Some(request) = &mut *self.state.window_id_request.borrow_mut() {
-            request.message_id = message_id;
-        }
+        request_window_id(&self.state, vec![waiting]);
     }
 
     /// Starts an orderly close: the browser closes first, then the window,
@@ -222,6 +213,29 @@ impl TabWindow {
         if let Some(window) = self.state.window.borrow().clone() {
             window.close();
         }
+    }
+}
+
+/// Asks the page's own DevTools session for its Chrome window id
+/// (`WindowIdObserver` takes the answer). `waiting` actions run once known.
+fn request_window_id(state: &Rc<State>, waiting: Vec<(String, DevTools)>) {
+    let Some(host) = state.view.browser().and_then(|browser| browser.host()) else {
+        tracing::warn!(tab = ?state.tab, "no browser to read its Chrome window id");
+        return;
+    };
+    let mut observer = WindowIdObserver::new(Rc::downgrade(state));
+    let registration = host.add_dev_tools_message_observer(Some(&mut observer));
+    // The request is stored before the call: the result may arrive
+    // re-entrantly.
+    *state.window_id_request.borrow_mut() = Some(WindowIdRequest {
+        _registration: registration,
+        message_id: 0,
+        waiting,
+    });
+    let method = CefString::from("Browser.getWindowForTarget");
+    let message_id = host.execute_dev_tools_method(0, Some(&method), None);
+    if let Some(request) = &mut *state.window_id_request.borrow_mut() {
+        request.message_id = message_id;
     }
 }
 
@@ -264,6 +278,7 @@ wrap_dev_tools_message_observer! {
                 return;
             };
             state.chrome_window_id.set(Some(window_id));
+            crate::signals::watch(window_id, state.tab, state.sink.clone());
             for (extension_id, devtools) in request.waiting {
                 devtools.trigger_extension_action(window_id, extension_id);
             }
@@ -307,11 +322,16 @@ wrap_window_delegate! {
                 let state = Rc::downgrade(&self.state);
                 BY_BROWSER.with_borrow_mut(|tabs| tabs.insert(browser.identifier(), state));
             }
+            // Known early, for tab signals and extension actions alike.
+            request_window_id(&self.state, Vec::new());
             self.state.observer.created(self.state.tab, window.window_handle());
         }
 
         fn on_window_destroyed(&self, _window: Option<&mut Window>) {
             self.state.window.borrow_mut().take();
+            if let Some(window_id) = self.state.chrome_window_id.get() {
+                crate::signals::unwatch(window_id);
+            }
             BY_BROWSER.with_borrow_mut(|tabs| {
                 tabs.retain(|_, state| !std::ptr::eq(state.as_ptr(), Rc::as_ptr(&self.state)));
             });
@@ -394,7 +414,8 @@ wrap_browser_view_delegate! {
                 tracing::warn!("popup without a known opener; CEF opens it");
                 return 0;
             };
-            let window = match TabWindow::host(popup.tab, view.clone(), opener.observer.clone()) {
+            let sink = popup.sink.clone();
+            let window = match TabWindow::host(popup.tab, view.clone(), opener.observer.clone(), sink) {
                 Ok(window) => window,
                 Err(error) => {
                     tracing::warn!(%error, "no window for a popup; CEF opens it");

@@ -92,6 +92,9 @@ struct TabEntry {
     model: Tab,
     /// Set once the tab's CEF window has been created.
     cef: Option<Rc<TabWindow>>,
+    /// A background tab's address, loaded when the tab is first shown; until
+    /// then it has no CEF window and no renderer (S7).
+    unseen: Option<String>,
 }
 
 struct AeriWindow {
@@ -247,6 +250,11 @@ impl Shell {
                 foreground,
             }) => self.tab_opened(tab, opener, foreground, cx),
             AppMsg::Signal(Signal::OpenUrl { profile, url }) => self.open_url(profile, url, cx),
+            AppMsg::Signal(Signal::OpenLink {
+                opener,
+                url,
+                foreground,
+            }) => self.open_link(opener, url, foreground, cx),
             AppMsg::TabClosed { window, tab } => self.tab_closed(window, tab, cx),
             AppMsg::CloseWindow { window } => self.close_window(window, cx),
             AppMsg::AddressSubmitted { window, text } => self.address_submitted(window, &text, cx),
@@ -409,6 +417,7 @@ impl Shell {
             tabs: vec![TabEntry {
                 model: Tab::new(tab, url),
                 cef: None,
+                unseen: None,
             }],
             active: tab,
             closing: false,
@@ -448,15 +457,24 @@ impl Shell {
         let index = after
             .and_then(|after| w.tabs.iter().position(|e| e.model.id == after))
             .map_or(w.tabs.len(), |ix| ix + 1);
+        let unseen = match &start {
+            TabStart::Load(url) if !foreground => Some(url.clone()),
+            _ => None,
+        };
+        let lazy = unseen.is_some();
         w.tabs.insert(
             index,
             TabEntry {
                 model: Tab::new(tab, url),
                 cef: None,
+                unseen,
             },
         );
         if foreground {
             w.active = tab;
+        }
+        if lazy {
+            return;
         }
         let frame = w.frame.clone();
         self.later(move |shell| {
@@ -506,21 +524,35 @@ impl Shell {
 
     /// A page opened a tab: it joins the opener's window, next to it.
     fn tab_opened(&mut self, tab: TabId, opener: TabId, foreground: bool, cx: &mut App) {
-        let Some(window_id) = self
-            .window_of_tab(opener)
-            .or(self.windows.last().map(|w| w.id))
-        else {
+        let Some(window_id) = self.window_for(opener) else {
             tracing::warn!(%tab, "page-opened tab without a window");
             return;
         };
+        let start = TabStart::Adopt;
+        self.add_tab(window_id, tab, start, Some(opener), foreground, cx);
+    }
+
+    /// The Person opened a link in a new tab, next to its page. A background
+    /// one stays unseen (no window) until shown.
+    fn open_link(&mut self, opener: TabId, url: String, foreground: bool, cx: &mut App) {
+        let Some(window_id) = self.window_for(opener) else {
+            return;
+        };
+        let start = TabStart::Load(url);
         self.add_tab(
             window_id,
-            tab,
-            TabStart::Adopt,
+            TabId::next(),
+            start,
             Some(opener),
             foreground,
             cx,
         );
+    }
+
+    /// The window holding `tab`, else the newest window.
+    fn window_for(&self, tab: TabId) -> Option<u64> {
+        self.window_of_tab(tab)
+            .or(self.windows.last().map(|w| w.id))
     }
 
     /// Chrome or an extension wanted a tab: open it in the newest window.
@@ -556,7 +588,11 @@ impl Shell {
         let Some(entry) = w.tabs.iter_mut().find(|e| e.model.id == tab_id) else {
             return;
         };
+        let activity = entry.model.activity;
         let changed = entry.model.apply(&event);
+        if entry.model.activity != activity {
+            tracing::info!(%tab_id, activity = ?entry.model.activity, "tab activity");
+        }
         if changed && w.active == tab_id {
             self.refresh_bar(window_id, cx);
         }
@@ -635,18 +671,26 @@ impl Shell {
         self.hide_bar(window_id, cx);
     }
 
-    /// Makes `tab` the shown tab of its window.
+    /// Makes `tab` the shown tab of its window. An unseen tab gets its CEF
+    /// window now; the frame shows it once created.
     fn switch_to(&mut self, window_id: u64, tab: TabId, cx: &mut App) {
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
         w.active = tab;
+        let unseen = w
+            .tabs
+            .iter_mut()
+            .find(|e| e.model.id == tab)
+            .and_then(|e| e.unseen.take());
         let frame = w.frame.clone();
         let page = w.active_cef();
         let bar_shown = w.bar_shown;
-        self.later(move |_| {
+        self.later(move |shell| {
             frame.activate(tab);
-            if !bar_shown && let Some(page) = page {
+            if let Some(url) = unseen {
+                shell.create_tab_window(window_id, tab, TabStart::Load(url));
+            } else if !bar_shown && let Some(page) = page {
                 page.focus_page();
             }
         });

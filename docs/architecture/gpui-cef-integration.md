@@ -84,6 +84,11 @@ S1 changed the layering; see
 - **Chrome-created tabs.** Chrome opens its own Chrome-UI window for tabs it
   creates (CDP `Target.createTarget`, and so `chrome.tabs.create`). Phase 2
   routes these into Aeri tabs.
+- **Background tabs** ([ADR 0007](../decisions/0007-tab-signals.md)). A
+  link opened in a background tab gets no CEF window until first shown.
+  Hidden tab windows are ordered out, and Chromium throttles them on its own.
+  Sound is reported by Aeri's bundled tab-signals extension over the private
+  DevTools pipe; camera and microphone by `OnMediaAccessChange`.
 - **Extension popups.** These anchor to Chrome toolbar views. With no
   toolbar, Aeri may need `CEF_CTT_LOCATION` or `CEF_CTT_NORMAL` hidden behind
   its own UI, or `Extensions.triggerAction`

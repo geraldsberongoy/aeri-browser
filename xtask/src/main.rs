@@ -36,6 +36,13 @@ fn bundle() -> Result<()> {
         Ok(app) => app,
         Err(err) => bail!("bundling failed: {err:?}"),
     };
+    // Aeri's own extension (ADR 0007), loaded from the bundle at startup.
+    let signals = app.join("Contents/Resources/tab-signals");
+    std::fs::create_dir_all(&signals)?;
+    for entry in std::fs::read_dir("apps/aeri/resources/tab-signals")? {
+        let entry = entry?;
+        std::fs::copy(entry.path(), signals.join(entry.file_name()))?;
+    }
     // Ad-hoc signature over the whole bundle (helpers and framework
     // included); the per-binary linker signatures leave it unverifiable.
     // Hardened runtime stays off for development builds.

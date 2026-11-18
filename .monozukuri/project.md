@@ -32,7 +32,12 @@ Phase 2 (Web Store extensions, S2) is built and verified by scripted
 checks: uBO Lite, Bitwarden and Dark Reader install, persist, and open
 popups from GPUI buttons; page- and Chrome-opened tabs become Aeri tabs
 (ADR 0006). Evidence: `.monozukuri/specifications/phase-2-chrome-web-store-extensions.md`.
-Next: Phase 3 (background tabs, S7).
+Phase 3 (background tabs, S7) is built: background link tabs have no
+window until shown, Chromium throttles hidden tabs, and tabs report sound
+(bundled tab-signals extension) and camera/microphone (ADR 0007). Open: a
+live camera/microphone check from `open aeri.app`. Evidence:
+`.monozukuri/specifications/phase-3-background-tabs.md`.
+Next: Phase 4 (ad and tracker blocking, S5).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

@@ -9,6 +9,9 @@
 //! ```
 //!
 //! Resting (phase 11) is added when tabs can be put to rest.
+//!
+//! Separately, a tab tracks what it is doing that the Person should know
+//! about even when it is hidden: sound, camera, microphone ([`Activity`]).
 
 use crate::engine::Event;
 use crate::ids::TabId;
@@ -29,6 +32,21 @@ pub enum LoadState {
     Closed,
 }
 
+/// What a page is doing that matters while it is out of sight (S7).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Activity {
+    pub audible: bool,
+    pub camera: bool,
+    pub microphone: bool,
+}
+
+impl Activity {
+    /// Whether the page is recording the Person (camera or microphone).
+    pub fn is_capturing(&self) -> bool {
+        self.camera || self.microphone
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tab {
     pub id: TabId,
@@ -37,6 +55,7 @@ pub struct Tab {
     pub load: LoadState,
     pub can_go_back: bool,
     pub can_go_forward: bool,
+    pub activity: Activity,
 }
 
 impl Tab {
@@ -48,6 +67,7 @@ impl Tab {
             load: LoadState::Unloaded,
             can_go_back: false,
             can_go_forward: false,
+            activity: Activity::default(),
         }
     }
 
@@ -108,8 +128,20 @@ impl Tab {
                 self.load = LoadState::Crashed {
                     reason: reason.clone(),
                 };
+                // A dead page plays and records nothing.
+                self.activity = Activity::default();
             }
-            Event::Closed { .. } => self.load = LoadState::Closed,
+            Event::MediaAccessChanged {
+                camera, microphone, ..
+            } => {
+                self.activity.camera = *camera;
+                self.activity.microphone = *microphone;
+            }
+            Event::AudibleChanged { audible, .. } => self.activity.audible = *audible,
+            Event::Closed { .. } => {
+                self.load = LoadState::Closed;
+                self.activity = Activity::default();
+            }
         }
         *self != before
     }
@@ -216,5 +248,27 @@ mod tests {
             title: "Example".into(),
         });
         assert_eq!(tab.label(), "Example");
+    }
+
+    #[test]
+    fn activity_follows_signals_and_a_crash_clears_it() {
+        let mut tab = Tab::new(T, "https://example.com/");
+        assert!(tab.apply(&Event::AudibleChanged {
+            tab: T,
+            audible: true,
+        }));
+        assert!(tab.apply(&Event::MediaAccessChanged {
+            tab: T,
+            camera: false,
+            microphone: true,
+        }));
+        assert!(tab.activity.audible && tab.activity.is_capturing());
+        assert!(!tab.activity.camera);
+
+        tab.apply(&Event::RendererGone {
+            tab: T,
+            reason: "killed".into(),
+        });
+        assert_eq!(tab.activity, Activity::default());
     }
 }

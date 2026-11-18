@@ -75,9 +75,12 @@ fn place(fd: &OwnedFd, target: i32) -> io::Result<()> {
 }
 
 type Reply = Box<dyn FnOnce(Result<Value, String>) + Send>;
+/// Gets every event: its method, params, and the flattened session it came
+/// from (none for the browser session itself).
+type Listener = Box<dyn Fn(&str, &Value, Option<&str>) + Send>;
 
 /// The browser-target DevTools session. Cheap to clone; usable from any
-/// thread. Replies run on the pipe's reader thread.
+/// thread. Replies and events run on the pipe's reader thread.
 #[derive(Clone)]
 pub struct DevTools(Arc<Inner>);
 
@@ -85,6 +88,7 @@ struct Inner {
     writer: Mutex<File>,
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, Reply>>,
+    listeners: Mutex<Vec<Listener>>,
 }
 
 impl DevTools {
@@ -93,6 +97,7 @@ impl DevTools {
             writer: Mutex::new(ends.to_chromium),
             next_id: AtomicU64::new(1),
             pending: Mutex::default(),
+            listeners: Mutex::default(),
         });
         let reader = Arc::downgrade(&inner);
         std::thread::Builder::new()
@@ -129,10 +134,24 @@ impl DevTools {
         params: Value,
         reply: impl FnOnce(Result<Value, String>) + Send + 'static,
     ) {
+        self.call_in(None, method, params, reply);
+    }
+
+    /// Sends one command to a target attached with `flatten: true`, or to
+    /// the browser session itself when `session` is `None`.
+    pub(crate) fn call_in(
+        &self,
+        session: Option<&str>,
+        method: &str,
+        params: Value,
+        reply: impl FnOnce(Result<Value, String>) + Send + 'static,
+    ) {
         let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut message = json!({ "id": id, "method": method, "params": params })
-            .to_string()
-            .into_bytes();
+        let mut message = json!({ "id": id, "method": method, "params": params });
+        if let Some(session) = session {
+            message["sessionId"] = Value::from(session);
+        }
+        let mut message = message.to_string().into_bytes();
         message.push(0);
         self.0
             .pending
@@ -146,6 +165,15 @@ impl DevTools {
         if let Some(reply) = reply {
             reply(Err(format!("DevTools pipe write failed: {error}")));
         }
+    }
+
+    /// Adds a listener for every event on the pipe, from now on.
+    pub(crate) fn listen(&self, listener: impl Fn(&str, &Value, Option<&str>) + Send + 'static) {
+        self.0
+            .listeners
+            .lock()
+            .expect("listeners")
+            .push(Box::new(listener));
     }
 
     /// Runs `extension_id`'s action on the tab shown in the Chrome window
@@ -214,8 +242,16 @@ impl Inner {
             tracing::warn!("unparsable DevTools message");
             return;
         };
-        // Events (no id) are not used yet.
         let Some(id) = message.get("id").and_then(Value::as_u64) else {
+            let method = message
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let params = message.get("params").unwrap_or(&Value::Null);
+            let session = message.get("sessionId").and_then(Value::as_str);
+            for listener in &*self.listeners.lock().expect("listeners") {
+                listener(method, params, session);
+            }
             return;
         };
         let Some(reply) = self.pending.lock().expect("pending").remove(&id) else {

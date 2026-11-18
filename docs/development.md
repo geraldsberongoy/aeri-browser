@@ -77,7 +77,9 @@ open target/bundle/aeri.app
 
 `cargo xtask bundle` builds `aeri` and `aeri-helper`, then assembles the app,
 the framework and the five helper bundles with cef-rs's `build_bundle`. It
-then ad-hoc signs the whole bundle. It deletes the old bundle first: macOS
+copies Aeri's tab-signals extension into `Contents/Resources/tab-signals`
+([ADR 0007](decisions/0007-tab-signals.md)), then ad-hoc signs the whole
+bundle. It deletes the old bundle first: macOS
 caches code signatures per file, and copying a new binary over a running or
 recently run one gets it killed ("load code signature error 2").
 
@@ -91,6 +93,11 @@ Development switches:
 | `AERI_PROFILE=Work` | Open (or create) the profile with this name instead of the first one. Stopgap until Phase 5's profile UI. |
 | `AERI_LOG=info,aeri=debug` | `tracing` filter (stderr). |
 | `--use-mock-keychain` | Chromium switch: skip the Keychain. Use it for scripted runs; see below. |
+| `--autoplay-policy=no-user-gesture-required` | Chromium switch: let a script play sound without a click (tab-signals checks). |
+
+Camera and microphone checks: macOS attributes the permission prompt to the
+app that launched Aeri (your terminal), not to Aeri, even with Chromium's
+fake-device switches. Run them from `open target/bundle/aeri.app` instead.
 
 Run the bundle binary directly to see logs:
 

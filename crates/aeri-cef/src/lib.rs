@@ -11,6 +11,7 @@ mod extensions;
 mod orphan;
 mod profile;
 mod runtime;
+mod signals;
 mod window;
 
 #[cfg(target_os = "macos")]
@@ -53,6 +54,14 @@ pub enum Signal {
     TabOpened {
         tab: TabId,
         opener: TabId,
+        foreground: bool,
+    },
+    /// The Person opened a link in a new tab (⌘-, ⇧- or middle-click). No
+    /// browser exists yet: open `url` next to `opener`. A background tab gets
+    /// its window when it is first shown.
+    OpenLink {
+        opener: TabId,
+        url: String,
         foreground: bool,
     },
     /// Chrome or an extension wanted a new Chrome window or tab
