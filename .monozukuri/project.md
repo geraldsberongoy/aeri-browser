@@ -24,11 +24,13 @@ open at once, one window per profile, inside one running app.
 - Operating system.
 
 ## Current phase
-Phase 1 (Browse one page) is built and verified by scripted checks, except
-the owner's 120 fps resize recording and the first CI run on GitHub.
-Evidence: `.monozukuri/specifications/phase-1-browse-one-page.md`. Next:
-Phase 2 (Web Store extensions, spike S2). Phase 2 also routes Chrome-opened
-tabs into Aeri tabs.
+Phase 1 (Browse one page) is built and verified; CI is green. Open: the
+owner's 120 fps resize recording.
+Phase 2 (Web Store extensions, S2) is built and verified by scripted
+checks: uBO Lite, Bitwarden and Dark Reader install, persist, and open
+popups from GPUI buttons; page- and Chrome-opened tabs become Aeri tabs
+(ADR 0006). Evidence: `.monozukuri/specifications/phase-2-chrome-web-store-extensions.md`.
+Next: Phase 3 (background tabs, S7).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

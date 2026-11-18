@@ -19,9 +19,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aeri_cef::{ProfileContext, Runtime, RuntimeConfig, Shortcut, Signal, TabObserver, TabWindow};
+use aeri_cef::{
+    DevTools, Extension, ExtensionsWatch, ProfileContext, Runtime, RuntimeConfig, Shortcut, Signal,
+    TabObserver, TabWindow,
+};
 use aeri_core::engine::{Command, Event};
-use aeri_core::ids::TabId;
+use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::omnibox;
 use aeri_core::store::{AppDb, Profile};
 use aeri_core::tab::Tab;
@@ -41,6 +44,8 @@ use crate::window_frame::WindowFrame;
 /// Neutral default search provider (stage 1, open question 1).
 const SEARCH_TEMPLATE: &str = "https://duckduckgo.com/?q={query}";
 const NEW_TAB_URL: &str = "about:blank";
+/// Accent for profiles created with `AERI_PROFILE` (development only).
+const DEV_PROFILE_ACCENT: u32 = 0x3fb68b;
 
 pub enum AppMsg {
     EngineReady,
@@ -51,16 +56,28 @@ pub enum AppMsg {
     AddressSubmitted { window: u64, text: String },
     AddressDismissed { window: u64 },
     Shortcut { window: u64, shortcut: Shortcut },
+    ExtensionsChanged,
+    ExtensionAction { window: u64, extension: String },
     Quit,
 }
 
 pub struct Config {
     pub data_dir: PathBuf,
+    /// Development only: open (or create) the profile with this name instead
+    /// of the first one. Phase 5 replaces it with profile UI.
+    pub profile: Option<String>,
     pub start_url: String,
     pub remote_debugging_port: Option<u16>,
 }
 
 type Effect = Box<dyn FnOnce(&mut Shell)>;
+
+/// How a new tab's browser starts.
+enum TabStart {
+    Load(String),
+    /// A page opened it; its browser is waiting in the engine.
+    Adopt,
+}
 
 struct TabEntry {
     model: Tab,
@@ -93,9 +110,11 @@ struct Shell {
     root_cache_path: PathBuf,
     profile: Profile,
     context: Option<ProfileContext>,
+    devtools: Option<DevTools>,
+    extensions: Vec<Extension>,
+    _extensions_watch: Option<ExtensionsWatch>,
     start_url: String,
     windows: Vec<AeriWindow>,
-    next_tab: u64,
     next_window: u64,
     tx: UnboundedSender<AppMsg>,
     quitting: bool,
@@ -106,7 +125,18 @@ struct Shell {
 pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     std::fs::create_dir_all(&config.data_dir).context("creating the data directory")?;
     let db = AppDb::open(&config.data_dir.join("app.db")).context("opening app.db")?;
-    let profile = db.ensure_first_profile()?;
+    let profile = match &config.profile {
+        Some(name) => match db
+            .profiles()?
+            .into_iter()
+            .find(|profile| &profile.name == name)
+        {
+            Some(profile) => profile,
+            None => db.create_profile(name, DEV_PROFILE_ACCENT)?,
+        },
+        None => db.ensure_first_profile()?,
+    };
+    tracing::info!(profile = %profile.id, name = %profile.name, "using profile");
     let root_cache_path = config.data_dir.join("Chromium");
 
     let (tx, mut rx) = unbounded::<AppMsg>();
@@ -116,8 +146,12 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         remote_debugging_port: config.remote_debugging_port,
     };
     let ready = tx.clone();
+    let signals = tx.clone();
+    let sink: aeri_cef::SignalSink = Arc::new(move |signal| {
+        let _ = signals.unbounded_send(AppMsg::Signal(signal));
+    });
     runtime
-        .start(&runtime_config, move || {
+        .start(&runtime_config, sink, move || {
             let _ = ready.unbounded_send(AppMsg::EngineReady);
         })
         .context("starting CEF")?;
@@ -142,9 +176,11 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         root_cache_path,
         profile,
         context: None,
+        devtools: runtime.devtools().ok().cloned(),
+        extensions: Vec::new(),
+        _extensions_watch: None,
         start_url: config.start_url,
         windows: Vec::new(),
-        next_tab: 1,
         next_window: 1,
         tx,
         quitting: false,
@@ -186,6 +222,7 @@ impl Shell {
         match msg {
             AppMsg::EngineReady => self.engine_ready(),
             AppMsg::ProfileReady => {
+                self.watch_extensions(cx);
                 let url = self.start_url.clone();
                 self.open_window(&url, cx);
             }
@@ -195,11 +232,21 @@ impl Shell {
                     self.shortcut(window, shortcut, cx);
                 }
             }
+            AppMsg::Signal(Signal::TabOpened {
+                tab,
+                opener,
+                foreground,
+            }) => self.tab_opened(tab, opener, foreground, cx),
+            AppMsg::Signal(Signal::OpenUrl { profile, url }) => self.open_url(profile, url, cx),
             AppMsg::TabClosed { window, tab } => self.tab_closed(window, tab, cx),
             AppMsg::CloseWindow { window } => self.close_window(window, cx),
             AppMsg::AddressSubmitted { window, text } => self.address_submitted(window, &text, cx),
             AppMsg::AddressDismissed { window } => self.hide_bar(window, cx),
             AppMsg::Shortcut { window, shortcut } => self.shortcut(window, shortcut, cx),
+            AppMsg::ExtensionsChanged => self.extensions_changed(cx),
+            AppMsg::ExtensionAction { window, extension } => {
+                self.extension_action(window, extension, cx)
+            }
             AppMsg::Quit => self.quit(cx),
         }
         self.quitting && self.windows.is_empty()
@@ -218,10 +265,43 @@ impl Shell {
         }
     }
 
-    fn new_tab_id(&mut self) -> TabId {
-        let id = TabId(self.next_tab);
-        self.next_tab += 1;
-        id
+    fn watch_extensions(&mut self, cx: &mut App) {
+        let Some(context) = &self.context else { return };
+        let tx = self.tx.clone();
+        self._extensions_watch = context.watch_extensions(move || {
+            let _ = tx.unbounded_send(AppMsg::ExtensionsChanged);
+        });
+        self.extensions_changed(cx);
+    }
+
+    fn extensions_changed(&mut self, cx: &mut App) {
+        let Some(context) = &self.context else { return };
+        let extensions = context.extensions();
+        if extensions == self.extensions {
+            return;
+        }
+        tracing::info!(count = extensions.len(), "extensions changed");
+        self.extensions = extensions;
+        for w in &self.windows {
+            let extensions = self.extensions.clone();
+            let _ = w
+                .bar
+                .update(cx, |bar, _, cx| bar.set_extensions(extensions, cx));
+        }
+    }
+
+    /// Runs an extension's action on the window's active tab, as Chrome's
+    /// toolbar button would; its popup opens at the page's top right.
+    fn extension_action(&mut self, window_id: u64, extension: String, cx: &mut App) {
+        self.hide_bar(window_id, cx);
+        let (Some(devtools), Some(page)) = (
+            self.devtools.clone(),
+            self.window(window_id).and_then(AeriWindow::active_cef),
+        ) else {
+            tracing::warn!(extension, "extension actions are unavailable");
+            return;
+        };
+        self.later(move |_| page.open_extension_action(&extension, &devtools));
     }
 
     fn window(&self, id: u64) -> Option<&AeriWindow> {
@@ -244,7 +324,7 @@ impl Shell {
     fn open_window(&mut self, url: &str, cx: &mut App) {
         let id = self.next_window;
         self.next_window += 1;
-        let tab = self.new_tab_id();
+        let tab = TabId::next();
 
         let frame_options = WindowOptions {
             titlebar: Some(TitlebarOptions {
@@ -286,8 +366,9 @@ impl Shell {
             ..Default::default()
         };
         let tx = self.tx.clone();
+        let extensions = self.extensions.clone();
         let bar = match cx.open_window(bar_options, |window, cx| {
-            cx.new(|cx| AddressBar::new(id, tx, window, cx))
+            cx.new(|cx| AddressBar::new(id, tx, extensions, window, cx))
         }) {
             Ok(handle) => handle,
             Err(err) => {
@@ -326,16 +407,59 @@ impl Shell {
                 frame.attach(frame_view, bar_view);
             }
             frame.activate(tab);
-            shell.create_tab_window(id, tab, &url);
+            shell.create_tab_window(id, tab, TabStart::Load(url));
         });
         if starts_blank {
             self.show_bar(id, cx);
         }
     }
 
+    /// Adds a tab to a window after `after` (else at the end); its CEF window
+    /// follows outside the update.
+    fn add_tab(
+        &mut self,
+        window_id: u64,
+        tab: TabId,
+        start: TabStart,
+        after: Option<TabId>,
+        foreground: bool,
+        cx: &mut App,
+    ) {
+        let Some(w) = self.window_mut(window_id) else {
+            return;
+        };
+        let url = match &start {
+            TabStart::Load(url) => url.as_str(),
+            TabStart::Adopt => "",
+        };
+        let index = after
+            .and_then(|after| w.tabs.iter().position(|e| e.model.id == after))
+            .map_or(w.tabs.len(), |ix| ix + 1);
+        w.tabs.insert(
+            index,
+            TabEntry {
+                model: Tab::new(tab, url),
+                cef: None,
+            },
+        );
+        if foreground {
+            w.active = tab;
+        }
+        let frame = w.frame.clone();
+        self.later(move |shell| {
+            if foreground {
+                frame.activate(tab);
+            }
+            shell.create_tab_window(window_id, tab, start);
+        });
+        if foreground {
+            self.refresh_bar(window_id, cx);
+        }
+    }
+
     /// Outside the update: creates a tab's CEF window. The frame orders it
     /// in from [`TabObserver::created`] if it is the active tab.
-    fn create_tab_window(&mut self, window_id: u64, tab: TabId, url: &str) {
+    fn create_tab_window(&mut self, window_id: u64, tab: TabId, start: TabStart) {
         let Some(context) = self.context.clone() else {
             return;
         };
@@ -347,7 +471,11 @@ impl Shell {
             return;
         };
         let observer: Rc<dyn TabObserver> = w.frame.clone();
-        match TabWindow::open(&context, tab, url, sink, observer) {
+        let opened = match start {
+            TabStart::Load(url) => TabWindow::open(&context, tab, &url, sink, observer),
+            TabStart::Adopt => TabWindow::adopt(tab),
+        };
+        match opened {
             Ok(cef) => {
                 if let Some(entry) = w.tabs.iter_mut().find(|e| e.model.id == tab) {
                     entry.cef = Some(Rc::new(cef));
@@ -361,6 +489,40 @@ impl Shell {
                 });
             }
         }
+    }
+
+    /// A page opened a tab: it joins the opener's window, next to it.
+    fn tab_opened(&mut self, tab: TabId, opener: TabId, foreground: bool, cx: &mut App) {
+        let Some(window_id) = self
+            .window_of_tab(opener)
+            .or(self.windows.last().map(|w| w.id))
+        else {
+            tracing::warn!(%tab, "page-opened tab without a window");
+            return;
+        };
+        self.add_tab(
+            window_id,
+            tab,
+            TabStart::Adopt,
+            Some(opener),
+            foreground,
+            cx,
+        );
+    }
+
+    /// Chrome or an extension wanted a tab: open it in the newest window.
+    fn open_url(&mut self, profile: ProfileId, url: String, cx: &mut App) {
+        if profile != self.profile.id {
+            tracing::warn!(%profile, url, "tab requested for a profile that is not open");
+            return;
+        }
+        let Some(window_id) = self.windows.last().map(|w| w.id) else {
+            self.open_window(&url, cx);
+            return;
+        };
+        tracing::info!(url, "Chrome-created tab opens as an Aeri tab");
+        let start = TabStart::Load(url);
+        self.add_tab(window_id, TabId::next(), start, None, true, cx);
     }
 
     fn engine_event(&mut self, event: Event, cx: &mut App) {
@@ -464,20 +626,8 @@ impl Shell {
         match shortcut {
             Shortcut::FocusAddressBar => self.show_bar(window_id, cx),
             Shortcut::NewTab => {
-                let tab = self.new_tab_id();
-                let Some(w) = self.window_mut(window_id) else {
-                    return;
-                };
-                w.tabs.push(TabEntry {
-                    model: Tab::new(tab, NEW_TAB_URL),
-                    cef: None,
-                });
-                w.active = tab;
-                let frame = w.frame.clone();
-                self.later(move |shell| {
-                    frame.activate(tab);
-                    shell.create_tab_window(window_id, tab, NEW_TAB_URL);
-                });
+                let start = TabStart::Load(NEW_TAB_URL.to_owned());
+                self.add_tab(window_id, TabId::next(), start, None, true, cx);
                 self.show_bar(window_id, cx);
             }
             Shortcut::CloseTab => {

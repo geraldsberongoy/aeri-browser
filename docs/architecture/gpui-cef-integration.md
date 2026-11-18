@@ -161,6 +161,35 @@ Two windows mean two first responders ([gpui.md Q7](../research/gpui.md)).
 
 If either spike fails, stop and take the fallback order above to the owner.
 
+## Extension UI and Chrome-created tabs (Phase 2)
+
+Decision and consequences: [ADR 0006](../decisions/0006-extension-ui-and-tab-routing.md).
+
+```mermaid
+sequenceDiagram
+    participant Bar as GPUI address bar
+    participant Shell
+    participant Tab as TabWindow (aeri-cef)
+    participant Pipe as DevTools pipe (fds 3/4)
+    participant Chrome
+    Bar->>Shell: ExtensionAction(window, extension id)
+    Shell->>Tab: open_extension_action (after hiding the bar)
+    Tab->>Chrome: Browser.getWindowForTarget (tab's own CEF session, once)
+    Tab->>Pipe: Target.getTargets, Browser.getWindowForTarget per tab
+    Pipe->>Chrome: Extensions.triggerAction(id, tab target)
+    Chrome-->>Chrome: popup anchored to the hidden toolbar, top right
+```
+
+- Tab windows carry Chrome's normal toolbar, invisible and outside the
+  layout (`window.rs`, `place_toolbar`).
+- The button list comes from the profile preference `extensions.settings`
+  (`extensions.rs`), watched with a CEF preference observer.
+- Popups pages open become tabs: `OnBeforePopup` assigns a tab id and
+  client, `OnPopupBrowserViewCreated` builds the tab window at once, and
+  `Signal::TabOpened` lets the shell adopt it.
+- Windows Chrome opens itself get `orphan.rs`'s client and turn into
+  `Signal::OpenUrl`.
+
 ## Windows (later phase)
 
 - Chrome style accepts a parent `HWND` on Windows, because the macOS block

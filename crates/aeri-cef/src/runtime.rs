@@ -10,20 +10,25 @@
 
 use std::cell::Cell;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cef::args::Args;
 use cef::library_loader::LibraryLoader;
 use cef::rc::Rc as _;
 use cef::{
-    App, BrowserProcessHandler, CefString, ImplApp, ImplBrowserProcessHandler, Settings, WrapApp,
-    WrapBrowserProcessHandler, api_hash, execute_process, initialize, wrap_app,
-    wrap_browser_process_handler,
+    App, BrowserProcessHandler, CefString, Client, CommandLine, ImplApp, ImplBrowserProcessHandler,
+    ImplCommandLine, Settings, WrapApp, WrapBrowserProcessHandler, api_hash, execute_process,
+    initialize, wrap_app, wrap_browser_process_handler,
 };
 
-use crate::Error;
+use crate::devtools::{self, DevTools};
+use crate::orphan::orphan_client;
+use crate::{Error, SignalSink};
 
 type ReadySlot = Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>;
+/// Where browsers no Aeri tab owns report (see `orphan`).
+type SinkSlot = Arc<Mutex<Option<SignalSink>>>;
 
 pub struct RuntimeConfig {
     /// CEF's `root_cache_path`. Each profile's storage is a direct child
@@ -41,7 +46,9 @@ pub struct Runtime {
     _loader: LibraryLoader,
     app: App,
     ready: ReadySlot,
+    sink: SinkSlot,
     started: Cell<bool>,
+    devtools: Result<DevTools, String>,
 }
 
 /// Loads CEF. Call first thing in `main`. In a CEF child process this does not
@@ -58,7 +65,9 @@ pub fn load() -> Result<Runtime, Error> {
     let _ = api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
 
     let ready: ReadySlot = Arc::default();
-    let mut app = AeriApp::new(ready.clone());
+    let sink: SinkSlot = Arc::default();
+    let devtools_pipe = Arc::new(AtomicBool::new(false));
+    let mut app = AeriApp::new(ready.clone(), sink.clone(), devtools_pipe.clone());
     let args = Args::new();
     let code = execute_process(
         Some(args.as_main_args()),
@@ -68,26 +77,42 @@ pub fn load() -> Result<Runtime, Error> {
     if code >= 0 {
         std::process::exit(code);
     }
+    // Browser process from here on; nothing has opened files yet.
+    let devtools = devtools::reserve()
+        .and_then(DevTools::connect)
+        .map_err(|error| error.to_string());
+    devtools_pipe.store(devtools.is_ok(), Ordering::Relaxed);
     Ok(Runtime {
         _loader: loader,
         app,
         ready,
+        sink,
         started: Cell::new(false),
+        devtools,
     })
 }
 
 impl Runtime {
+    /// The private browser-target DevTools session, or why its pipe could not
+    /// be set up (then extension actions are unavailable).
+    pub fn devtools(&self) -> Result<&DevTools, &str> {
+        self.devtools.as_ref().map_err(String::as_str)
+    }
+
     /// Initializes CEF. Main thread, inside GPUI's `run` callback, once.
     /// `on_ready` runs on the main thread when browsers may be created.
+    /// `sink` gets the signals of browsers no tab owns.
     pub fn start(
         &self,
         config: &RuntimeConfig,
+        sink: SignalSink,
         on_ready: impl FnOnce() + Send + 'static,
     ) -> Result<(), Error> {
         if self.started.replace(true) {
             return Err(Error::AlreadyStarted);
         }
         *self.ready.lock().expect("ready slot") = Some(Box::new(on_ready));
+        *self.sink.lock().expect("sink slot") = Some(sink);
 
         #[cfg(target_os = "macos")]
         {
@@ -142,11 +167,29 @@ impl Runtime {
 wrap_app! {
     struct AeriApp {
         ready: ReadySlot,
+        sink: SinkSlot,
+        devtools_pipe: Arc<AtomicBool>,
     }
 
     impl App {
+        fn on_before_command_line_processing(
+            &self,
+            process_type: Option<&CefString>,
+            command_line: Option<&mut CommandLine>,
+        ) {
+            let browser_process = process_type.is_none_or(|kind| kind.to_string().is_empty());
+            let Some(command_line) = command_line else { return };
+            if browser_process && self.devtools_pipe.load(Ordering::Relaxed) {
+                // See `devtools`: the pipe is a browser-target session, and
+                // this switch lets it open extension popups.
+                command_line.append_switch(Some(&CefString::from("remote-debugging-pipe")));
+                command_line
+                    .append_switch(Some(&CefString::from("enable-unsafe-extension-debugging")));
+            }
+        }
+
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
-            Some(AeriBrowserProcessHandler::new(self.ready.clone()))
+            Some(AeriBrowserProcessHandler::new(self.ready.clone(), self.sink.clone()))
         }
     }
 }
@@ -154,6 +197,7 @@ wrap_app! {
 wrap_browser_process_handler! {
     struct AeriBrowserProcessHandler {
         ready: ReadySlot,
+        sink: SinkSlot,
     }
 
     impl BrowserProcessHandler {
@@ -169,6 +213,12 @@ wrap_browser_process_handler! {
             crate::mac::pump::schedule(delay_ms);
             #[cfg(not(target_os = "macos"))]
             let _ = delay_ms;
+        }
+
+        /// For browsers Chrome creates itself (new tabbed windows); see
+        /// `orphan`.
+        fn default_client(&self) -> Option<Client> {
+            self.sink.lock().expect("sink slot").clone().map(orphan_client)
         }
     }
 }

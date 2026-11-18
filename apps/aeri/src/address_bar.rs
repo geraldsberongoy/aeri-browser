@@ -4,12 +4,12 @@
 
 use std::time::Duration;
 
-use aeri_cef::Shortcut;
+use aeri_cef::{Extension, Shortcut};
 use aeri_core::tab::{LoadState, Tab};
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    Animation, AnimationExt, Context, Entity, FocusHandle, Focusable, KeyBinding, Window, actions,
-    div, ease_out_quint, prelude::*, px, rgb, rgba,
+    Animation, AnimationExt, AnyElement, Context, Entity, FocusHandle, Focusable, KeyBinding,
+    Window, actions, div, ease_out_quint, img, prelude::*, px, rgb, rgba,
 };
 
 use crate::shell::AppMsg;
@@ -47,6 +47,8 @@ pub struct AddressBar {
     tx: UnboundedSender<AppMsg>,
     input: Entity<TextInput>,
     load: LoadState,
+    /// The profile's extensions with a toolbar action, as buttons.
+    extensions: Vec<Extension>,
     /// Bumped on every reveal so the slide-in animation restarts.
     reveal: usize,
 }
@@ -55,6 +57,7 @@ impl AddressBar {
     pub fn new(
         window_id: u64,
         tx: UnboundedSender<AppMsg>,
+        extensions: Vec<Extension>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -85,6 +88,7 @@ impl AddressBar {
             tx,
             input,
             load: LoadState::Unloaded,
+            extensions,
             reveal: 0,
         }
     }
@@ -105,6 +109,45 @@ impl AddressBar {
         window.focus(&self.input.focus_handle(cx), cx);
         self.input.update(cx, |input, cx| input.select_all_text(cx));
         cx.notify();
+    }
+
+    pub fn set_extensions(&mut self, extensions: Vec<Extension>, cx: &mut Context<Self>) {
+        self.extensions = extensions;
+        cx.notify();
+    }
+
+    fn extension_button(
+        &self,
+        ix: usize,
+        extension: &Extension,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = extension.id.clone();
+        let icon = match &extension.icon {
+            Some(path) => img(path.clone()).size(px(16.)).into_any_element(),
+            None => div()
+                .text_size(px(12.))
+                .child(extension.name.chars().next().unwrap_or('?').to_string())
+                .into_any_element(),
+        };
+        div()
+            .id(("extension", ix))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(28.))
+            .rounded(px(8.))
+            .hover(|style| style.bg(rgba(0xffffff1a)))
+            .active(|style| style.bg(rgba(0xffffff26)))
+            .on_click(cx.listener(move |this, _, _, _| {
+                let _ = this.tx.unbounded_send(AppMsg::ExtensionAction {
+                    window: this.window_id,
+                    extension: id.clone(),
+                });
+            }))
+            .child(icon)
+            .into_any_element()
     }
 
     fn shortcut(&mut self, shortcut: Shortcut) {
@@ -131,6 +174,12 @@ impl Focusable for AddressBar {
 
 impl Render for AddressBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let buttons: Vec<AnyElement> = self
+            .extensions
+            .iter()
+            .enumerate()
+            .map(|(ix, extension)| self.extension_button(ix, extension, cx))
+            .collect();
         let pill = div()
             .relative()
             .flex()
@@ -138,7 +187,8 @@ impl Render for AddressBar {
             .gap(px(10.))
             .h(px(40.))
             .w_full()
-            .px(px(14.))
+            .pl(px(14.))
+            .pr(px(if buttons.is_empty() { 14. } else { 6. }))
             .rounded(px(12.))
             .bg(rgba(0x1d1e22f2))
             .border_1()
@@ -152,7 +202,10 @@ impl Render for AddressBar {
                     .rounded_full()
                     .bg(rgb(self.status_color())),
             )
-            .child(self.input.clone());
+            .child(div().flex_1().min_w_0().child(self.input.clone()))
+            .when(!buttons.is_empty(), |pill| {
+                pill.child(div().flex().flex_none().gap(px(2.)).children(buttons))
+            });
 
         let pill = if cx.reduce_motion() {
             pill.into_any_element()

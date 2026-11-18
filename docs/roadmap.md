@@ -14,7 +14,7 @@ Risk levels: low, medium, high, critical. Sizes are in the detailed plan.
 | Id | Name | Outcome | Risk |
 | --- | --- | --- | --- |
 | 1 | Browse one page | A dev build opens a page-first window: a GPUI frame with one frameless Chrome-style CEF window per tab and a GPUI address bar, all as child windows. It browses HTTPS, handles resize, full screen, errors and crashes, and quits with no orphan processes. Proves S1 and S3. Built; S1 revised the layering (ADR 0002). | high |
-| 2 | Chrome Web Store extensions | uBlock Origin Lite, Bitwarden and a dark-mode extension install from their store pages into a non-default profile, persist across restart, and show buttons and popups without a Chrome toolbar. Proves S2. | high |
+| 2 | Chrome Web Store extensions | uBlock Origin Lite, Bitwarden and a dark-mode extension install from their store pages into a non-default profile, persist across restart, and show buttons and popups without a Chrome toolbar. Proves S2. Built: hidden Chrome toolbar, private DevTools pipe, Chrome-created tabs routed into Aeri tabs (ADR 0006). | high |
 | 3 | Background tabs behave | Unseen tabs are created lazily and slowed when hidden. Aeri knows when a tab plays audio or captures. S7. | medium |
 | 4 | Ad and tracker blocking | Built-in blocking is on by default with uBO lists downloaded at first launch. It covers network and cosmetic filtering, can be switched off per site, and has measured per-request cost. S5. | medium |
 | 5 | Profiles | Create, rename, switch, delete and open profiles, one window each. Two profiles stay signed in to one site with different accounts. Dormant profiles release resources. S4. | high |
@@ -40,7 +40,7 @@ later piece of data lives.
 | Spike | Question | Runs in |
 | --- | --- | --- |
 | S1 | Layering: GPUI frame, CEF tab windows and GPUI overlays as child windows. Slide-over, click-through, resize, full screen, focus, tab switching. Run in Phase 1: one browser view per Chrome-style window forced one window per tab; GPUI does not pass transparent clicks. | Phase 1 |
-| S2 | Web Store: install uBO Lite and Bitwarden end to end in a non-default profile. Popups without a toolbar. | Phase 2 |
+| S2 | Web Store: install uBO Lite and Bitwarden end to end in a non-default profile. Popups without a toolbar. Run in Phase 2: passed with Chrome's toolbar kept hidden and `Extensions.triggerAction` over a private pipe (ADR 0006). | Phase 2 |
 | S3 | Run loop: CEF external pump inside GPUI. Live resize, menus, sheets, clean shutdown with N profiles. | Phase 1 |
 | S4 | Profile cost and isolation: 1/2/5/10 request contexts, storage does not cross, dormant profiles return memory. | Phase 5 |
 | S5 | Blocking hook: adblock-rust in `OnBeforeResourceLoad`, per-request latency, cosmetic injection timing. | Phase 4 |

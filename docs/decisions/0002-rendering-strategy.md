@@ -118,3 +118,12 @@ Revised layering, approved by the owner ("stacked" option):
   `visibilityState: hidden`), close button, Cmd-Q.
 - Not yet measured: per-tab cost of the extra window (Phase 13), and
   flicker during live resize at 120 fps (owner's manual check).
+
+## S2 outcome (Phase 2, 2026-11-18)
+
+Chrome Web Store extensions work with this layering; ADR 0002 stands.
+uBlock Origin Lite, Bitwarden and Dark Reader installed from their store
+pages, persisted across restart, and opened their popups from GPUI buttons
+over an edge-to-edge page. How: [ADR 0006](0006-extension-ui-and-tab-routing.md)
+(hidden Chrome toolbar, `Extensions.triggerAction` over a private DevTools
+pipe, Chrome-created tabs routed into Aeri tabs).

@@ -27,12 +27,18 @@ fn main() -> Result<()> {
 
     let config = shell::Config {
         data_dir: data_dir()?,
+        profile: std::env::var("AERI_PROFILE")
+            .ok()
+            .filter(|name| !name.trim().is_empty()),
         start_url: std::env::var("AERI_START_URL").unwrap_or_else(|_| "about:blank".to_owned()),
         remote_debugging_port: std::env::var("AERI_REMOTE_DEBUGGING_PORT")
             .ok()
             .and_then(|port| port.parse().ok()),
     };
     tracing::info!(data_dir = %config.data_dir.display(), "starting Aeri");
+    if let Err(error) = runtime.devtools() {
+        tracing::error!(error, "no DevTools pipe: extension actions are unavailable");
+    }
 
     gpui_platform::application().run(move |cx| {
         if let Err(err) = shell::start(runtime.clone(), config, cx) {

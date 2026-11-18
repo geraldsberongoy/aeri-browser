@@ -162,26 +162,41 @@ wrap_life_span_handler! {
             emit(&self.sink, Event::Closed { tab: self.tab });
         }
 
-        // Popups become tabs in phase 9. Until then they are refused rather
-        // than opened in a Chrome window Aeri does not manage.
+        // Every popup becomes an Aeri tab: the browser gets its own tab
+        // client now, and the window code hands its view to the application
+        // (`Signal::TabOpened`).
         fn on_before_popup(
             &self,
             _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
-            _popup_id: ::std::os::raw::c_int,
+            popup_id: ::std::os::raw::c_int,
             target_url: Option<&CefString>,
             _target_frame_name: Option<&CefString>,
-            _target_disposition: cef::WindowOpenDisposition,
+            target_disposition: cef::WindowOpenDisposition,
             _user_gesture: ::std::os::raw::c_int,
             _popup_features: Option<&cef::PopupFeatures>,
             _window_info: Option<&mut cef::WindowInfo>,
-            _client: Option<&mut Option<Client>>,
+            client: Option<&mut Option<Client>>,
             _settings: Option<&mut cef::BrowserSettings>,
             _extra_info: Option<&mut Option<cef::DictionaryValue>>,
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
-            tracing::info!(tab = %self.tab, url = %text(target_url), "popup refused (phase 1)");
-            1
+            let Some(client) = client else { return 1 };
+            let tab = TabId::next();
+            *client = Some(tab_client(tab, self.sink.clone()));
+            tracing::debug!(opener = %self.tab, %tab, url = %text(target_url), "popup becomes a tab");
+            crate::window::expect_popup(crate::window::PendingPopup {
+                popup_id,
+                tab,
+                opener: self.tab,
+                foreground: target_disposition != cef::WindowOpenDisposition::NEW_BACKGROUND_TAB,
+                sink: self.sink.clone(),
+            });
+            0
+        }
+
+        fn on_before_popup_aborted(&self, _browser: Option<&mut Browser>, popup_id: ::std::os::raw::c_int) {
+            crate::window::popup_aborted(self.tab, popup_id);
         }
     }
 }

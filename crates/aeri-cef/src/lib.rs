@@ -6,6 +6,9 @@
 //! `external_message_pump`).
 
 mod client;
+mod devtools;
+mod extensions;
+mod orphan;
 mod profile;
 mod runtime;
 mod window;
@@ -16,9 +19,11 @@ mod mac;
 use std::sync::Arc;
 
 use aeri_core::engine::Event;
-use aeri_core::ids::TabId;
+use aeri_core::ids::{ProfileId, TabId};
 
-pub use profile::ProfileContext;
+pub use devtools::DevTools;
+pub use extensions::Extension;
+pub use profile::{ExtensionsWatch, ProfileContext};
 pub use runtime::{Runtime, RuntimeConfig, load};
 pub use window::{TabObserver, TabWindow};
 
@@ -39,7 +44,24 @@ pub enum Shortcut {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Signal {
     Engine(Event),
-    Shortcut { tab: TabId, shortcut: Shortcut },
+    Shortcut {
+        tab: TabId,
+        shortcut: Shortcut,
+    },
+    /// A page opened a new tab or window (`window.open`, a link with a
+    /// target). Its browser is waiting: claim it with [`TabWindow::adopt`].
+    TabOpened {
+        tab: TabId,
+        opener: TabId,
+        foreground: bool,
+    },
+    /// Chrome or an extension wanted a new Chrome window or tab
+    /// (`chrome.tabs.create`, an options page). Aeri closed it; open `url` in
+    /// an Aeri tab of `profile` instead.
+    OpenUrl {
+        profile: ProfileId,
+        url: String,
+    },
 }
 
 /// Where signals go. Called on the main thread from inside CEF callbacks, so

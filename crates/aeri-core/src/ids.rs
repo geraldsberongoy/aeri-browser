@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use uuid::Uuid;
 
@@ -35,6 +36,15 @@ impl FromStr for ProfileId {
 /// A tab's identifier for the lifetime of the process.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TabId(pub u64);
+
+impl TabId {
+    /// A new id, unique for the process. Both the shell and the engine
+    /// adapter (for tabs a page opens) allocate from here.
+    pub fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 impl fmt::Display for TabId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

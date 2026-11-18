@@ -88,6 +88,7 @@ Development switches:
 | `AERI_DATA_DIR=/tmp/aeri-data` | Use a throwaway data directory instead of `~/Library/Application Support/Aeri`. |
 | `AERI_START_URL=https://example.com` | First tab's address (default `about:blank`, which opens the address bar). |
 | `AERI_REMOTE_DEBUGGING_PORT=9334` | Expose the DevTools protocol for scripted checks. |
+| `AERI_PROFILE=Work` | Open (or create) the profile with this name instead of the first one. Stopgap until Phase 5's profile UI. |
 | `AERI_LOG=info,aeri=debug` | `tracing` filter (stderr). |
 | `--use-mock-keychain` | Chromium switch: skip the Keychain. Use it for scripted runs; see below. |
 
@@ -97,6 +98,12 @@ Run the bundle binary directly to see logs:
 AERI_DATA_DIR=/tmp/aeri-data AERI_REMOTE_DEBUGGING_PORT=9334 \
   ./target/bundle/aeri.app/Contents/MacOS/aeri --use-mock-keychain
 ```
+
+Running under `lldb` (launch or attach) raises a system "Developer Tools
+Access" dialog and stalls until it is answered. Aeri also needs fds 3 and 4
+free at start for its private DevTools pipe (ADR 0006); if a parent process
+leaves them open, Aeri logs "no DevTools pipe" and extension buttons do
+nothing.
 
 ### Keychain
 
