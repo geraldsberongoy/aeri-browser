@@ -1,32 +1,39 @@
 # Aeri — project memory
 
 ## What it is
-Open-source, native desktop web browser. Mac first (Apple Silicon), then
-Windows. It is compatible with Chrome (sites and Chrome Web Store
-extensions), page-first and polished like Search and Arc, customisable like
-Zen, and lighter than Helium. Many isolated profiles can be open at once,
-one window per profile, inside one running app.
+Aeri is an open-source, native desktop web browser. It ships on Mac first
+(Apple Silicon), then Windows. It works like Chrome for websites and Chrome
+Web Store extensions, is page-first and polished like Search and Arc,
+customisable like Zen, and lighter than Helium. Many isolated profiles can be
+open at once, one window per profile, inside one running app.
 
-Framed intent: `docs/handoff.md`. Approved requirements:
-`.monozukuri/blueprint/01-business-logic.md`.
+- Framed intent: `docs/handoff.md`.
+- Requirements (approved): `.monozukuri/blueprint/01-business-logic.md`.
+- Stack (approved except codecs/DRM): `.monozukuri/blueprint/02-tech-stack.md`.
+- ADRs live in `docs/decisions/` (public repo convention from the handoff).
+- Research notes live in `docs/research/`.
 
 ## Actors
-Person (sole human, all privileges) · Website (untrusted) · Extension
-(semi-trusted, per profile) · Web engine (external) · Operating system.
+- Person: the sole human, with all privileges.
+- Website: untrusted.
+- Extension: semi-trusted, scoped to one profile.
+- Web engine: external.
+- Operating system.
 
 ## Current phase
-Blueprint, stage 2 (tech stack). Stage 1 was approved on 2026-11-18.
+Blueprint stage 2 is approved; stage 3 (logic-to-stack map) is next. The
+codecs/DRM decision is pending research in `docs/research/codecs-drm.md`.
 
-Research in progress, in `docs/research/`: `gpui.md`, `cef.md`,
-`blocking-and-credentials.md`.
+## Stack in one line
+Rust · CEF (Chromium) via cef-rs, Chrome-style Views windows · GPUI interface
+in attached child windows (ADR 0002, gated by spike S1) · SQLite per profile ·
+adblock-rust · OS keychain.
 
-## Known risks carried into stage 2
-- Chrome extensions vs a GPUI-drawn UI. On macOS, CEF browsers embedded in a
-  parent view are reported to run in "Alloy style", which has no extension
-  UI or Web Store install. Source: secondary report, verification in
-  progress.
-- Classic uBlock Origin (MV2) is reported unrunnable on current Chromium. The
-  blocking requirement is stated by filter-list quality, not by that
-  extension.
-- No public macOS API for third-party browsers to read Apple Passwords
-  (Observed in Search's source comments; verification in progress).
+## Constraints from the owner
+- Individual Apple Developer account. Without an organisation account there
+  are no iCloud passkeys and no Apple Passwords.
+- Filter lists are downloaded at first launch; none are bundled.
+
+## Spikes the stack depends on
+S1 layering · S2 Web Store install · S3 run loop · S4 profile cost/isolation ·
+S5 blocking hook. Details are in `02-tech-stack.md`.
