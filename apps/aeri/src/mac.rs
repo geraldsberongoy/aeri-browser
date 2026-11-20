@@ -7,6 +7,7 @@
 //! keying GPUI windows re-enters GPUI.
 
 mod frame;
+mod pressure;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -23,6 +24,7 @@ use crate::native_menu;
 pub use self::frame::{
     BAR_HEIGHT, Frame, MAX_VISIBLE_SUGGESTIONS, SUGGESTION_CHROME, SUGGESTION_HEIGHT,
 };
+pub use self::pressure::{Pressure, watch_memory_pressure};
 
 /// The `NSWindow` owning a content `NSView`.
 pub(super) fn window_of(view: *mut c_void) -> Option<Retained<NSWindow>> {

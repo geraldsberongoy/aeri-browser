@@ -1,12 +1,13 @@
 //! `Profiles/<id>/profile.db`: one profile's own records (ADR 0004): its
 //! workspace (spaces and their tabs, favourites, and which space each window
-//! shows), recently closed tabs, history, bookmarks and settings. Nothing
-//! here is ever readable from another profile: each profile has its own
-//! file.
+//! shows), recently closed tabs, history, bookmarks, settings and the sites
+//! kept awake. Nothing here is ever readable from another profile: each
+//! profile has its own file.
 
 mod bookmarks;
 mod closed;
 mod history;
+mod keep_awake;
 mod settings;
 mod workspace;
 
@@ -106,6 +107,8 @@ const MIGRATIONS: &[&str] = &[
     "DROP TABLE popup_sites;",
     // 6: the profile's settings, one value per key.
     "CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
+    // 7: sites whose tabs never rest.
+    "CREATE TABLE keep_awake_sites (site TEXT PRIMARY KEY NOT NULL);",
 ];
 
 pub struct ProfileDb {

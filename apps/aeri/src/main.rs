@@ -9,6 +9,7 @@ mod library;
 mod mac;
 mod native_menu;
 mod profile_manager;
+mod resource_view;
 mod shell;
 mod space_editor;
 mod text_input;
@@ -47,6 +48,12 @@ fn main() -> Result<()> {
             .ok()
             .and_then(|port| port.parse().ok()),
         download_dir: download_dir()?,
+        // Development and tests: `AERI_REST_AFTER_SECS=20` rests tabs unseen
+        // for 20 seconds instead of the Person's period.
+        rest_after: std::env::var("AERI_REST_AFTER_SECS")
+            .ok()
+            .and_then(|secs| secs.parse().ok())
+            .map(std::time::Duration::from_secs),
     };
     tracing::info!(data_dir = %config.data_dir.display(), "starting Aeri");
     if let Err(error) = runtime.devtools() {

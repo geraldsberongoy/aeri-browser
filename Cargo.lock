@@ -73,6 +73,7 @@ dependencies = [
  "aeri-core",
  "anyhow",
  "block2 0.6.2",
+ "dispatch2",
  "futures",
  "gpui",
  "gpui_platform",

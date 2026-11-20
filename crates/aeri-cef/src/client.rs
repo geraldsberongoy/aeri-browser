@@ -271,6 +271,14 @@ const CONTROL: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0;
 const SHIFT: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_SHIFT_DOWN.0;
 const OPTION: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0;
 
+/// A key that edits what the page holds: pressed in an editable field,
+/// without ⌘ or ⌃ (those are commands, such as copy).
+fn is_typing(event: &KeyEvent) -> bool {
+    event.type_ == KeyEventType::RAWKEYDOWN
+        && event.focus_on_editable_field != 0
+        && event.modifiers & (COMMAND | CONTROL) == 0
+}
+
 /// Maps a key press in a page to a browser shortcut, if it is one.
 fn shortcut_for(event: &KeyEvent) -> Option<Shortcut> {
     if event.type_ != KeyEventType::RAWKEYDOWN {
@@ -320,7 +328,12 @@ wrap_keyboard_handler! {
                     (self.sink)(Signal::Shortcut { tab: self.tab, shortcut });
                     1
                 }
-                None => 0,
+                None => {
+                    if event.is_some_and(is_typing) {
+                        emit(&self.sink, Event::Typed { tab: self.tab });
+                    }
+                    0
+                }
             }
         }
     }

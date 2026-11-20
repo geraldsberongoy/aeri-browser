@@ -92,6 +92,7 @@ Development switches:
 | `AERI_REMOTE_DEBUGGING_PORT=9334` | Expose the DevTools protocol for scripted checks. |
 | `AERI_PROFILE=Work,Client` | Open (or create) these profiles, each in its own window, instead of the last-used one. For scripted checks; the Profiles menu is the Person's way. |
 | `AERI_DOWNLOAD_DIR=/tmp/aeri-downloads` | Save downloads here instead of `~/Downloads`. |
+| `AERI_REST_AFTER_SECS=20` | Rest tabs unseen this many seconds, checking as often, instead of the Person's period. |
 | `AERI_LOG=info,aeri=debug` | `tracing` filter (stdout; colours only on a terminal). |
 | `--use-mock-keychain` | Chromium switch: skip the Keychain. Use it for scripted runs; see below. |
 | `--autoplay-policy=no-user-gesture-required` | Chromium switch: let a script play sound without a click (tab-signals checks). |
@@ -142,6 +143,16 @@ Chrome's password manager page. Chrome's "Save password?" bubble follows a
 submitted sign-in; a saved one is listed when you click the field and
 filled only after macOS confirms it is you. Scripted checks must not
 answer that prompt; quitting Aeri dismisses it.
+
+Resting (Phase 11): tabs no window shows rest after the period chosen in
+the Resources window (palette: **Show Resources**; `app.db` setting
+`rest_after_minutes`, default an hour): the page closes, the tab keeps its
+place and title, and showing it loads the address again. Tabs playing
+sound, using the camera or microphone, typed into since they loaded, or on
+a site kept awake (tab menu; `profile.db` table `keep_awake_sites`) stay.
+macOS memory pressure rests the longest-unseen tabs first; checking that
+needs root: `sudo memory_pressure -S -l warn` (then `-l normal`). The
+Resources window samples Chromium's task manager only while open.
 
 Running under `lldb` (launch or attach) raises a system "Developer Tools
 Access" dialog and stalls until it is answered. Aeri also needs fds 3 and 4

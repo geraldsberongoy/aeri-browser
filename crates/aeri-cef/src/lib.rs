@@ -11,6 +11,7 @@ mod downloads;
 mod extensions;
 mod orphan;
 mod profile;
+mod resources;
 mod runtime;
 mod signals;
 mod window;
@@ -28,6 +29,7 @@ pub use devtools::DevTools;
 pub use downloads::cancel_download;
 pub use extensions::Extension;
 pub use profile::{ExtensionsWatch, ProfileContext};
+pub use resources::{Task, TaskKind, TaskMonitor};
 pub use runtime::{Runtime, RuntimeConfig, load};
 pub use window::{TabObserver, TabWindow};
 

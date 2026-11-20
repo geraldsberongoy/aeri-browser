@@ -5,13 +5,13 @@
 //!                           Loading --failed----> Failed
 //! Loading/Loaded --renderer gone--> Crashed
 //! Loaded/Failed/Crashed --load starts--> Loading
+//! any open --put to rest--> Resting --load starts--> Loading
 //! any --closed--> Closed (terminal)
 //! ```
 //!
-//! Resting (phase 11) is added when tabs can be put to rest.
-//!
 //! Separately, a tab tracks what it is doing that the Person should know
-//! about even when it is hidden: sound, camera, microphone ([`Activity`]).
+//! about even when it is hidden: sound, camera, microphone ([`Activity`]),
+//! and whether the Person typed into the page since it loaded.
 
 use crate::engine::Event;
 use crate::ids::TabId;
@@ -29,6 +29,9 @@ pub enum LoadState {
     Crashed {
         reason: String,
     },
+    /// Its page was released to save resources (Phase 11); its place,
+    /// address and title stay, and showing it loads the page again.
+    Resting,
     Closed,
 }
 
@@ -56,6 +59,9 @@ pub struct Tab {
     pub can_go_back: bool,
     pub can_go_forward: bool,
     pub activity: Activity,
+    /// The Person typed into the page since it last loaded, so it may hold
+    /// input not yet sent (stage 1: such a tab never rests).
+    pub typed: bool,
 }
 
 impl Tab {
@@ -68,7 +74,17 @@ impl Tab {
             can_go_back: false,
             can_go_forward: false,
             activity: Activity::default(),
+            typed: false,
         }
+    }
+
+    /// The page has been released; nothing it did carries over.
+    pub fn rest(&mut self) {
+        self.load = LoadState::Resting;
+        self.activity = Activity::default();
+        self.typed = false;
+        self.can_go_back = false;
+        self.can_go_forward = false;
     }
 
     pub fn is_loading(&self) -> bool {
@@ -103,6 +119,7 @@ impl Tab {
                 self.can_go_forward = *can_go_forward;
                 if *is_loading {
                     self.load = LoadState::Loading;
+                    self.typed = false;
                 } else if self.load == LoadState::Loading {
                     // A failure or crash reported during this load keeps its
                     // state; only a load that is still running completes.
@@ -138,6 +155,9 @@ impl Tab {
                 self.activity.microphone = *microphone;
             }
             Event::AudibleChanged { audible, .. } => self.activity.audible = *audible,
+            Event::Typed { .. } => self.typed = true,
+            // A resting tab's page closing is the rest itself; the tab stays.
+            Event::Closed { .. } if self.load == LoadState::Resting => {}
             Event::Closed { .. } => {
                 self.load = LoadState::Closed;
                 self.activity = Activity::default();
@@ -270,5 +290,34 @@ mod tests {
             reason: "killed".into(),
         });
         assert_eq!(tab.activity, Activity::default());
+    }
+
+    #[test]
+    fn typing_marks_the_page_until_the_next_load() {
+        let mut tab = Tab::new(T, "https://example.com/");
+        tab.apply(&loading(true));
+        tab.apply(&loading(false));
+        tab.apply(&Event::Typed { tab: T });
+        assert!(tab.typed);
+        tab.apply(&loading(true));
+        assert!(!tab.typed);
+    }
+
+    #[test]
+    fn a_resting_tab_outlives_its_page_and_wakes_by_loading() {
+        let mut tab = Tab::new(T, "https://example.com/");
+        tab.apply(&loading(true));
+        tab.apply(&loading(false));
+        tab.apply(&Event::AudibleChanged {
+            tab: T,
+            audible: true,
+        });
+        tab.rest();
+        assert_eq!(tab.activity, Activity::default());
+        tab.apply(&Event::Closed { tab: T });
+        assert_eq!(tab.load, LoadState::Resting);
+        tab.apply(&loading(true));
+        tab.apply(&loading(false));
+        assert_eq!(tab.load, LoadState::Loaded);
     }
 }

@@ -188,6 +188,11 @@ impl TabWindow {
         self.state.view.browser()
     }
 
+    /// The page's browser id, for [`TaskMonitor::task_for_browser`](crate::TaskMonitor::task_for_browser).
+    pub fn browser_id(&self) -> Option<i32> {
+        self.browser().map(|browser| browser.identifier())
+    }
+
     pub fn execute(&self, command: &Command) {
         let Some(browser) = self.browser() else {
             tracing::debug!(?command, "no browser yet for command");

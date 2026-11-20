@@ -7,6 +7,7 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use aeri_cef::{TabObserver, TabWindow};
 use aeri_core::engine::Event;
@@ -37,6 +38,9 @@ pub(super) struct TabEntry {
     /// The last popup Aeri refused this tab's page (Phase 9), until the page
     /// navigates or the Person deals with it.
     pub(super) blocked_popup: Option<String>,
+    /// When a window last showed it (Phase 11: tabs unseen long enough
+    /// rest).
+    pub(super) last_seen: Instant,
 }
 
 impl TabEntry {
@@ -50,6 +54,7 @@ impl TabEntry {
             cef: None,
             unseen: Some(url.to_owned()),
             blocked_popup: None,
+            last_seen: Instant::now(),
         };
         (id, entry)
     }
@@ -79,7 +84,7 @@ impl TabEntry {
     }
 
     /// Takes the tab's page away (to close it) and leaves the tab unseen on
-    /// its address, as a restored tab is.
+    /// its address, resting, as a restored tab is.
     pub(super) fn put_away(&mut self) -> Option<Rc<TabWindow>> {
         let cef = self.cef.take()?;
         let url = match self.model.url.as_str() {
@@ -87,6 +92,8 @@ impl TabEntry {
             url => url.to_owned(),
         };
         self.unseen = Some(url);
+        self.model.rest();
+        self.blocked_popup = None;
         Some(cef)
     }
 }
@@ -138,6 +145,7 @@ impl Shell {
             cef: None,
             unseen,
             blocked_popup: None,
+            last_seen: Instant::now(),
         };
         match place {
             Place::After(opener) => w.tabs.insert(tab, entry, false, Some(opener)),
@@ -288,9 +296,18 @@ impl Shell {
         let Some(profile) = self.spot_profile(spot) else {
             return;
         };
+        // A rested page's close belongs to the old page, not the tab (which
+        // may already have a new one).
+        if matches!(event, Event::Closed { .. }) && self.resting.closing.contains(&tab_id) {
+            return;
+        }
         let Some(item) = self.list_mut(spot).and_then(|list| list.get_mut(tab_id)) else {
             return;
         };
+        if item.value.cef.is_none() && item.value.unseen.is_some() {
+            // Put away: whatever its old page still reports is moot.
+            return;
+        }
         let mut changed = false;
         if matches!(event, Event::AddressChanged { .. }) {
             changed |= item.value.blocked_popup.take().is_some();
@@ -351,6 +368,12 @@ impl Shell {
             .open
             .get(&profile)
             .is_some_and(|open| open.favourites.get(tab).is_some());
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        if w.shown() != Some(tab) {
+            self.note_seen(window_id);
+        }
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
@@ -540,6 +563,10 @@ impl Shell {
     /// a closed tab, and the window with it if it was all the window had.
     /// Pages Aeri closed itself are already out of the lists.
     pub(super) fn tab_closed(&mut self, window_id: u64, tab: TabId, cx: &mut App) {
+        if self.resting.closing.remove(&tab) {
+            // A page closed so its tab could rest.
+            return;
+        }
         if let Some(w) = self.window_mut(window_id)
             && w.closing
         {

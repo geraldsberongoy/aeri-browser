@@ -80,6 +80,12 @@ impl Shell {
                         tracing::error!(%err, %profile, "could not open profile.db; nothing is recorded")
                     })
                     .ok();
+                let keep_awake = db
+                    .as_ref()
+                    .and_then(|db| db.keep_awake_sites().ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
                 self.open.insert(
                     profile,
                     OpenProfile {
@@ -95,6 +101,7 @@ impl Shell {
                         favourites: TabList::default(),
                         favourite_home: HashMap::new(),
                         downloads: Vec::new(),
+                        keep_awake,
                     },
                 );
             }

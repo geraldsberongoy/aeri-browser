@@ -82,8 +82,15 @@ rule revised). Provider per profile (`aeri-core::credentials`, `profile.db`
 migration 6), Chrome's preferences set before pages open (save only for
 Aeri's store, fill only on pick after the screen lock, no auto sign-in, no
 leak checks), profile menu and palette, Manage Passwords…. Evidence:
-`.monozukuri/specifications/phase-10-passwords.md`. Next: Phase 11
-(resource stewardship).
+`.monozukuri/specifications/phase-10-passwords.md`. Phase 11 (resource
+stewardship) is built: `aeri-core::resources` decides which tabs rest
+(period in `app.db` migration 4, keep-awake sites in `profile.db`
+migration 7, `LoadState::Resting`, typed input from CEF's key handler); the
+shell rests through the put-away path on a minute check and a libdispatch
+memory-pressure source; a Resources window reads CEF's task manager (held
+only while open; cef-rs's `task_info` drops its out-param, so it is called
+raw). Evidence: `.monozukuri/specifications/phase-11-resource-stewardship.md`.
+Next: Phase 12 (appearance and customisation).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

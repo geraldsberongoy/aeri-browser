@@ -4,6 +4,7 @@
 //! `user_version`.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -90,7 +91,11 @@ const MIGRATIONS: &[&str] = &[
         id         TEXT PRIMARY KEY NOT NULL,
         deleted_at INTEGER NOT NULL DEFAULT (unixepoch())
      );",
+    // 4: app-wide settings, one value per key.
+    "CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
 ];
+
+const REST_AFTER: &str = "rest_after_minutes";
 
 /// Applies the migrations a database lacks, each in its own transaction,
 /// tracked by SQLite's `user_version`. A database from a newer build is
@@ -301,6 +306,35 @@ impl AppDb {
         Ok(claimed == 1)
     }
 
+    /// How long a tab may go unseen before it rests; `None`: never. The
+    /// default until the Person chooses is
+    /// [`DEFAULT_REST_AFTER`](crate::resources::DEFAULT_REST_AFTER).
+    pub fn rest_after(&self) -> Result<Option<Duration>> {
+        let minutes: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM settings WHERE key = ?1",
+                [REST_AFTER],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(match minutes {
+            None => crate::resources::DEFAULT_REST_AFTER,
+            Some(minutes) if minutes <= 0 => None,
+            Some(minutes) => Some(Duration::from_secs(minutes as u64 * 60)),
+        })
+    }
+
+    pub fn set_rest_after(&self, after: Option<Duration>) -> Result<()> {
+        let minutes = after.map_or(0, |after| after.as_secs() / 60);
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![REST_AFTER, minutes.to_string()],
+        )?;
+        Ok(())
+    }
+
     /// Runs an update that must touch exactly one profile.
     fn update_one(&self, sql: &str, params: impl rusqlite::Params) -> Result<()> {
         match self.conn.execute(sql, params)? {
@@ -413,6 +447,16 @@ mod tests {
         let b = db.create_profile("Work", 2).unwrap();
         assert_ne!(a.id, b.id);
         assert_eq!(db.profiles().unwrap(), vec![a, b]);
+    }
+
+    #[test]
+    fn rest_after_defaults_to_an_hour_and_never_is_kept() {
+        let db = AppDb::open_in_memory().unwrap();
+        assert_eq!(db.rest_after().unwrap(), Some(Duration::from_secs(3_600)));
+        db.set_rest_after(None).unwrap();
+        assert_eq!(db.rest_after().unwrap(), None);
+        db.set_rest_after(Some(Duration::from_secs(900))).unwrap();
+        assert_eq!(db.rest_after().unwrap(), Some(Duration::from_secs(900)));
     }
 
     #[test]

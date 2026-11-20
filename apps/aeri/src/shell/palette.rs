@@ -26,6 +26,7 @@ pub enum PaletteCommand {
     ShowDownloads,
     ClearBrowsingData,
     ManagePasswords,
+    ShowResources,
     SiteSettings,
     OpenInDefaultBrowser,
     ToggleSidebar,
@@ -55,6 +56,7 @@ const COMMANDS: &[(PaletteCommand, &str)] = &[
     (PaletteCommand::ShowDownloads, ""),
     (PaletteCommand::ClearBrowsingData, ""),
     (PaletteCommand::ManagePasswords, ""),
+    (PaletteCommand::ShowResources, ""),
     (PaletteCommand::SiteSettings, ""),
     (PaletteCommand::OpenInDefaultBrowser, ""),
     (PaletteCommand::ToggleSidebar, "⌘S"),
@@ -171,6 +173,7 @@ impl Shell {
             PaletteCommand::ShowDownloads => "Show Downloads",
             PaletteCommand::ClearBrowsingData => "Clear Browsing Data…",
             PaletteCommand::ManagePasswords => "Manage Passwords…",
+            PaletteCommand::ShowResources => "Show Resources",
             PaletteCommand::SiteSettings => "Site Settings…",
             PaletteCommand::OpenInDefaultBrowser => "Open in Default Browser",
             PaletteCommand::ToggleSidebar => "Show or Hide Sidebar",
@@ -234,6 +237,7 @@ impl Shell {
             PaletteCommand::ShowDownloads => self.open_page(window_id, DOWNLOADS_PAGE, cx),
             PaletteCommand::ClearBrowsingData => self.open_page(window_id, CLEAR_DATA_PAGE, cx),
             PaletteCommand::ManagePasswords => self.open_page(window_id, PASSWORDS_PAGE, cx),
+            PaletteCommand::ShowResources => self.show_resources(window_id, cx),
             _ => {}
         }
     }

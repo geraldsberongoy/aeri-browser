@@ -85,6 +85,18 @@ impl Shell {
             TabCommand::AllowPopups(allowed) => self.allow_popups(window_id, tab, allowed, cx),
             TabCommand::SiteSettings => self.site_settings(window_id, tab, cx),
             TabCommand::OpenInDefaultBrowser => self.open_in_default_browser(tab),
+            TabCommand::Rest => {
+                self.rest_tab(tab, cx);
+            }
+            TabCommand::KeepAwake(awake) => {
+                let url = self.spot(tab).and_then(|spot| {
+                    let list = self.list_mut(spot)?;
+                    Some(list.get(tab)?.value.url().to_owned())
+                });
+                if let Some(url) = url {
+                    self.set_keep_awake(profile, &url, awake);
+                }
+            }
             TabCommand::MoveTo {
                 index,
                 favourite: to_favourites,
@@ -152,6 +164,9 @@ impl Shell {
             add("Add to Favourites", command(TabCommand::ToggleFavourite));
         }
         add("Duplicate Tab", command(TabCommand::Duplicate));
+        if item.value.cef.is_some() && w.shown() != Some(tab) {
+            add("Rest Tab", command(TabCommand::Rest));
+        }
         let page = item.value.url();
         if records_history(page) {
             let bookmarked = open
@@ -176,6 +191,13 @@ impl Shell {
                 "Open in Default Browser",
                 command(TabCommand::OpenInDefaultBrowser),
             );
+            let kept = open.keep_awake.contains(&site);
+            let title = if kept {
+                format!("Let {site} Rest")
+            } else {
+                format!("Keep {site} Awake")
+            };
+            add(&title, command(TabCommand::KeepAwake(!kept)));
         }
         if favourite.is_none() {
             let others: Vec<_> = open.spaces.iter().filter(|s| s.id != w.space).collect();

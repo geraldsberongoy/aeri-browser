@@ -7,6 +7,7 @@ pub mod engine;
 pub mod ids;
 pub mod omnibox;
 pub mod profile_db;
+pub mod resources;
 pub mod store;
 pub mod suggest;
 pub mod tab;

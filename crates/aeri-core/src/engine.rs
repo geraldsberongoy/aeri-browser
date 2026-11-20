@@ -74,6 +74,10 @@ pub enum Event {
         tab: TabId,
         audible: bool,
     },
+    /// The Person pressed a key in the page (not a browser shortcut).
+    Typed {
+        tab: TabId,
+    },
     /// The browser for this tab has been destroyed by the engine.
     Closed {
         tab: TabId,
@@ -91,6 +95,7 @@ impl Event {
             | Event::RendererGone { tab, .. }
             | Event::MediaAccessChanged { tab, .. }
             | Event::AudibleChanged { tab, .. }
+            | Event::Typed { tab }
             | Event::Closed { tab } => *tab,
         }
     }

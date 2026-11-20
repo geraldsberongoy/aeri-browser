@@ -275,6 +275,7 @@ impl Shell {
             self.later(move |_| frame.bring_forward());
             return;
         }
+        self.note_seen(window_id);
         let Some(mut parked) = self
             .open
             .get_mut(&profile)
