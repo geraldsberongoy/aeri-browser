@@ -148,21 +148,15 @@ impl Shell {
         self.offer_blocker(profile, cx);
     }
 
-    pub(super) fn extensions_changed(&mut self, profile: ProfileId, cx: &mut App) {
+    pub(super) fn extensions_changed(&mut self, profile: ProfileId) {
         let Some(open) = self.open.get_mut(&profile) else {
             return;
         };
         let extensions = open.context.extensions();
-        if extensions == open.extensions {
-            return;
-        }
-        tracing::info!(%profile, count = extensions.len(), "extensions changed");
-        open.extensions = extensions;
-        for w in self.windows.iter().filter(|w| w.profile == profile) {
-            let extensions = open.extensions.clone();
-            let _ = w
-                .bar
-                .update(cx, |bar, _, cx| bar.set_extensions(extensions, cx));
+        if extensions != open.extensions {
+            // The foot's Extensions door lists them when it is pressed.
+            tracing::info!(%profile, count = extensions.len(), "extensions changed");
+            open.extensions = extensions;
         }
     }
 
@@ -228,7 +222,7 @@ impl Shell {
     /// window's profile's password provider. The menu is modal: while it is
     /// open the shell handles no messages (they queue), the same as during
     /// any AppKit menu tracking.
-    pub(super) fn profile_menu(&mut self, window_id: u64, x: f32, y: f32) {
+    pub(super) fn profile_menu(&mut self, window_id: u64, x: f32, y: f32, align: Align) {
         let Some(w) = self.window(window_id) else {
             return;
         };
@@ -273,7 +267,7 @@ impl Shell {
         let frame = w.frame.clone();
         self.later(move |_| {
             let (x, y) = (f64::from(x), f64::from(y));
-            frame.pop_up_menu(x, y, Align::Right, &entries, move |ix| {
+            frame.pop_up_menu(x, y, align, &entries, move |ix| {
                 if let Some(msg) = msgs.borrow_mut().get_mut(ix).and_then(Option::take) {
                     let _ = tx.unbounded_send(msg);
                 }
@@ -423,5 +417,40 @@ impl Shell {
             return;
         };
         self.later(move |_| page.open_extension_action(&extension, &devtools));
+    }
+
+    /// The native menu of the profile's extensions at (`x`, `y`): picking
+    /// one runs its action on the shown tab, as the toolbar button would.
+    pub(super) fn extensions_menu(&mut self, window_id: u64, x: f32, y: f32, align: Align) {
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        let Some(open) = self.open.get(&w.profile) else {
+            return;
+        };
+        let mut entries = Vec::new();
+        let mut picks = Vec::new();
+        for extension in &open.extensions {
+            entries.push(item(&extension.name));
+            picks.push(Some(AppMsg::ExtensionAction {
+                window: window_id,
+                extension: extension.id.clone(),
+            }));
+        }
+        if entries.is_empty() {
+            entries.push(item("No Extensions"));
+            picks.push(None);
+        }
+        let tx = self.tx.clone();
+        let frame = w.frame.clone();
+        let picks = std::cell::RefCell::new(picks);
+        self.later(move |_| {
+            let (x, y) = (f64::from(x), f64::from(y));
+            frame.pop_up_menu(x, y, align, &entries, move |ix| {
+                if let Some(msg) = picks.borrow_mut().get_mut(ix).and_then(Option::take) {
+                    let _ = tx.unbounded_send(msg);
+                }
+            });
+        });
     }
 }

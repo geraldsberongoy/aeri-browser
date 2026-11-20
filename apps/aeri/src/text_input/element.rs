@@ -60,8 +60,15 @@ impl Element for TextElement {
         let cursor = input.cursor_offset();
         let style = window.text_style();
 
+        let omnibox = input.omnibox;
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), theme::c(t.text_tertiary).into())
+            // Search `Omnibox.swift`: placeholder is ink at alpha .3.
+            let placeholder = if omnibox {
+                theme::ca(t.text, 0.3)
+            } else {
+                theme::c(t.text_tertiary)
+            };
+            (input.placeholder.clone(), placeholder.into())
         } else {
             (content, style.color)
         };
@@ -131,7 +138,11 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    theme::ca(t.accent, 0.3),
+                    if omnibox {
+                        theme::ca(t.text, 0.12)
+                    } else {
+                        theme::ca(t.accent, 0.3)
+                    },
                 )),
                 None,
             )

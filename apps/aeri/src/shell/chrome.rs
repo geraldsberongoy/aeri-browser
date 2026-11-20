@@ -1,14 +1,13 @@
 //! Window layout (Phase 12, design §4): where the chrome sits (app-wide,
 //! in `app.db`), ⌘S, pinning, resizing the sidebar, the layout choices in
-//! the palette, Aeri's own window buttons and the one-time note. By
-//! default nothing is pinned: the page has the whole window and the chrome
-//! slides in.
+//! the palette and Aeri's own window buttons. By default the sidebar is
+//! pinned beside the page, as in Search.
 
 use aeri_core::layout::{BarPlace, FavouriteStyle, Layout, Preset, Side};
 use aeri_core::store::AppDb;
 use gpui::{
-    App, AppContext, Bounds, ClipboardItem, WindowBackgroundAppearance, WindowBounds, WindowHandle,
-    WindowKind, WindowOptions, point, px, size,
+    App, AppContext, Bounds, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, point, px, size,
 };
 
 use super::bar::{BarRow, Pick};
@@ -19,12 +18,10 @@ use crate::mac::Edge;
 use crate::window_frame::WindowFrame;
 
 const LAYOUT: &str = "layout";
-const HINT: &str = "layout_hint";
 
-/// The layout every window shows, and whether its note is still unread.
+/// The layout every window shows.
 pub(super) struct Chrome {
     pub layout: Layout,
-    pub hint: bool,
 }
 
 impl Chrome {
@@ -32,7 +29,6 @@ impl Chrome {
         let get = |key| db.setting(key).ok().flatten();
         Self {
             layout: get(LAYOUT).map_or_else(Layout::default, |json| Layout::from_json(&json)),
-            hint: get(HINT).is_none(),
         }
     }
 }
@@ -44,16 +40,14 @@ pub enum LayoutChoice {
     Side(Side),
     Favourites(FavouriteStyle),
     Bar(BarPlace),
-    DomainOnly,
-    CopyLink,
     WindowButtons,
     RailExpands,
 }
 
 impl LayoutChoice {
-    const ALL: [LayoutChoice; 15] = [
+    const ALL: [LayoutChoice; 13] = [
         Self::Preset(Preset::PageFirst),
-        Self::Preset(Preset::OnlySidebar),
+        Self::Preset(Preset::Sidebar),
         Self::Preset(Preset::SidebarAndTop),
         Self::Preset(Preset::Collapsed),
         Self::Preset(Preset::TopTabs),
@@ -63,8 +57,6 @@ impl LayoutChoice {
         Self::Favourites(FavouriteStyle::Rows),
         Self::Bar(BarPlace::Centre),
         Self::Bar(BarPlace::Upper),
-        Self::DomainOnly,
-        Self::CopyLink,
         Self::WindowButtons,
         Self::RailExpands,
     ];
@@ -78,8 +70,6 @@ impl LayoutChoice {
             Self::Favourites(FavouriteStyle::Rows) => "Favourites as Rows".to_owned(),
             Self::Bar(BarPlace::Centre) => "Address Bar in the Centre".to_owned(),
             Self::Bar(BarPlace::Upper) => "Address Bar Near the Top".to_owned(),
-            Self::DomainOnly => "Show Only the Domain".to_owned(),
-            Self::CopyLink => "Show Copy Link Button".to_owned(),
             Self::WindowButtons => "Show Window Buttons".to_owned(),
             Self::RailExpands => "Open Collapsed Sidebar on Hover".to_owned(),
         }
@@ -92,8 +82,6 @@ impl LayoutChoice {
             Self::Side(side) => layout.side == side,
             Self::Favourites(style) => layout.favourites == style,
             Self::Bar(place) => layout.bar == place,
-            Self::DomainOnly => layout.domain_only,
-            Self::CopyLink => layout.copy_link,
             Self::WindowButtons => layout.window_buttons,
             Self::RailExpands => layout.rail_expands,
         }
@@ -105,8 +93,6 @@ impl LayoutChoice {
             Self::Side(side) => layout.side = side,
             Self::Favourites(style) => layout.favourites = style,
             Self::Bar(place) => layout.bar = place,
-            Self::DomainOnly => layout.domain_only = !layout.domain_only,
-            Self::CopyLink => layout.copy_link = !layout.copy_link,
             Self::WindowButtons => layout.window_buttons = !layout.window_buttons,
             Self::RailExpands => layout.rail_expands = !layout.rail_expands,
         }
@@ -158,10 +144,9 @@ impl Shell {
         };
         let mut layout = self.chrome.layout;
         layout.sidebar_pinned &= !w.sidebar_hidden;
-        let hint = self.chrome.hint;
         let _ = w
             .frame_window
-            .update(cx, |frame, _, cx| frame.set_layout(layout, hint, cx));
+            .update(cx, |frame, _, cx| frame.set_layout(layout, cx));
         let frame = w.frame.clone();
         self.later(move |_| frame.set_layout(layout));
     }
@@ -182,25 +167,40 @@ impl Shell {
         for w in &mut self.windows {
             w.sidebar_hidden = false;
         }
-        self.dismiss_hint();
         self.apply_layout_everywhere(cx);
     }
 
     /// ⌘S: a pinned sidebar steps aside until the next ⌘S (the layout
     /// stays); an unpinned one (or a rail) slides in, or away.
+    ///
+    /// Folding gives the page the window at once and the sidebar leaves
+    /// from its place. Unfolding slides it out over the page first; when it
+    /// lands the frame asks again (a shortcut message), the layout pins it
+    /// and the page shrinks once. ⌘S while it slides out turns it round.
     pub(super) fn toggle_sidebar(&mut self, window_id: u64, cx: &mut App) {
         let layout = self.chrome.layout;
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
-        if layout.sidebar_pinned && !layout.rail {
-            w.sidebar_hidden = !w.sidebar_hidden;
-            self.apply_layout(window_id, cx);
-        } else {
-            let frame = w.frame.clone();
+        let frame = w.frame.clone();
+        if !(layout.sidebar_pinned && !layout.rail) {
             self.later(move |_| {
                 frame.call(Edge::Side);
             });
+        } else if !w.sidebar_hidden {
+            w.sidebar_hidden = true;
+            // Before the layout unpins it: the overlay takes the column's
+            // place as the page covers it.
+            self.later(move |_| frame.fold());
+            self.apply_layout(window_id, cx);
+        } else if frame.take_landed() {
+            w.sidebar_hidden = false;
+            self.apply_layout(window_id, cx);
+            self.later(move |_| frame.end_fold());
+        } else if frame.is_unfolding() {
+            self.later(move |_| frame.cancel_unfold());
+        } else {
+            self.later(move |_| frame.unfold());
         }
     }
 
@@ -229,15 +229,6 @@ impl Shell {
                     self.apply_layout_everywhere(cx);
                 }
             }
-            ChromeMsg::CopyLink { window } => {
-                let url = self
-                    .window(window)
-                    .and_then(|w| self.shown_model(w))
-                    .map(|tab| tab.url);
-                if let Some(url) = url {
-                    cx.write_to_clipboard(ClipboardItem::new_string(url));
-                }
-            }
             ChromeMsg::Close { window } => self.close_window(window, cx),
             ChromeMsg::Minimise { window } => {
                 if let Some(frame) = self.window(window).map(|w| w.frame.clone()) {
@@ -248,10 +239,6 @@ impl Shell {
                 if let Some(frame) = self.window(window).map(|w| w.frame.clone()) {
                     self.later(move |_| frame.toggle_fullscreen());
                 }
-            }
-            ChromeMsg::DismissHint => {
-                self.dismiss_hint();
-                self.apply_layout_everywhere(cx);
             }
         }
     }
@@ -280,13 +267,5 @@ impl Shell {
                 pick: Pick::Layout(choice),
             })
             .collect()
-    }
-
-    fn dismiss_hint(&mut self) {
-        if std::mem::take(&mut self.chrome.hint)
-            && let Err(err) = self.db.set_setting(HINT, "seen")
-        {
-            tracing::warn!(%err, "could not save the layout note");
-        }
     }
 }

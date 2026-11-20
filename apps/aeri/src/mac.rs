@@ -7,9 +7,11 @@
 //! keying GPUI windows re-enters GPUI.
 
 mod appearance;
+mod fold;
 mod frame;
 mod pressure;
 mod reveal;
+pub mod symbols;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -27,7 +29,8 @@ pub use self::appearance::{
     accessibility, set_app_appearance, system_is_dark, watch as watch_appearance,
 };
 pub use self::frame::{
-    BAR_HEIGHT, Frame, MAX_VISIBLE_SUGGESTIONS, SUGGESTION_CHROME, SUGGESTION_HEIGHT,
+    BAR_HEIGHT, Frame, MAX_VISIBLE_SUGGESTIONS, SIDE_OVERLAY_EXTRA, SUGGESTION_CHROME,
+    SUGGESTION_HEIGHT,
 };
 pub use self::pressure::{Pressure, watch_memory_pressure};
 pub use self::reveal::Edge;

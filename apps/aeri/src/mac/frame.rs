@@ -23,56 +23,52 @@ use std::rc::Rc;
 use aeri_cef::TabObserver;
 use aeri_core::appearance::Motion;
 use aeri_core::ids::TabId;
-use aeri_core::layout::{BarPlace, Layout, Side};
+use aeri_core::layout::{Layout, Side};
 use block2::RcBlock;
 use futures::channel::mpsc::UnboundedSender;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSColor, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-    NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification,
-    NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
-    NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSColor, NSWindow,
+    NSWindowButton, NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
+    NSWindowDidBecomeMainNotification, NSWindowDidEnterFullScreenNotification,
+    NSWindowDidExitFullScreenNotification, NSWindowDidResizeNotification, NSWindowOrderingMode,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
 };
 
+use super::fold::Fold;
 use super::reveal::{self, Reveal};
 use super::window_of;
 use crate::native_menu;
 use crate::shell::AppMsg;
 use crate::window_frame::{RAIL_WIDTH, STRIP_HEIGHT};
 
-/// Address bar geometry, in points. Like Zen's floating URL bar, the bar
-/// floats over the page, centred across and with its middle
-/// [`BAR_FROM_TOP`] of the way down the page, leaving room below for
-/// suggestions.
-const BAR_MAX_WIDTH: f64 = 760.0;
-const BAR_SIDE_MARGIN: f64 = 96.0;
-pub const BAR_HEIGHT: f64 = 56.0;
-/// One suggestion row under the bar, and the list's gap (6), padding (8)
-/// and border (2).
-pub const SUGGESTION_HEIGHT: f64 = 36.0;
-pub const SUGGESTION_CHROME: f64 = 16.0;
+/// Address bar geometry, in points, from Search's `Omnibox` (see
+/// `address_bar`): the bar's window covers the whole page and paints the
+/// scrim and the field itself, so only the field's and a row's size are
+/// shared with the view.
+pub const BAR_HEIGHT: f64 = 50.0;
+/// One suggestion row under the field, and the list's padding (2 x 6) and
+/// border (2 x 1).
+pub const SUGGESTION_HEIGHT: f64 = 34.0;
+pub const SUGGESTION_CHROME: f64 = 14.0;
 /// Rows shown at once; more scroll.
 pub const MAX_VISIBLE_SUGGESTIONS: usize = 9;
-const BAR_FROM_TOP: f64 = 0.4;
-/// The bar never comes closer than this to the page's top edge.
-const BAR_MIN_TOP: f64 = 8.0;
 /// Margin between the page card and the frame's left, right and bottom
 /// edges, and the card's corner radius, in points.
 const PAGE_INSET: f64 = 8.0;
 const PAGE_RADIUS: f64 = 10.0;
-/// The side overlay's width beyond the sidebar: its margin and shadow.
-pub const SIDE_OVERLAY_EXTRA: f64 = 18.0;
-/// From the page's top to the bar's, when it opens in the upper centre.
-const BAR_UPPER: f64 = 64.0;
+/// The side overlay's width beyond the sidebar: room for the fold shadow
+/// (Search's `FoldShadow`: radius 20, 4 pt away from the page).
+pub const SIDE_OVERLAY_EXTRA: f64 = 28.0;
 
 pub struct Frame {
     pub(super) window_id: u64,
-    tx: UnboundedSender<AppMsg>,
+    pub(super) tx: UnboundedSender<AppMsg>,
     pub(super) frame: RefCell<Option<Retained<NSWindow>>>,
     bar: RefCell<Option<Retained<NSWindow>>>,
     /// The sidebar and the strip as they slide in, by [`Edge`] index.
@@ -83,14 +79,14 @@ pub struct Frame {
     /// active tab's window exists.
     shown: RefCell<Option<Retained<NSWindow>>>,
     bar_visible: Cell<bool>,
-    /// Suggestion rows under the bar; its window grows downwards to fit.
-    bar_rows: Cell<usize>,
     /// Where the chrome sits (Phase 12).
     pub(super) layout: Cell<Layout>,
     /// How chrome comes and goes: the theme's motion, off under Reduce
     /// Motion.
     pub(super) motion: Cell<Motion>,
     pub(super) reveal: Reveal,
+    /// The sidebar sliding over the page and back.
+    pub(super) fold: Fold,
     notifications: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
 
@@ -105,11 +101,11 @@ impl Frame {
             active: Cell::new(None),
             shown: RefCell::default(),
             bar_visible: Cell::new(false),
-            bar_rows: Cell::new(0),
             layout: Cell::new(Layout::default()),
             motion: Cell::new(Motion::default()),
             overlays: RefCell::default(),
             reveal: Reveal::default(),
+            fold: Fold::default(),
             notifications: RefCell::default(),
         })
     }
@@ -253,7 +249,11 @@ impl Frame {
 
     /// Takes a new layout: refits the page, the overlays and the bar.
     pub fn set_layout(&self, layout: Layout) {
-        if self.layout.replace(layout) == layout {
+        let previous = self.layout.replace(layout);
+        if layout.sidebar_pinned {
+            self.fold.folded.set(false);
+        }
+        if previous == layout {
             return;
         }
         self.hide_chrome();
@@ -313,32 +313,11 @@ impl Frame {
                 true,
             );
         }
+        self.replace_side();
         if let Some(bar) = self.bar.borrow().as_ref() {
-            // Centred over the page, not the window.
-            let width = (page.size.width - 2.0 * BAR_SIDE_MARGIN).clamp(240.0, BAR_MAX_WIDTH);
-            let page_top = page.origin.y + page.size.height;
-            let y = match self.layout.get().bar {
-                BarPlace::Centre => page_top - page.size.height * BAR_FROM_TOP - BAR_HEIGHT / 2.0,
-                BarPlace::Upper => page_top - BAR_UPPER - BAR_HEIGHT,
-            }
-            .min(page_top - BAR_MIN_TOP - BAR_HEIGHT);
-            // The pill stays put; rows hang below it, never past the card.
-            let top = y + BAR_HEIGHT;
-            let rows = self.bar_rows.get().min(MAX_VISIBLE_SUGGESTIONS);
-            let list = if rows == 0 {
-                0.0
-            } else {
-                SUGGESTION_CHROME + rows as f64 * SUGGESTION_HEIGHT
-            };
-            let height = (BAR_HEIGHT + list).min(top - page.origin.y).max(BAR_HEIGHT);
-            let bar_rect = NSRect::new(
-                NSPoint::new(
-                    page.origin.x + (page.size.width - width) / 2.0,
-                    top - height,
-                ),
-                NSSize::new(width, height),
-            );
-            bar.setFrame_display(bar_rect, true);
+            // Over the page, so the scrim dims the page and not the sidebar;
+            // the view places the field and the list within it.
+            bar.setFrame_display(page, true);
         }
     }
 
@@ -379,13 +358,6 @@ impl Frame {
         }
     }
 
-    /// Fits the bar's window to `rows` suggestion rows (0: the pill only).
-    pub fn set_bar_rows(&self, rows: usize) {
-        if self.bar_rows.replace(rows) != rows {
-            self.layout();
-        }
-    }
-
     /// Shows the address bar and gives it the keyboard.
     pub fn show_bar(&self) {
         let Some(bar) = self.bar.borrow().clone() else {
@@ -397,14 +369,25 @@ impl Frame {
         bar.makeKeyWindow();
     }
 
-    /// Hides the address bar. With `focus_page`, the page takes the keyboard.
+    /// Hides the address bar: the window fades on Search's `quick` (0.14 s)
+    /// unless motion is off. With `focus_page`, the page takes the keyboard.
     pub fn hide_bar(&self, focus_page: bool) {
         let Some(bar) = self.bar.borrow().clone() else {
             return;
         };
         self.bar_visible.set(false);
-        bar.setAlphaValue(0.0);
         bar.setIgnoresMouseEvents(true);
+        if self.motion.get() == Motion::Off {
+            bar.setAlphaValue(0.0);
+        } else {
+            let fading = bar.clone();
+            let changes = RcBlock::new(move |context: NonNull<NSAnimationContext>| {
+                // SAFETY: AppKit passes the live context for this group.
+                unsafe { context.as_ref() }.setDuration(0.14);
+                fading.animator().setAlphaValue(0.0);
+            });
+            NSAnimationContext::runAnimationGroup(&changes);
+        }
         if focus_page && let Some(tab) = self.active_window() {
             tab.makeKeyWindow();
         }

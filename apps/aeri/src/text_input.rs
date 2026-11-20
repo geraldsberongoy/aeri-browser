@@ -93,6 +93,9 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    /// Search's omnibox inks: placeholder and selection are the text colour
+    /// at low alpha instead of the tertiary text and accent.
+    omnibox: bool,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
@@ -109,6 +112,7 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            omnibox: false,
         }
     }
 
@@ -139,6 +143,11 @@ impl TextInput {
     pub fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
         self.placeholder = placeholder.into();
         cx.notify();
+    }
+
+    /// Paints placeholder and selection the way Search's address field does.
+    pub fn set_omnibox(&mut self, omnibox: bool) {
+        self.omnibox = omnibox;
     }
 
     fn submit(&mut self, _: &Submit, _: &mut Window, cx: &mut Context<Self>) {

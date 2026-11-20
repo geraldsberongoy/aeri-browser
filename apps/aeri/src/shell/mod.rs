@@ -421,20 +421,41 @@ impl Shell {
             } => self.tab_command(window, tab, command, cx),
             AppMsg::TabMenu { window, tab, x, y } => self.tab_menu(window, tab, x, y),
             AppMsg::OpenInProfile { profile, url } => self.open_in_profile(profile, url, cx),
-            AppMsg::ExtensionsChanged { profile } => self.extensions_changed(profile, cx),
+            AppMsg::ExtensionsChanged { profile } => self.extensions_changed(profile),
             AppMsg::Nav { window, nav } => self.nav(window, nav),
             AppMsg::ExtensionAction { window, extension } => {
                 self.extension_action(window, extension, cx)
             }
-            AppMsg::ProfileMenu { window, x, y } => self.profile_menu(window, x, y),
+            AppMsg::ProfileMenu {
+                window,
+                x,
+                y,
+                align,
+            } => self.profile_menu(window, x, y, align),
             AppMsg::SetPasswordProvider { profile, provider } => {
                 self.set_password_provider(profile, provider);
             }
             AppMsg::ManagePasswords { window } => {
                 self.open_page(window, self::passwords::PASSWORDS_PAGE, cx);
             }
-            AppMsg::PopupMenu { window, x, y } => self.popup_menu(window, x, y),
-            AppMsg::DownloadsMenu { window, x, y } => self.downloads_menu(window, x, y),
+            AppMsg::PopupMenu {
+                window,
+                x,
+                y,
+                align,
+            } => self.popup_menu(window, x, y, align),
+            AppMsg::DownloadsMenu {
+                window,
+                x,
+                y,
+                align,
+            } => self.downloads_menu(window, x, y, align),
+            AppMsg::ExtensionsMenu {
+                window,
+                x,
+                y,
+                align,
+            } => self.extensions_menu(window, x, y, align),
             AppMsg::DownloadPick { window, pick } => self.download_pick(window, pick, cx),
             AppMsg::OpenProfile { profile } => self.show_profile(profile, cx),
             AppMsg::CreateProfile { name, accent } => self.create_profile(&name, accent, cx),
@@ -453,7 +474,12 @@ impl Shell {
             AppMsg::DeleteProfile { profile } => self.delete_profile(profile, cx),
             AppMsg::ShowProfiles { new } => self.show_profile_manager(new, cx),
             AppMsg::ProfileManagerClosed => self.manager = None,
-            AppMsg::SpaceMenu { window, x, y } => self.space_menu(window, x, y, cx),
+            AppMsg::SpaceMenu {
+                window,
+                x,
+                y,
+                align,
+            } => self.space_menu(window, x, y, align, cx),
             AppMsg::SwitchSpace { window, space } => self.switch_space(window, space, cx),
             AppMsg::EditSpace { window, space } => self.show_space_editor(window, space, cx),
             AppMsg::SaveSpace {

@@ -99,45 +99,58 @@ pub struct Tokens {
     pub success: Rgba,
     pub success_tint: Rgba,
     pub scrim: Rgba,
+    /// Tab-row inks and fills, after Search's `Greys`: ink or white with
+    /// alpha, so a theme's tint shows through and every step of contrast
+    /// holds on any backdrop. `quiet` is an idle tab's title and `faint` the
+    /// New Tab row's: decorative steps below the 4.5:1 text rule, as in
+    /// Search; Increase Contrast turns them into readable text.
+    pub quiet: Rgba,
+    pub faint: Rgba,
+    /// The shown tab's ground; `tile` a resting pinned square and
+    /// `pin_live` the shown one.
+    pub live: Rgba,
+    pub tile: Rgba,
+    pub pin_live: Rgba,
 }
 
 const DARK_INK: Rgba = Rgba::rgb(0x151D33);
 
 impl Tokens {
-    /// The Aeri preset (design §3.1).
+    /// The Aeri preset: Search's greys (`Design.swift` `Palette`, `Greys`,
+    /// on the frame ground), with secondary text darkened to keep 4.5:1.
     pub const fn reference(mode: Mode) -> Self {
         let c = Rgba::rgb;
         let a = Rgba::rgba;
         match mode {
             Mode::Light => Tokens {
-                frame: c(0xF2F3F5),
-                sidebar: c(0xF7F8FA),
-                strip: c(0xF2F3F5),
+                frame: c(0xF4F4F4),
+                sidebar: c(0xF4F4F4),
+                strip: c(0xF4F4F4),
                 panel: c(0xFFFFFF),
                 raised: c(0xFFFFFF),
-                field: c(0xE9ECF0),
-                inset: c(0xEFF1F4),
-                tooltip: c(0x272B32),
-                text: c(0x16191F),
-                text_secondary: c(0x454D59),
-                text_tertiary: c(0x56606E),
-                text_disabled: c(0x757D88),
+                field: c(0xEFEFEF),
+                inset: c(0xF6F6F6),
+                tooltip: c(0x262626),
+                text: c(0x171717),
+                text_secondary: c(0x595959),
+                text_tertiary: c(0x636363),
+                text_disabled: c(0x8C8C8C),
                 text_on_tooltip: c(0xFFFFFF),
-                icon: c(0x303743),
-                icon_muted: c(0x56606E),
+                icon: c(0x4D4D4D),
+                icon_muted: c(0x6E6E6E),
                 accent: c(0x244FB7),
                 on_accent: c(0xFFFFFF),
                 accent_text: c(0x21489F),
                 accent_tint: c(0xE3EAFF),
-                hover: a(0x151C2B0C),
-                pressed: a(0x151C2B17),
-                selected: c(0xDFE7FA),
-                selected_hover: c(0xD6E1F9),
-                separator: c(0xD9DDE4),
-                control_border: c(0x697382),
-                card_border: a(0x171D2A29),
-                card_shadow: a(0x14203720),
-                overlay_shadow: a(0x14203738),
+                hover: a(0x0000000B),
+                pressed: a(0x00000010),
+                selected: c(0xE4E4E4),
+                selected_hover: c(0xDBDBDB),
+                separator: c(0xE8E8E8),
+                control_border: c(0x737373),
+                card_border: a(0x00000014),
+                card_shadow: a(0x00000012),
+                overlay_shadow: a(0x00000024),
                 focus_ring: c(0x244FB7),
                 focus_keyline: c(0xFFFFFF),
                 danger: c(0xA21C30),
@@ -146,46 +159,56 @@ impl Tokens {
                 warning_tint: c(0xFFF0D4),
                 success: c(0x146341),
                 success_tint: c(0xE4F4EB),
-                scrim: a(0x11182738),
+                scrim: a(0xFFFFFFBD),
+                quiet: a(0x0000006C),
+                faint: a(0x00000021),
+                live: a(0x00000010),
+                tile: a(0x00000008),
+                pin_live: a(0x00000019),
             },
             Mode::Dark => Tokens {
-                frame: c(0x17191D),
-                sidebar: c(0x202329),
-                strip: c(0x191C21),
-                panel: c(0x23262D),
-                raised: c(0x2A2E36),
-                field: c(0x171A1F),
-                inset: c(0x1B1E24),
-                tooltip: c(0xEEF0F4),
-                text: c(0xF4F5F7),
-                text_secondary: c(0xC1C7D0),
-                text_tertiary: c(0xABB3BF),
-                text_disabled: c(0x858D99),
-                text_on_tooltip: c(0x17191D),
-                icon: c(0xE1E5EC),
-                icon_muted: c(0xABB3BF),
+                frame: c(0x131313),
+                sidebar: c(0x131313),
+                strip: c(0x131313),
+                panel: c(0x1C1C1C),
+                raised: c(0x1C1C1C),
+                field: c(0x2D2D2D),
+                inset: c(0x262626),
+                tooltip: c(0xEDEDED),
+                text: c(0xEDEDED),
+                text_secondary: c(0xA3A3A3),
+                text_tertiary: c(0x9A9A9A),
+                text_disabled: c(0x949494),
+                text_on_tooltip: c(0x131313),
+                icon: c(0xC8C8C8),
+                icon_muted: c(0x9A9A9A),
                 accent: c(0xA3B9FF),
                 on_accent: DARK_INK,
                 accent_text: c(0xB7C8FF),
                 accent_tint: c(0x303D60),
-                hover: a(0xFFFFFF0D),
-                pressed: a(0xFFFFFF18),
-                selected: c(0x303D60),
-                selected_hover: c(0x384970),
-                separator: c(0x393E47),
-                control_border: c(0x919BAA),
-                card_border: a(0xFFFFFF25),
-                card_shadow: a(0x00000060),
-                overlay_shadow: a(0x00000085),
+                hover: a(0xFFFFFF0F),
+                pressed: a(0xFFFFFF16),
+                selected: c(0x282828),
+                selected_hover: c(0x303030),
+                separator: c(0x333333),
+                control_border: c(0x8A8A8A),
+                card_border: a(0xFFFFFF14),
+                card_shadow: a(0x00000012),
+                overlay_shadow: a(0x00000024),
                 focus_ring: c(0xB7C8FF),
-                focus_keyline: c(0x17191D),
+                focus_keyline: c(0x131313),
                 danger: c(0xFFB1BB),
                 danger_tint: c(0x49252D),
                 warning: c(0xFFD18E),
                 warning_tint: c(0x49371F),
                 success: c(0x9CE2B8),
                 success_tint: c(0x214032),
-                scrim: a(0x00000055),
+                scrim: a(0x1C1C1CBD),
+                quiet: a(0xFFFFFF8B),
+                faint: a(0xFFFFFF44),
+                live: a(0xFFFFFF16),
+                tile: a(0xFFFFFF0B),
+                pin_live: a(0xFFFFFF20),
             },
         }
     }
@@ -435,12 +458,15 @@ fn on_accent(solid: Rgba) -> Rgba {
 }
 
 /// Increase Contrast: structural lines become control boundaries, secondary
-/// text moves to primary ink.
+/// text moves to primary ink, and the quiet tab inks become readable text
+/// (Search's "High contrast text").
 fn strengthen(t: &mut Tokens) {
     t.separator = t.control_border;
     t.text_secondary = t.text;
     t.text_tertiary = t.text_secondary;
     t.icon_muted = t.icon;
+    t.quiet = t.text;
+    t.faint = t.text_secondary;
 }
 
 #[cfg(test)]

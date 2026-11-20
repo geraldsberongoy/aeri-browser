@@ -133,14 +133,15 @@ impl Shell {
         };
         w.bar_shown = true;
         w.palette = palette;
+        let place = self.chrome.layout.bar;
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
         let _ = w
             .bar
-            .update(cx, |bar, window, cx| bar.reveal(palette, window, cx));
+            .update(cx, |bar, window, cx| bar.reveal(palette, place, window, cx));
         let frame = w.frame.clone();
-        self.later(move |_| {
-            frame.set_bar_rows(0);
-            frame.show_bar();
-        });
+        self.later(move |_| frame.show_bar());
     }
 
     pub(super) fn hide_bar(&mut self, window_id: u64, cx: &mut App) {
@@ -154,7 +155,6 @@ impl Shell {
         let frame = w.frame.clone();
         self.refresh_window(window_id, cx);
         self.later(move |_| {
-            frame.set_bar_rows(0);
             frame.hide_bar(was_shown);
             if was_shown && let Some(page) = page {
                 page.focus_page();
@@ -207,12 +207,9 @@ impl Shell {
         let Some(w) = self.window(window_id) else {
             return;
         };
-        let count = rows.len();
-        let frame = w.frame.clone();
         let _ = w
             .bar
             .update(cx, |bar, _, cx| bar.set_rows(&text, rows, 0, cx));
-        self.later(move |_| frame.set_bar_rows(count));
     }
 
     /// Everything the profile knows that could match: its open tabs (not

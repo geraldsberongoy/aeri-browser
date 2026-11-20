@@ -1,13 +1,14 @@
 //! Window layout (Phase 12, design §4): where the chrome sits and how it
 //! shows. One choice for every window, kept in `app.db` as a JSON value;
-//! missing keys take their defaults, so older values keep reading.
+//! missing keys take their defaults, so older values keep reading. The
+//! defaults and sizes are Search's (`Design.swift` `Metrics`).
 
 use serde::{Deserialize, Serialize};
 
-/// The narrowest and widest sidebar, in points, and the step between.
-pub const MIN_SIDEBAR: u16 = 184;
-pub const MAX_SIDEBAR: u16 = 360;
-pub const SIDEBAR_STEP: u16 = 4;
+/// The narrowest, default and widest sidebar, in points.
+pub const MIN_SIDEBAR: u16 = 176;
+pub const DEFAULT_SIDEBAR: u16 = 232;
+pub const MAX_SIDEBAR: u16 = 440;
 /// The page keeps at least this much width beside the sidebar.
 pub const MIN_PAGE: f64 = 320.;
 
@@ -62,29 +63,24 @@ pub struct Layout {
     pub tabs: TabPlace,
     pub favourites: FavouriteStyle,
     pub bar: BarPlace,
-    /// The resting address shows only the site's domain.
-    pub domain_only: bool,
-    /// A Copy Link button beside the resting address.
-    pub copy_link: bool,
     /// The window's close, minimise and zoom buttons.
     pub window_buttons: bool,
 }
 
 impl Default for Layout {
-    /// Page-first: nothing pinned, the page has the whole window.
+    /// Search's: the sidebar beside the page, which is a card; ⌘S folds
+    /// the sidebar away and it slides back out at the window's edge.
     fn default() -> Self {
         Self {
-            sidebar_pinned: false,
+            sidebar_pinned: true,
             top_pinned: false,
             side: Side::Left,
-            sidebar_width: 240,
+            sidebar_width: DEFAULT_SIDEBAR,
             rail: false,
             rail_expands: true,
             tabs: TabPlace::Side,
             favourites: FavouriteStyle::Grid,
             bar: BarPlace::Centre,
-            domain_only: false,
-            copy_link: false,
             window_buttons: true,
         }
     }
@@ -95,9 +91,9 @@ impl Default for Layout {
 pub enum Preset {
     /// Nothing pinned: the page has the whole window.
     PageFirst,
-    /// Zen's "Only Sidebar": the sidebar carries the window buttons and
-    /// history; the strip slides in.
-    OnlySidebar,
+    /// Search's: the sidebar carries the window buttons and history; the
+    /// strip slides in.
+    Sidebar,
     SidebarAndTop,
     /// An icon rail that opens into the sidebar under the pointer.
     Collapsed,
@@ -108,7 +104,7 @@ pub enum Preset {
 impl Preset {
     pub const ALL: [Preset; 5] = [
         Self::PageFirst,
-        Self::OnlySidebar,
+        Self::Sidebar,
         Self::SidebarAndTop,
         Self::Collapsed,
         Self::TopTabs,
@@ -117,7 +113,7 @@ impl Preset {
     pub fn name(self) -> &'static str {
         match self {
             Self::PageFirst => "Page First",
-            Self::OnlySidebar => "Only Sidebar",
+            Self::Sidebar => "Sidebar",
             Self::SidebarAndTop => "Sidebar and Top Bar",
             Self::Collapsed => "Collapsed Sidebar",
             Self::TopTabs => "Top Tabs",
@@ -147,7 +143,7 @@ impl Preset {
     fn shape(self) -> (bool, bool, bool, TabPlace) {
         match self {
             Self::PageFirst => (false, false, false, TabPlace::Side),
-            Self::OnlySidebar => (true, false, false, TabPlace::Side),
+            Self::Sidebar => (true, false, false, TabPlace::Side),
             Self::SidebarAndTop => (true, true, false, TabPlace::Side),
             Self::Collapsed => (true, false, true, TabPlace::Side),
             Self::TopTabs => (false, true, false, TabPlace::Top),
@@ -177,11 +173,9 @@ impl Layout {
     }
 }
 
-/// A width the Person dragged to, in range and on the step.
+/// A width the Person dragged to, kept in range.
 pub fn clamp_width(width: u16) -> u16 {
-    let width = width.clamp(MIN_SIDEBAR, MAX_SIDEBAR);
-    let snapped = (width + SIDEBAR_STEP / 2) / SIDEBAR_STEP * SIDEBAR_STEP;
-    snapped.clamp(MIN_SIDEBAR, MAX_SIDEBAR)
+    width.clamp(MIN_SIDEBAR, MAX_SIDEBAR)
 }
 
 #[cfg(test)]
@@ -189,8 +183,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_is_page_first() {
-        assert_eq!(Preset::of(&Layout::default()), Some(Preset::PageFirst));
+    fn the_default_is_searchs_sidebar() {
+        let layout = Layout::default();
+        assert_eq!(Preset::of(&layout), Some(Preset::Sidebar));
+        assert_eq!(layout.sidebar_width, DEFAULT_SIDEBAR);
     }
 
     #[test]
@@ -223,10 +219,10 @@ mod tests {
     }
 
     #[test]
-    fn widths_snap_to_the_range_and_leave_the_page_room() {
+    fn widths_stay_in_range_and_leave_the_page_room() {
         assert_eq!(clamp_width(100), MIN_SIDEBAR);
-        assert_eq!(clamp_width(243), 244);
-        assert_eq!(clamp_width(241), 240);
+        assert_eq!(clamp_width(243), 243);
+        assert_eq!(clamp_width(999), MAX_SIDEBAR);
         let layout = Layout {
             sidebar_width: 360,
             ..Layout::default()

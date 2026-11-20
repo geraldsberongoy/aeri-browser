@@ -46,13 +46,16 @@ thread_local! {
     static TARGET: RefCell<Option<Retained<Target>>> = RefCell::default();
 }
 
-/// Which menu edge sits at the given `x`.
+/// Where the menu sits against the given point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Align {
     /// The menu opens to the right of `x` (context menus).
     Left,
     /// The menu ends at `x` (a menu hanging from a button at the right).
     Right,
+    /// The menu opens to the right of `x` and ends at `top`: it hangs above
+    /// a button at the foot of the sidebar.
+    Above,
 }
 
 /// Shows `entries` hanging from (`x`, `top`), points from the view's
@@ -100,8 +103,12 @@ pub fn pop_up(
     }
     TARGET.with_borrow_mut(|slot| *slot = Some(target));
     let x = match align {
-        Align::Left => x,
+        Align::Left | Align::Above => x,
         Align::Right => (x - menu.size().width).max(0.0),
+    };
+    let top = match align {
+        Align::Above => (top - menu.size().height).max(0.0),
+        Align::Left | Align::Right => top,
     };
     let y = if view.isFlipped() {
         top

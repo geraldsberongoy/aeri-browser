@@ -1,11 +1,19 @@
 //! Page-first chrome (Phase 12, design §4.2): unpinned chrome slides in
-//! over the page when the pointer rests in a 4 pt lane at its edge, or when
-//! called from the keyboard, and goes away once the pointer has left it.
+//! over the page when the pointer rests at its edge, or when called from
+//! the keyboard, and goes away once the pointer has left it. The numbers
+//! are Search's (`Fold.swift`, see `search-sidebar-layout.md` §5): a 6 pt
+//! lane at the window's side edge, which a pointer that came from inside
+//! keeps up to 48 pt beyond it; no dwell for a sidebar folded with ⌘S, a
+//! dwell of 0.15 s for a layout that has none pinned; a grace of 0.065 s
+//! before it goes back; while out its reach is its width. The sidebar's
+//! slide itself is in [`super::fold`]; the top strip fades and slides in
+//! here.
 //!
 //! One app-local event monitor watches mouse moves and clicks in Aeri's
-//! own windows (never other apps', never consuming an event); each window
-//! keeps its own one-shot open and close timers. Nothing runs while the
-//! mouse is still.
+//! own windows (never consuming an event), and a global one watches moves
+//! over everything else, for the pointer just past the window's edge; each
+//! window keeps its own one-shot open and close timers. Nothing runs while
+//! the mouse is still.
 
 use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
@@ -16,23 +24,29 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::{
-    NSAnimatablePropertyContainer, NSAnimationContext, NSApplicationDidResignActiveNotification,
-    NSEvent, NSEventMask, NSEventType, NSWindow,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSApplication,
+    NSApplicationDidResignActiveNotification, NSEvent, NSEventMask, NSEventType, NSWindow,
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSTimer};
 
-use super::frame::{Frame, SIDE_OVERLAY_EXTRA, pinned_side_width};
+use super::frame::{Frame, pinned_side_width};
 use crate::window_frame::STRIP_HEIGHT;
 use aeri_core::appearance::Motion;
 use aeri_core::layout::{Layout, Side};
 
-/// Width of the edge lanes, in points.
-const LANE: f64 = 4.0;
-/// How long the pointer rests in a lane before the chrome opens.
-const OPEN_AFTER: f64 = 0.12;
-/// How long after the pointer leaves before the chrome closes.
-const CLOSE_AFTER: f64 = 0.32;
-/// How far chrome travels as it slides in, in points.
+/// Width of the side edge lane (Search `Fold.edge`), and of the top one.
+const EDGE: f64 = 6.0;
+const TOP_EDGE: f64 = 8.0;
+/// How far beyond the window's side edge a pointer that came from inside
+/// still counts as at the edge (Search `Fold.overshoot`).
+const OVERSHOOT: f64 = 48.0;
+/// How long the pointer rests at the edge before chrome that is not folded
+/// for good opens (Search `Fold.dwell`).
+const DWELL: f64 = 0.15;
+/// How long after the pointer leaves before the chrome goes back (Search
+/// `Fold.grace`).
+const GRACE: f64 = 0.065;
+/// How far the top strip travels as it slides in, in points.
 const SLIDE: f64 = 14.0;
 
 /// An edge chrome slides in from; the index of its overlay window.
@@ -55,6 +69,9 @@ pub struct Reveal {
     called: [Cell<bool>; 2],
     entered: [Cell<bool>; 2],
     timer: [RefCell<Pending>; 2],
+    /// The pointer is in the window, or just past its side edge having
+    /// come from inside.
+    inside: Cell<bool>,
 }
 
 thread_local! {
@@ -64,8 +81,9 @@ thread_local! {
         RefCell::default();
 }
 
-/// Starts watching `frame`'s windows; the first call installs the monitor.
+/// Starts watching `frame`'s windows; the first call installs the monitors.
 pub(super) fn register(frame: &Rc<Frame>) {
+    frame.fold.bind(frame);
     FRAMES.with_borrow_mut(|frames| {
         frames.retain(|f| f.strong_count() > 0);
         frames.push(Rc::downgrade(frame));
@@ -77,11 +95,18 @@ pub(super) fn register(frame: &Rc<Frame>) {
     });
 }
 
-fn install() -> Option<Retained<AnyObject>> {
-    let block = RcBlock::new(|event: NonNull<NSEvent>| -> *mut NSEvent {
+fn install() -> Vec<Retained<AnyObject>> {
+    let local = RcBlock::new(|event: NonNull<NSEvent>| -> *mut NSEvent {
         // SAFETY: AppKit passes a live event for the handler's duration.
         on_event(unsafe { event.as_ref() });
         event.as_ptr()
+    });
+    let global = RcBlock::new(|_: NonNull<NSEvent>| {
+        // Moves over other apps' windows and the desktop: only where the
+        // pointer is, relative to our windows, matters.
+        for frame in frames() {
+            frame.pointer(NSEventType::MouseMoved, None);
+        }
     });
     let mask = NSEventMask::MouseMoved
         | NSEventMask::LeftMouseDown
@@ -93,8 +118,8 @@ fn install() -> Option<Retained<AnyObject>> {
             frame.hide_chrome();
         }
     });
-    // SAFETY: AppKit calls on the main thread; the handlers return the
-    // event they were given and run on the main thread.
+    // SAFETY: AppKit calls on the main thread; the handlers run on the main
+    // thread and the local one returns the event it was given.
     unsafe {
         RESIGN.set(Some(
             NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
@@ -104,7 +129,16 @@ fn install() -> Option<Retained<AnyObject>> {
                 &resign,
             ),
         ));
-        NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &block)
+        [
+            NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &local),
+            NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+                NSEventMask::MouseMoved,
+                &global,
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 }
 
@@ -120,7 +154,7 @@ fn on_event(event: &NSEvent) {
         return;
     };
     if let Some(frame) = frames().into_iter().find(|f| f.owns(&window)) {
-        frame.pointer(event.r#type(), &window);
+        frame.pointer(event.r#type(), Some(&window));
     }
 }
 
@@ -136,15 +170,18 @@ impl Frame {
                 .is_some_and(|parent| std::ptr::eq(&*parent, &*frame))
     }
 
-    fn is_page(&self, window: &NSWindow) -> bool {
-        self.tabs
-            .borrow()
-            .iter()
-            .any(|(_, tab)| std::ptr::eq(&**tab, window))
+    fn is_page(&self, window: Option<&NSWindow>) -> bool {
+        window.is_some_and(|window| {
+            self.tabs
+                .borrow()
+                .iter()
+                .any(|(_, tab)| std::ptr::eq(&**tab, window))
+        })
     }
 
-    /// The pointer moved or clicked in one of this window's windows.
-    fn pointer(self: &Rc<Self>, kind: NSEventType, window: &NSWindow) {
+    /// The pointer moved or clicked, in one of this window's windows or (a
+    /// move, `window` none) elsewhere on screen.
+    fn pointer(self: &Rc<Self>, kind: NSEventType, window: Option<&NSWindow>) {
         let Some(frame) = self.frame.borrow().clone() else {
             return;
         };
@@ -152,35 +189,57 @@ impl Frame {
         if kind == NSEventType::LeftMouseDragged {
             return;
         }
+        // Over other apps' windows only while Aeri is the front app.
+        if window.is_none()
+            && !NSApplication::sharedApplication(MainThreadMarker::from(&*frame)).isActive()
+        {
+            self.reveal.inside.set(false);
+            return;
+        }
         let rect = frame.frame();
         let at = NSEvent::mouseLocation();
         let y = rect.origin.y + rect.size.height - at.y;
-        // Distance from the sidebar's own edge, whichever side it is on.
         let layout = self.layout_now(&frame);
+        // How far the pointer is inside the sidebar's own window edge,
+        // whichever side it is on; negative beyond it.
         let x = match layout.side {
             Side::Left => at.x - rect.origin.x,
             Side::Right => rect.origin.x + rect.size.width - at.x,
         };
+        let tall = y >= 0.0 && y <= rect.size.height;
+        let in_window = tall && x >= 0.0 && x <= rect.size.width;
+        // Past the edge, a pointer that came from inside keeps counting.
+        if !in_window && !(tall && (-OVERSHOOT..0.0).contains(&x)) {
+            self.reveal.inside.set(false);
+        } else if in_window {
+            self.reveal.inside.set(true);
+        }
+        let at_edge = |reach: f64| x <= reach && (x >= 0.0 || self.reveal.inside.get());
         let clicked = kind != NSEventType::MouseMoved;
         let on_page = self.is_page(window);
         let side_top = if layout.top_pinned { STRIP_HEIGHT } else { 0.0 };
-        let slide = layout.sidebar_width_in(rect.size.width) + SIDE_OVERLAY_EXTRA;
+        let top_slides = slides(&layout, Edge::Top);
+        let reach = layout.sidebar_width_in(rect.size.width);
         // A pinned rail is its own lane: resting on it opens the sidebar.
         let side_lane = match pinned_side_width(&layout, rect.size.width) {
-            0.0 => LANE,
+            0.0 => EDGE,
             rail => rail,
         };
         for edge in EDGES {
             if !slides(&layout, edge) {
                 continue;
             }
+            // A sidebar sliding out to be pinned is not the pointer's.
+            if edge == Edge::Side && self.is_unfolding() {
+                continue;
+            }
             // In the shared corner the top wins.
             let (lane, region) = match edge {
-                Edge::Top => (y <= LANE, y <= STRIP_HEIGHT),
-                Edge::Side => (
-                    x <= side_lane && y > LANE.max(side_top),
-                    x <= slide && y >= side_top,
-                ),
+                Edge::Top => (in_window && y <= TOP_EDGE, in_window && y <= STRIP_HEIGHT),
+                Edge::Side => {
+                    let below = tall && y >= side_top && !(top_slides && y <= TOP_EDGE);
+                    (below && at_edge(side_lane), below && at_edge(reach))
+                }
             };
             let i = edge as usize;
             if !self.reveal.shown[i].get() {
@@ -227,6 +286,15 @@ impl Frame {
         }
     }
 
+    /// Forgets that the sidebar was called or peeked at, with no slide:
+    /// the fold takes it from here.
+    pub(super) fn quiet_side(&self) {
+        self.cancel(Edge::Side);
+        self.reveal.shown[Edge::Side as usize].set(false);
+        self.reveal.called[Edge::Side as usize].set(false);
+        self.reveal.entered[Edge::Side as usize].set(false);
+    }
+
     fn set_revealed(&self, edge: Edge, shown: bool) {
         let i = edge as usize;
         self.cancel(edge);
@@ -235,10 +303,14 @@ impl Frame {
         if self.reveal.shown[i].replace(shown) == shown {
             return;
         }
+        tracing::debug!(window = self.window_id, ?edge, shown, "chrome slides");
+        if edge == Edge::Side {
+            self.glide(shown);
+            return;
+        }
         let Some(overlay) = self.overlays.borrow().as_ref().map(|o| o[i].clone()) else {
             return;
         };
-        tracing::debug!(window = self.window_id, ?edge, shown, "chrome slides");
         overlay.setIgnoresMouseEvents(!shown);
         let duration = match self.motion.get() {
             Motion::Off => {
@@ -254,11 +326,7 @@ impl Frame {
         let slide = shown && self.motion.get() == Motion::Standard;
         if slide {
             let mut start = target;
-            match edge {
-                Edge::Side if self.layout.get().side == Side::Right => start.origin.x += SLIDE,
-                Edge::Side => start.origin.x -= SLIDE,
-                Edge::Top => start.origin.y += SLIDE,
-            }
+            start.origin.y += SLIDE;
             overlay.setFrame_display(start, false);
         }
         let changes = RcBlock::new(move |context: NonNull<NSAnimationContext>| {
@@ -273,6 +341,16 @@ impl Frame {
         NSAnimationContext::runAnimationGroup(&changes);
     }
 
+    /// How long the pointer rests at `edge` before it opens: not at all for
+    /// a sidebar folded with ⌘S, else a dwell.
+    fn dwell(&self, edge: Edge) -> f64 {
+        if edge == Edge::Side && self.fold.folded.get() {
+            0.0
+        } else {
+            DWELL
+        }
+    }
+
     fn schedule(self: &Rc<Self>, edge: Edge, open: bool) {
         let i = edge as usize;
         if self.reveal.timer[i]
@@ -283,6 +361,11 @@ impl Frame {
             return;
         }
         self.cancel(edge);
+        let after = if open { self.dwell(edge) } else { GRACE };
+        if after == 0.0 {
+            self.set_revealed(edge, open);
+            return;
+        }
         let this = Rc::downgrade(self);
         let block = RcBlock::new(move |_: NonNull<NSTimer>| {
             if let Some(this) = this.upgrade() {
@@ -290,7 +373,6 @@ impl Frame {
                 this.set_revealed(edge, open);
             }
         });
-        let after = if open { OPEN_AFTER } else { CLOSE_AFTER };
         // SAFETY: a one-shot timer on the main run loop; the block holds
         // the frame weakly.
         let timer =

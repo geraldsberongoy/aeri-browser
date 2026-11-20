@@ -1,159 +1,77 @@
-//! The sidebar of a window frame: address row, space header, favourites,
-//! tab rows and the space switcher; and the icon rail it collapses to.
+//! The sidebar of a window frame, after Search's column (`Side.swift`): a
+//! 52 pt band with the window's lights and the history doors, the tabs
+//! (`tab_list`), and a foot of 26 pt doors. Pinned, its inner edge drags to
+//! resize. And the icon rail it collapses to.
 
 use aeri_core::appearance::Rgba;
 use aeri_core::keymap::Shortcut;
-use aeri_core::layout::{FavouriteStyle, Side};
+use aeri_core::layout::Side;
 use gpui::{
-    ClickEvent, Context, CursorStyle, FontWeight, MouseButton, MouseDownEvent, SharedString, div,
-    prelude::*, px, rgb,
+    AnimationExt, ClickEvent, Context, CursorStyle, ElementId, FontWeight, MouseButton,
+    MouseDownEvent, SharedString, div, prelude::*, px,
 };
 
-use super::tab_items::{DraggedTab, Metrics};
-use super::{Host, PAGE_EDGE, RAIL_WIDTH, STRIP_HEIGHT, SidebarTab, WindowFrame, drag};
-use crate::mac::Edge;
-use crate::shell::{AppMsg, ChromeMsg, Nav, TabCommand};
+use super::doors::{DOOR, body, door, symbol_door};
+use super::tab_items::Metrics;
+use super::{COLUMN_PAD, Host, RAIL_WIDTH, STRIP_HEIGHT, SidebarTab, WindowFrame, avatar, drag};
+use crate::motion;
+use crate::native_menu::Align;
+use crate::shell::AppMsg;
 use crate::theme;
 
+/// The three history doors and their gaps (Search `helmDoors`: 3 x 26 + 2 x 4).
+const HELM: f32 = 86.;
+/// Room for the window's lights beside the doors, at full width (Search
+/// `sideLights`).
+const LIGHTS: f32 = 80.;
+/// The foot: a door and the padding under it (Search `footHeight`).
+const FOOT: f32 = DOOR + COLUMN_PAD;
+/// The edge's hit strip, the pill in it, and its heights at rest and lit
+/// (Search `Grip`, `EdgeGrip`).
+const GRIP_HIT: f32 = 9.;
+const GRIP_WIDTH: f32 = 4.;
+const GRIP_REST: f32 = 28.;
+const GRIP_LIT: f32 = 40.;
+
 impl WindowFrame {
-    /// Under a header naming the shown space: a New Tab row, the profile's
-    /// favourites (a grid or rows), then the space's pinned and regular
-    /// tabs; at the foot, one chip per space. A click shows a tab, a middle
-    /// click or × closes it, a right click opens its menu. Dragging moves a
-    /// tab within its list, between the favourites and the space's tabs, or
-    /// onto another space's chip. Without a pinned strip, the sidebar's top
-    /// row carries the window buttons and history. Pinned, its inner edge
-    /// drags to resize.
+    /// Under the band (the window's lights and Back, Forward, Reload): the
+    /// tab list, then the foot with the profile, space, extensions and
+    /// trust doors. Without a pinned strip, the band is the sidebar's top
+    /// row; with one, the strip holds the lights and the column starts
+    /// below it. The band's empty parts drag the window. Pinned, the
+    /// column's inner edge drags to resize and a double-click on it resets.
     pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
-        let window = self.window_id;
-        let t = theme::tokens_in(self.window_id, cx);
-        let m = Metrics::of(self.window_id, cx);
         let width = self.sidebar_width();
-        // Menus open in the frame's coordinates; an overlay under a pinned
-        // strip starts lower.
-        let dy = if host == Host::Overlay && self.layout.top_pinned {
-            STRIP_HEIGHT as f32
-        } else {
+        let right = self.layout.side == Side::Right;
+        // Search: `lights = fullScreen ? 0 : max(0, min(80, width - 20 - 86))`.
+        let room = if self.lights_hidden() {
             0.
-        };
-        let mut list = div()
-            .id("sidebar-tabs")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .gap(px(2.))
-            .overflow_y_scroll()
-            .child(
-                div()
-                    .id("new-tab")
-                    .role(gpui::Role::Button)
-                    .aria_label("New Tab")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .h(px(m.row - 2.))
-                    .px(px(m.pad))
-                    .rounded(px(7.))
-                    .text_size(px(m.text))
-                    .text_color(theme::c(t.text_tertiary))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                        this.send(AppMsg::Shortcut {
-                            window,
-                            shortcut: Shortcut::NewTab,
-                        });
-                    }))
-                    .child("+  New Tab"),
-            );
-        let divider = || {
-            div()
-                .flex_none()
-                .h(px(1.))
-                .mx(px(10.))
-                .my(px(4.))
-                .bg(theme::c(t.separator))
-        };
-        let favourites: Vec<&SidebarTab> = self.tabs.iter().filter(|t| t.favourite).collect();
-        let tabs: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
-        let pinned = tabs.iter().filter(|t| t.pinned).count();
-        if self.layout.favourites == FavouriteStyle::Grid && !favourites.is_empty() {
-            let mut grid = div().flex().flex_none().flex_wrap().gap(px(4.)).py(px(2.));
-            for (index, tab) in favourites.iter().enumerate() {
-                grid = grid.child(self.tab_cell(index, tab, dy, cx));
-            }
-            list = list.child(grid);
         } else {
-            for (index, tab) in favourites.iter().enumerate() {
-                list = list.child(self.tab_row(index, tab, dy, cx));
-            }
-        }
-        if !favourites.is_empty() {
-            list = list.child(divider());
-        }
-        for (index, tab) in tabs.iter().enumerate() {
-            if index == pinned && pinned > 0 {
-                list = list.child(divider());
-            }
-            list = list.child(self.tab_row(index, tab, dy, cx));
-        }
-        let head = (!self.layout.top_pinned).then(|| {
+            (width - 2. * COLUMN_PAD - HELM).clamp(0., LIGHTS)
+        };
+        let band = (!self.layout.top_pinned).then(|| {
             div()
                 .flex()
                 .flex_none()
                 .items_center()
-                .gap(px(2.))
+                .w_full()
                 .h(px(STRIP_HEIGHT as f32))
-                .child(self.lights(
-                    host == Host::Overlay || self.layout.side == Side::Right,
-                    host,
-                    cx,
-                ))
-                .child(self.button("back", "←", self.can_go_back, Nav::Back, cx))
-                .child(self.button("forward", "→", self.can_go_forward, Nav::Forward, cx))
-                .child(self.button("reload", "↻", true, Nav::Reload, cx))
+                .child(drag(host).w(px(COLUMN_PAD)))
+                // Where AppKit's lights are under the page (a right column,
+                // an overlay), Aeri draws its own.
+                .child(self.lights(host == Host::Overlay || right, host, room, COLUMN_PAD, cx))
+                .child(self.helm(cx))
                 .child(drag(host).flex_1())
         });
-        let body = div()
-            .id("sidebar")
+        let list = div()
             .flex()
             .flex_col()
-            .w(px(width))
             .flex_1()
             .min_h_0()
-            .px(px(PAGE_EDGE + 2.))
-            .pb(px(PAGE_EDGE))
-            .gap(px(4.))
-            .when(head.is_none() && host == Host::Overlay, |body| {
-                body.pt(px(PAGE_EDGE))
-            })
-            .when(self.hint, |body| body.child(self.hint(cx)))
-            .child(self.address_row(cx))
-            .child(self.space_header(dy, cx))
-            .child(list)
-            .child(self.space_switcher(host, cx));
-        let right = self.layout.side == Side::Right;
-        let handle = (host == Host::Frame).then(|| {
-            div()
-                .id("sidebar-resize")
-                .role(gpui::Role::Splitter)
-                .aria_label("Sidebar width")
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .w(px(6.))
-                .when(right, |handle| handle.left_0())
-                .when(!right, |handle| handle.right_0())
-                .cursor(CursorStyle::ResizeLeftRight)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.resizing = Some((f32::from(event.position.x), this.sidebar_width()));
-                    }),
-                )
-        });
+            .px(px(COLUMN_PAD))
+            .child(self.tab_list(host, cx));
         div()
+            .id("sidebar")
             .relative()
             .flex()
             .flex_col()
@@ -161,9 +79,216 @@ impl WindowFrame {
             .h_full()
             .min_h_0()
             .w(px(width))
-            .children(head)
-            .child(body)
-            .children(handle)
+            .when(self.layout.top_pinned, |column| column.pt(px(COLUMN_PAD)))
+            .children(band)
+            .child(list)
+            .child(self.foot(host, cx))
+            .children((host == Host::Frame).then(|| self.edge_grip(cx)))
+    }
+
+    /// The foot: 26 pt doors 2 pt apart, 10 pt from the left and the
+    /// bottom. The profile, the shown space, the extensions, and the
+    /// downloads and blocked popups while there are any. Each opens a menu
+    /// that hangs above it.
+    fn foot(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
+        let window = self.window_id;
+        let t = theme::tokens_in(window, cx);
+        // Menus open in the frame's coordinates: the column's left edge, and
+        // below a pinned strip an overlay starts lower.
+        let right = self.layout.side == Side::Right;
+        let origin = if right {
+            self.window_width - self.sidebar_width()
+        } else {
+            0.
+        };
+        let dy = if host == Host::Overlay && self.layout.top_pinned {
+            STRIP_HEIGHT as f32
+        } else {
+            0.
+        };
+        // A menu hangs above its door: its bottom edge on the door's top.
+        let hang = move |nth: usize, win: &gpui::Window| {
+            let x = origin + COLUMN_PAD + nth as f32 * (DOOR + 2.);
+            (x, f32::from(win.viewport_size().height) - FOOT + dy)
+        };
+        let mut foot = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(2.))
+            .w_full()
+            .px(px(COLUMN_PAD))
+            .pb(px(COLUMN_PAD))
+            .child(
+                door("profile", "Profile", t)
+                    .child(avatar(&self.profile, 18.))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
+                        let (x, y) = hang(0, win);
+                        this.send(AppMsg::ProfileMenu {
+                            window,
+                            x,
+                            y,
+                            align: Align::Above,
+                        });
+                    })),
+            );
+        let mut nth = 1;
+        if let Some(space) = self.spaces.iter().find(|s| s.current) {
+            let mark = match space.icon.as_str() {
+                "" => space
+                    .name
+                    .chars()
+                    .next()
+                    .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect::<String>()),
+                icon => icon.to_owned(),
+            };
+            // Search `SpaceDot`: the space's colour at 0.14, 0.24 under the
+            // pointer.
+            let tint = Rgba::rgb(space.colour);
+            let (at_rest, hovered) = (
+                theme::c(tint.with_alpha(0.14)),
+                theme::c(tint.with_alpha(0.24)),
+            );
+            let at = nth;
+            foot = foot.child(
+                body("space", "Space, open menu")
+                    .cursor_pointer()
+                    .bg(at_rest)
+                    .hover(move |style| style.bg(hovered))
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme::c(tint))
+                    .child(SharedString::from(mark))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
+                        let (x, y) = hang(at, win);
+                        this.send(AppMsg::SpaceMenu {
+                            window,
+                            x,
+                            y,
+                            align: Align::Above,
+                        });
+                    })),
+            );
+            nth += 1;
+        }
+        let at = nth;
+        foot = foot.child(
+            symbol_door("extensions", "Extensions", "puzzlepiece.extension", true, t).on_click(
+                cx.listener(move |this, _: &ClickEvent, win, _| {
+                    let (x, y) = hang(at, win);
+                    this.send(AppMsg::ExtensionsMenu {
+                        window,
+                        x,
+                        y,
+                        align: Align::Above,
+                    });
+                }),
+            ),
+        );
+        nth += 1;
+        if self.downloads.is_some() {
+            let at = nth;
+            foot = foot.child(
+                symbol_door("downloads", "Downloads", "arrow.down.circle", true, t).on_click(
+                    cx.listener(move |this, _: &ClickEvent, win, _| {
+                        let (x, y) = hang(at, win);
+                        this.send(AppMsg::DownloadsMenu {
+                            window,
+                            x,
+                            y,
+                            align: Align::Above,
+                        });
+                    }),
+                ),
+            );
+            nth += 1;
+        }
+        if self.popup_blocked {
+            let at = nth;
+            foot = foot.child(
+                symbol_door(
+                    "popup-blocked",
+                    "Popup blocked",
+                    "exclamationmark.bubble",
+                    true,
+                    t,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
+                    let (x, y) = hang(at, win);
+                    this.send(AppMsg::PopupMenu {
+                        window,
+                        x,
+                        y,
+                        align: Align::Above,
+                    });
+                })),
+            );
+        }
+        foot
+    }
+
+    /// The column's inner edge (Search `EdgeGrip`): a 9 pt strip that takes
+    /// the pointer and shows a 4 pt pill, 28 tall at rest and 40 lit, in
+    /// the middle. The pill is there while the pointer is on the edge or
+    /// holds it. The page card is a window over the frame, so the strip
+    /// sits inside the column against the card, not astride the boundary.
+    fn edge_grip(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme::tokens_in(self.window_id, cx);
+        let right = self.layout.side == Side::Right;
+        let lit = self.on_edge || self.resizing.is_some();
+        let pill = div().w(px(GRIP_WIDTH)).rounded_full();
+        // Until the pointer first reaches the edge nothing changes, so the
+        // pill does not flash in at start.
+        let pill = if motion::still(self.window_id, cx) || !self.grip_seen {
+            pill.h(px(if lit { GRIP_LIT } else { GRIP_REST }))
+                .bg(theme::c(if lit { t.icon_muted } else { t.faint }))
+                .opacity(if lit { 1. } else { 0. })
+                .into_any_element()
+        } else {
+            pill.with_animation(
+                ElementId::Name(if lit { "grip-lit" } else { "grip-rest" }.into()),
+                motion::quick(),
+                move |pill, progress| {
+                    let k = if lit { progress } else { 1. - progress };
+                    pill.h(px(GRIP_REST + (GRIP_LIT - GRIP_REST) * k))
+                        .bg(theme::c(t.faint.mix_linear(t.icon_muted, k)))
+                        .opacity(k)
+                },
+            )
+            .into_any_element()
+        };
+        div()
+            .id("sidebar-resize")
+            .role(gpui::Role::Splitter)
+            .aria_label("Sidebar width")
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .w(px(GRIP_HIT))
+            .when(right, |edge| edge.left_0())
+            .when(!right, |edge| edge.right_0())
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor(CursorStyle::ResizeLeftRight)
+            .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                this.on_edge = *over;
+                this.grip_seen |= *over;
+                cx.notify();
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    if event.click_count >= 2 {
+                        this.reset_width(cx);
+                    } else {
+                        this.resizing = Some((f32::from(event.position.x), this.sidebar_width()));
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(pill)
     }
 
     /// The collapsed sidebar: New Tab, the favourites and the space's tabs
@@ -184,14 +309,12 @@ impl WindowFrame {
             .min_h_0()
             .w(px(RAIL_WIDTH as f32))
             .gap(px(6.))
-            .pb(px(PAGE_EDGE))
+            .pb(px(COLUMN_PAD))
             .overflow_y_scroll()
             .when(!self.layout.top_pinned, |rail| {
                 let right = self.layout.side == Side::Right;
                 rail.child(
-                    self.lights(right, Host::Frame, cx)
-                        .flex_none()
-                        .w(px(RAIL_WIDTH as f32))
+                    self.lights(right, Host::Frame, RAIL_WIDTH as f32, 0., cx)
                         .h(px(STRIP_HEIGHT as f32)),
                 )
             })
@@ -234,259 +357,4 @@ impl WindowFrame {
         }
         rail
     }
-
-    /// The one-time note on where the chrome went (page-first default).
-    fn hint(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = theme::tokens_in(self.window_id, cx);
-        div()
-            .id("layout-hint")
-            .flex()
-            .flex_none()
-            .flex_col()
-            .gap(px(4.))
-            .p(px(10.))
-            .rounded(px(8.))
-            .bg(theme::c(t.accent_tint))
-            .text_size(px(12.))
-            .text_color(theme::c(t.text))
-            .child("The page has the whole window now.")
-            .child(div().text_color(theme::c(t.text_secondary)).child(
-                "Point at the left or top edge, or press ⌘S, to bring the sidebar and bar \
-                 back. Pin keeps them.",
-            ))
-            .child(
-                div()
-                    .id("hint-ok")
-                    .role(gpui::Role::Button)
-                    .aria_label("Got It")
-                    .flex_none()
-                    .self_end()
-                    .px(px(8.))
-                    .py(px(2.))
-                    .rounded(px(6.))
-                    .text_color(theme::c(t.accent_text))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, _| {
-                        this.send(AppMsg::Chrome(ChromeMsg::DismissHint));
-                    }))
-                    .child("Got It"),
-            )
-    }
-
-    /// The shown tab's address, resting at the top of the sidebar; a click
-    /// calls the floating bar, like ⌘L. Plain text: the frame cannot hold a
-    /// text field.
-    fn address_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let window = self.window_id;
-        let t = theme::tokens_in(self.window_id, cx);
-        let empty = self.address.is_empty();
-        div()
-            .id("address")
-            .role(gpui::Role::Button)
-            .aria_label(if empty {
-                SharedString::from("Search or enter address")
-            } else {
-                SharedString::from(format!("Address, {}", self.address))
-            })
-            .flex()
-            .flex_none()
-            .items_center()
-            .h(px(30.))
-            .px(px(10.))
-            .rounded(px(7.))
-            .bg(theme::c(t.field))
-            .text_size(px(12.))
-            .text_color(if empty {
-                theme::c(t.text_disabled)
-            } else {
-                theme::c(t.text_secondary)
-            })
-            .hover(move |style| style.bg(theme::c(t.hover)))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                this.send(AppMsg::Shortcut {
-                    window,
-                    shortcut: Shortcut::FocusAddressBar,
-                });
-            }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(if empty {
-                        "Search or enter address".to_owned()
-                    } else if self.layout.domain_only {
-                        domain(&self.address).to_owned()
-                    } else {
-                        self.address.clone()
-                    })),
-            )
-            .when(self.layout.copy_link && !empty, |row| {
-                row.child(
-                    div()
-                        .id("copy-link")
-                        .role(gpui::Role::Button)
-                        .aria_label("Copy Link")
-                        .flex_none()
-                        .px(px(6.))
-                        .py(px(2.))
-                        .rounded(px(5.))
-                        .text_color(theme::c(t.text_tertiary))
-                        .hover(move |style| style.bg(theme::c(t.pressed)))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.send(AppMsg::Chrome(ChromeMsg::CopyLink { window }));
-                        }))
-                        .child("Copy"),
-                )
-            })
-    }
-
-    /// The shown space's colour, icon and name; a click opens the space
-    /// menu below it.
-    fn space_header(&self, dy: f32, cx: &mut Context<Self>) -> impl IntoElement {
-        let window = self.window_id;
-        let t = theme::tokens_in(self.window_id, cx);
-        let current = self.spaces.iter().find(|s| s.current);
-        let (name, colour, icon) = current.map_or((String::new(), 0x5b7cfa, String::new()), |s| {
-            (s.name.clone(), s.colour, s.icon.clone())
-        });
-        div()
-            .id("space-header")
-            .role(gpui::Role::Button)
-            .aria_label(SharedString::from(format!("Space {name}, open menu")))
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(8.))
-            .h(px(30.))
-            .px(px(10.))
-            .rounded(px(7.))
-            .text_size(px(13.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(theme::c(t.text))
-            .hover(move |style| style.bg(theme::c(t.hover)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                    // Hangs just below the pointer, which is on the header.
-                    this.send(AppMsg::SpaceMenu {
-                        window,
-                        x: PAGE_EDGE + 10.,
-                        y: f32::from(event.position.y) + dy + 18.,
-                    });
-                }),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(10.))
-                    .rounded_full()
-                    .bg(rgb(colour)),
-            )
-            .when(!icon.is_empty(), |row| {
-                row.child(div().flex_none().child(SharedString::from(icon)))
-            })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(name)),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .text_color(theme::c(t.text_tertiary))
-                    .child("▾"),
-            )
-    }
-
-    /// One chip per space (click to show it, drop a tab to move it there)
-    /// and a chip for a new space.
-    fn space_switcher(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
-        let window = self.window_id;
-        let t = theme::tokens_in(self.window_id, cx);
-        let chip = |id: gpui::ElementId| {
-            div()
-                .id(id)
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .size(px(26.))
-                .rounded(px(7.))
-                .text_size(px(12.))
-                .hover(move |style| style.bg(theme::c(t.hover)))
-        };
-        let mut row = div()
-            .flex()
-            .flex_none()
-            .flex_wrap()
-            .items_center()
-            .gap(px(4.))
-            .pt(px(4.));
-        for space in &self.spaces {
-            let id = space.id;
-            let mark = match space.icon.as_str() {
-                "" => space.name.chars().next().unwrap_or('·').to_string(),
-                icon => icon.to_owned(),
-            };
-            row = row.child(
-                chip(("space", id.0 as usize).into())
-                    .role(gpui::Role::Tab)
-                    .aria_label(SharedString::from(space.name.clone()))
-                    .aria_selected(space.current)
-                    .when(space.current, |chip| chip.bg(theme::c(t.selected)))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(18.))
-                            .rounded_full()
-                            .bg(rgb(space.colour))
-                            .text_color(theme::c(Rgba::WHITE))
-                            .child(SharedString::from(mark)),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                        this.send(AppMsg::SwitchSpace { window, space: id });
-                    }))
-                    .drag_over::<DraggedTab>(move |style, _, _, _| {
-                        style.bg(theme::ca(t.accent, 0.33))
-                    })
-                    .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, _| {
-                        this.send(AppMsg::Tab {
-                            window,
-                            tab: dragged.id,
-                            command: TabCommand::MoveToSpace(id),
-                        });
-                    })),
-            );
-        }
-        row.child(
-            chip("new-space".into())
-                .role(gpui::Role::Button)
-                .aria_label("New Space")
-                .text_color(theme::c(t.text_tertiary))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                    this.send(AppMsg::EditSpace {
-                        window,
-                        space: None,
-                    });
-                }))
-                .child("+"),
-        )
-        .child(div().flex_1())
-        .child(self.pin_button(Edge::Side, host, cx))
-    }
-}
-
-/// The site part of a shown address (`example.com/a/b` → `example.com`).
-fn domain(address: &str) -> &str {
-    address.split(['/', '?', '#']).next().unwrap_or(address)
 }

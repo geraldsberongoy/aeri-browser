@@ -1,13 +1,14 @@
-//! A tab as the chrome shows it: a sidebar row, an icon cell (the
-//! favourites grid, the rail) or a pill among the top tabs. Each selects on
-//! a click, closes on a middle click, opens the tab menu on a right click,
-//! and drags to a new place.
+//! A tab as the chrome shows it outside the sidebar list: an icon tile (the
+//! rail) or a pill among the top tabs, after Search's `TabPill` and icon
+//! column (`TabBar.swift`, `SideIcons.swift`). They share what every form of
+//! a tab does: a menu on a right click, close on a middle click, drag to a
+//! new place. The sidebar's own rows and squares are in `tab_list`.
 
-use aeri_core::appearance::Density;
+use aeri_core::appearance::{Density, Tokens};
 use aeri_core::ids::TabId;
 use gpui::{
-    ClickEvent, Context, Div, MouseButton, MouseDownEvent, SharedString, Stateful, Window, div,
-    prelude::*, px,
+    ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, MouseUpEvent, SharedString,
+    Stateful, Window, div, prelude::*, px,
 };
 
 use super::{SidebarTab, WindowFrame};
@@ -28,9 +29,9 @@ impl Render for DraggedTab {
             .max_w(px(224.))
             .px(px(10.))
             .py(px(6.))
-            .rounded(px(7.))
+            .rounded(px(9.))
             .bg(theme::c(t.raised))
-            .text_size(px(13.))
+            .text_size(px(12.5))
             .text_color(theme::c(t.text))
             .overflow_hidden()
             .text_ellipsis()
@@ -39,13 +40,12 @@ impl Render for DraggedTab {
     }
 }
 
-/// Sizes that follow the theme's density (design §4.4).
+/// Sizes the rail's New Tab tile follows the theme's density for
+/// (design §4.4).
 #[derive(Clone, Copy)]
 pub(super) struct Metrics {
-    pub row: f32,
     pub text: f32,
     pub cell: f32,
-    pub pad: f32,
 }
 
 impl Metrics {
@@ -54,22 +54,16 @@ impl Metrics {
         let large = resolved.ui_size == aeri_core::appearance::UiSize::Large;
         let mut metrics = match resolved.density {
             Density::Compact => Self {
-                row: 28.,
                 text: 12.,
                 cell: 30.,
-                pad: 8.,
             },
             Density::Standard => Self {
-                row: 32.,
                 text: 13.,
                 cell: 36.,
-                pad: 10.,
             },
             Density::Spacious => Self {
-                row: 38.,
                 text: 13.,
                 cell: 42.,
-                pad: 12.,
             },
         };
         if large {
@@ -79,22 +73,60 @@ impl Metrics {
     }
 }
 
-/// The tab's mark where only one fits: the Person's icon, else the first
-/// letter of its title.
-pub(super) fn mark(tab: &SidebarTab) -> String {
-    tab.icon.clone().unwrap_or_else(|| {
-        tab.label
-            .chars()
-            .find(|c| c.is_alphanumeric())
-            .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect())
-    })
+/// The letter a tab stands for where only one fits: the Person's icon, else
+/// the first character of its site (Search's monogram, `Tab.swift`), else of
+/// its title.
+pub(super) fn letter(tab: &SidebarTab) -> String {
+    if let Some(icon) = &tab.icon {
+        return icon.clone();
+    }
+    let host = tab.host.strip_prefix("www.").unwrap_or(&tab.host);
+    host.chars()
+        .find(|c| c.is_alphanumeric())
+        .or_else(|| tab.label.chars().find(|c| c.is_alphanumeric()))
+        .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect())
+}
+
+/// A blank page: Search draws no mark for it.
+pub(super) fn is_blank(tab: &SidebarTab) -> bool {
+    tab.icon.is_none()
+        && tab.host.is_empty()
+        && matches!(tab.label.trim(), "" | "New Tab" | "about:blank")
+}
+
+/// Search's `Mark` with no favicon: the letter at 0.56 of `size`, medium, on
+/// an ink wash with radius 0.22 of `size` (`Icons.swift`). The Person's own
+/// icon replaces it, bare.
+pub(super) fn mark(tab: &SidebarTab, size: f32, t: &Tokens) -> Div {
+    let slot = div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(size))
+        .overflow_hidden();
+    if is_blank(tab) {
+        return slot;
+    }
+    if tab.icon.is_some() {
+        return slot
+            .text_size(px(size * 0.8))
+            .child(SharedString::from(letter(tab)));
+    }
+    slot.rounded(px(size * 0.22))
+        .bg(theme::ca(t.text, 0.06))
+        .text_size(px(size * 0.56))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(theme::c(t.quiet))
+        .child(SharedString::from(letter(tab)))
 }
 
 impl WindowFrame {
-    /// What every form of a tab does. `index` is its place in its own list
-    /// (favourites, or the space's tabs); a drop on it moves the dragged
-    /// tab there. `dy` turns the window's coordinates into the frame's.
-    fn tab_base(
+    /// What every form of a tab does but selecting. `index` is its place in
+    /// its own list (favourites, or the space's tabs); a drop on it moves
+    /// the dragged tab there. `dy` turns the window's coordinates into the
+    /// frame's.
+    pub(super) fn tab_base(
         &self,
         key: &'static str,
         index: usize,
@@ -109,11 +141,6 @@ impl WindowFrame {
         let dragged = DraggedTab {
             id,
             label: SharedString::from(tab.label.clone()),
-        };
-        let send = move |command| AppMsg::Tab {
-            window,
-            tab: id,
-            command,
         };
         let mut notes = Vec::new();
         if tab.favourite {
@@ -135,13 +162,15 @@ impl WindowFrame {
             .when(!notes.is_empty(), |el| {
                 el.aria_description(SharedString::from(notes.join(", ")))
             })
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                this.send(send(TabCommand::Select));
-            }))
-            .on_mouse_down(
+            // A middle click closes when the button comes up on the tab.
+            .on_mouse_up(
                 MouseButton::Middle,
-                cx.listener(move |this, _: &MouseDownEvent, _, _| {
-                    this.send(send(TabCommand::Close));
+                cx.listener(move |this, _: &MouseUpEvent, _, _| {
+                    this.send(AppMsg::Tab {
+                        window,
+                        tab: id,
+                        command: TabCommand::Close,
+                    });
                 }),
             )
             .on_mouse_down(
@@ -168,97 +197,27 @@ impl WindowFrame {
             }))
     }
 
-    /// A row of the sidebar: title, status marks, and × on hover.
-    pub(super) fn tab_row(
+    /// Select on a click (the rail and the top tabs; the sidebar list
+    /// selects on the press).
+    fn select_on_click(
         &self,
-        index: usize,
+        base: Stateful<Div>,
         tab: &SidebarTab,
-        dy: f32,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Stateful<Div> {
         let window = self.window_id;
-        let t = theme::tokens_in(self.window_id, cx);
-        let m = Metrics::of(self.window_id, cx);
         let id = tab.id;
-        let mut status = String::new();
-        if tab.favourite {
-            status.push('★');
-        } else if tab.pinned {
-            status.push('•');
-        }
-        if tab.loading {
-            status.push('…');
-        }
-        if tab.audible {
-            status.push('♪');
-        }
-        self.tab_base("tab", index, tab, dy, cx)
-            .group("tab")
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(6.))
-            .h(px(m.row - 2.))
-            .pl(px(m.pad))
-            .pr(px(4.))
-            .rounded(px(7.))
-            .text_size(px(m.text))
-            .when(tab.active, |row| {
-                row.bg(theme::c(t.selected)).text_color(theme::c(t.text))
-            })
-            .when(!tab.active, |row| {
-                row.text_color(theme::c(t.text_secondary))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
-            })
-            .when_some(tab.icon.clone(), |row, icon| {
-                row.child(div().flex_none().child(SharedString::from(icon)))
-            })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(tab.label.clone())),
-            )
-            .when(!status.is_empty(), |row| {
-                row.child(
-                    div()
-                        .flex_none()
-                        .text_color(theme::c(t.text_tertiary))
-                        .child(SharedString::from(status)),
-                )
-            })
-            .child(
-                div()
-                    .id(("close", id.0 as usize))
-                    .role(gpui::Role::Button)
-                    .aria_label("Close Tab")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .size(px(22.))
-                    .rounded(px(5.))
-                    .text_color(theme::c(t.text_tertiary))
-                    .opacity(0.)
-                    .group_hover("tab", |style| style.opacity(1.))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.send(AppMsg::Tab {
-                            window,
-                            tab: id,
-                            command: TabCommand::Close,
-                        });
-                    }))
-                    .child("×"),
-            )
+        base.on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+            this.send(AppMsg::Tab {
+                window,
+                tab: id,
+                command: TabCommand::Select,
+            });
+        }))
     }
 
-    /// A square cell: the favourites grid and the rail. A playing tab gets
-    /// a dot.
+    /// A square tile: the rail. Search's icon column (`SideIcons.swift`):
+    /// 32 points square, radius 9, the shown tab on the live pin ground.
     pub(super) fn tab_cell(
         &self,
         index: usize,
@@ -267,21 +226,27 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
-        let m = Metrics::of(self.window_id, cx);
-        self.tab_base("cell", index, tab, dy, cx)
+        let base = self.tab_base("cell", index, tab, dy, cx);
+        self.select_on_click(base, tab, cx)
             .relative()
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
-            .size(px(m.cell))
-            .rounded(px(8.))
-            .text_size(px(m.text + 2.))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .bg(theme::c(if tab.active { t.selected } else { t.field }))
-            .text_color(theme::c(if tab.active { t.text } else { t.text_secondary }))
-            .hover(move |style| style.bg(theme::c(t.hover)))
-            .child(SharedString::from(mark(tab)))
+            .size(px(32.))
+            .rounded(px(9.))
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(theme::c(if tab.active { t.text } else { t.quiet }))
+            .bg(theme::c(if tab.active { t.pin_live } else { t.tile }))
+            .when(!tab.active, |cell| {
+                cell.hover(move |style| {
+                    style
+                        .bg(theme::c(t.hover))
+                        .text_color(theme::ca(t.text, 0.7))
+                })
+            })
+            .child(SharedString::from(letter(tab)))
             .when(tab.audible || tab.loading, |cell| {
                 cell.child(
                     div()
@@ -295,8 +260,10 @@ impl WindowFrame {
             })
     }
 
-    /// A tab among the top tabs: shrinks with the strip, never below
-    /// legibility; pinned tabs keep only their letter.
+    /// A tab among the top tabs (Search's `TabPill`): 28 tall, radius 9,
+    /// padding 11 / 7, mark 15, title 12.5; a loose tab is 186 wide and
+    /// shrinks with the strip to 36, showing only its mark under 80 (it
+    /// clips); a pinned one is a 30-wide square.
     pub(super) fn tab_pill(
         &self,
         index: usize,
@@ -304,34 +271,42 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
-        let m = Metrics::of(self.window_id, cx);
-        let compact = tab.pinned || tab.favourite;
+        let kept = tab.pinned || tab.favourite;
+        let base = self.tab_base("pill", index, tab, 0., cx);
         let base = self
-            .tab_base("pill", index, tab, 0., cx)
+            .select_on_click(base, tab, cx)
             .flex()
             .items_center()
-            .h(px(m.row - 4.))
-            .px(px(m.pad))
-            .rounded(px(7.))
-            .text_size(px(m.text))
+            .h(px(28.))
+            .rounded(px(9.))
             .overflow_hidden()
+            .text_size(px(12.5))
             .when(tab.active, |pill| {
-                pill.bg(theme::c(t.selected)).text_color(theme::c(t.text))
+                pill.bg(theme::c(if kept { t.pin_live } else { t.live }))
+                    .text_color(theme::c(t.text))
             })
             .when(!tab.active, |pill| {
-                pill.text_color(theme::c(t.text_secondary))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
+                pill.when(kept, |pill| pill.bg(theme::c(t.tile)))
+                    .text_color(theme::c(t.quiet))
+                    .hover(move |style| {
+                        style
+                            .bg(theme::c(t.hover))
+                            .text_color(theme::ca(t.text, 0.7))
+                    })
             });
-        if compact {
-            base.flex_none().child(SharedString::from(mark(tab)))
-        } else {
-            // A fixed share of the lane, the title ellipsised inside it.
+        if kept {
             base.flex_none()
-                .w(px(160.))
-                .gap(px(5.))
-                .when_some(tab.icon.clone(), |pill, icon| {
-                    pill.child(div().flex_none().child(SharedString::from(icon)))
-                })
+                .w(px(30.))
+                .justify_center()
+                .child(mark(tab, 15., &t))
+        } else {
+            base.w(px(186.))
+                .flex_shrink(1.)
+                .min_w(px(36.))
+                .pl(px(11.))
+                .pr(px(7.))
+                .gap(px(6.))
+                .child(mark(tab, 15., &t).flex_none())
                 .child(
                     div()
                         .min_w_0()

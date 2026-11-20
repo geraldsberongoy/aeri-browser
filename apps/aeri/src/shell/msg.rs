@@ -11,6 +11,7 @@ use super::Pick;
 use super::trust::DownloadPick;
 use crate::library::LibraryMsg;
 use crate::mac::{Edge, Pressure};
+use crate::native_menu::Align;
 use crate::resource_view::ResourceMsg;
 
 pub enum AppMsg {
@@ -78,18 +79,29 @@ pub enum AppMsg {
         window: u64,
         x: f32,
         y: f32,
+        align: Align,
     },
     /// The strip's "Popup blocked" notice was clicked at (`x`, `y`).
     PopupMenu {
         window: u64,
         x: f32,
         y: f32,
+        align: Align,
     },
     /// The strip's downloads button was clicked at (`x`, `y`).
     DownloadsMenu {
         window: u64,
         x: f32,
         y: f32,
+        align: Align,
+    },
+    /// The sidebar's extensions door was clicked at (`x`, `y`): the
+    /// profile's extensions, to run on the shown tab.
+    ExtensionsMenu {
+        window: u64,
+        x: f32,
+        y: f32,
+        align: Align,
     },
     DownloadPick {
         window: u64,
@@ -134,6 +146,7 @@ pub enum AppMsg {
         window: u64,
         x: f32,
         y: f32,
+        align: Align,
     },
     SwitchSpace {
         window: u64,
@@ -225,16 +238,10 @@ pub enum ChromeMsg {
     Zoom {
         window: u64,
     },
-    /// The one-time note on the page-first layout was read.
-    DismissHint,
     /// The sidebar's edge was dragged to `width`; `done` when let go.
     Width {
         width: u16,
         done: bool,
-    },
-    /// The resting address's Copy button.
-    CopyLink {
-        window: u64,
     },
 }
 
@@ -252,12 +259,13 @@ pub enum ThemeEditorMsg {
     Cancel,
 }
 
-/// The strip's history buttons.
+/// The history doors beside the band, and Reload (Stop while loading).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nav {
     Back,
     Forward,
     Reload,
+    Stop,
 }
 
 /// What can be done to one tab from the sidebar.

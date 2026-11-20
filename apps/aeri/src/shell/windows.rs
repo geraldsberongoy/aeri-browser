@@ -19,13 +19,12 @@ use gpui::{
     WindowOptions, point, px, size,
 };
 
-use super::bar::display_address;
 use super::spaces::Parked;
 use super::tabs::{TabEntry, TabStart};
 use super::{NEW_TAB_URL, Nav, Shell, content_view};
 use crate::address_bar::AddressBar;
 use crate::chrome_overlay::ChromeOverlay;
-use crate::mac::{BAR_HEIGHT, Edge, Frame};
+use crate::mac::{BAR_HEIGHT, Frame};
 use crate::window_frame::{SidebarTab, SpaceChip, TRAFFIC_LIGHTS, WindowFrame};
 
 /// Where a tab lives.
@@ -244,13 +243,8 @@ impl Shell {
             ..Default::default()
         };
         let tx = self.tx.clone();
-        let extensions = self
-            .open
-            .get(&profile)
-            .map(|open| open.extensions.clone())
-            .unwrap_or_default();
         let bar = match cx.open_window(bar_options, |window, cx| {
-            cx.new(|cx| AddressBar::new(id, tx, extensions, window, cx))
+            cx.new(|cx| AddressBar::new(id, tx, window, cx))
         }) {
             Ok(handle) => handle,
             Err(err) => {
@@ -306,16 +300,11 @@ impl Shell {
         // The tab the window opens on loads even if another tab (the uBO
         // offer, say) is shown before the page work runs.
         let first = self.window(id).and_then(AeriWindow::shown);
-        let hint = self.chrome.hint && !self.chrome.layout.sidebar_pinned;
         self.later(move |shell| {
             if let (Some(frame_view), Some(bar_view), [Some(side), Some(strip)]) =
                 (frame_view, bar_view, overlay_views)
             {
                 frame.attach(frame_view, bar_view, [side, strip]);
-                // First run: show where the sidebar went, with its note.
-                if hint {
-                    frame.call(Edge::Side);
-                }
             }
             shell.adopt_pages(id);
             if let Some(first) = first {
@@ -444,6 +433,7 @@ impl Shell {
         let row = |item: &Item<TabEntry>, favourite: bool| SidebarTab {
             id: item.id,
             label: item.value.label(),
+            host: host_of(item.value.url()),
             icon: item.value.icon.clone(),
             pinned: item.pinned,
             favourite,
@@ -469,15 +459,10 @@ impl Shell {
             })
             .collect();
         let model = self.shown_model(w);
-        let address = model
-            .as_ref()
-            .map(|tab| display_address(&tab.url))
-            .unwrap_or_default();
         let (popup_blocked, downloads) = self.strip_notices(window_id);
         let _ = w.frame_window.update(cx, |frame, _, cx| {
             frame.set_tabs(tabs, cx);
             frame.set_spaces(spaces, cx);
-            frame.set_address(address, cx);
             frame.set_notices(popup_blocked, downloads, cx);
             if let Some(tab) = &model {
                 frame.show_history(tab.can_go_back, tab.can_go_forward, cx);
@@ -507,6 +492,7 @@ impl Shell {
             Nav::Back => Command::GoBack { tab },
             Nav::Forward => Command::GoForward { tab },
             Nav::Reload => Command::Reload { tab },
+            Nav::Stop => Command::Stop { tab },
         };
         self.later(move |_| page.execute(&command));
     }
@@ -643,4 +629,19 @@ impl Shell {
         }
         self.refresh_manager(cx);
     }
+}
+
+/// The host of a web address (`https://www.github.com/a` becomes
+/// `www.github.com`); empty for any other page. The sidebar draws a tab's
+/// letter from it.
+fn host_of(url: &str) -> String {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return String::new();
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    host.split(':').next().unwrap_or(host).to_owned()
 }

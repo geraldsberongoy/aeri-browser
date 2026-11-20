@@ -4,21 +4,20 @@
 //! lists suggestions under the pill; in palette mode (⇧⌘P) the same bar
 //! reaches commands, spaces and profiles too.
 
-use std::time::Duration;
-
-use aeri_cef::Extension;
-use aeri_core::appearance::Tokens;
 use aeri_core::keymap::{Keymap, Shortcut};
-use aeri_core::tab::{LoadState, Tab};
+use aeri_core::layout::BarPlace;
+use aeri_core::tab::Tab;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, Context, Entity, FocusHandle, Focusable,
-    KeyBinding, ScrollHandle, SharedString, Window, actions, div, ease_out_quint, img, prelude::*,
-    px,
+    Action, AnimationExt, AnyElement, App, BoxShadow, Context, Entity, FocusHandle, Focusable,
+    KeyBinding, MouseButton, ScrollHandle, SharedString, SpringAnimation, Window, actions, div,
+    point, prelude::*, px,
 };
 
-use crate::mac::{MAX_VISIBLE_SUGGESTIONS, SUGGESTION_CHROME, SUGGESTION_HEIGHT};
+use crate::mac::{BAR_HEIGHT, MAX_VISIBLE_SUGGESTIONS, SUGGESTION_CHROME, SUGGESTION_HEIGHT};
+use crate::motion;
 use crate::shell::{AppMsg, BarRow, Pick};
+use crate::symbol::{Weight, symbol};
 use crate::text_input::{InputEvent, TextInput};
 use crate::theme;
 
@@ -84,15 +83,30 @@ pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
         .collect()
 }
 
-const SLIDE: Duration = Duration::from_millis(180);
-const ADDRESS_PLACEHOLDER: &str = "Search or enter address";
+/// Search `Omnibox.swift` / `Design.swift` (`Metrics.fieldWidth`): the
+/// field is 560 wide (22 + 2 x 14 tall, 14 radius), 14 pt from the page's
+/// sides at least, the list 8 pt under it.
+const FIELD_WIDTH: f32 = 560.;
+const FIELD_MARGIN: f32 = 28.;
+const FIELD_HEIGHT: f32 = BAR_HEIGHT as f32;
+const LIST_GAP: f32 = 8.;
+/// Room kept free below the centred field (`.padding(.bottom, 60)`).
+const FIELD_LIFT: f32 = 60.;
+/// Distance from the page's top to the field's, for `BarPlace::Upper`.
+const UPPER_TOP: f32 = 64.;
+const BLANK_PLACEHOLDER: &str = "Enter a web address";
+const THIS_TAB_PLACEHOLDER: &str = "This tab: enter a web address";
 const PALETTE_PLACEHOLDER: &str = "Search tabs, bookmarks, history and commands";
+
+/// A tab with no page yet.
+fn is_blank(url: &str) -> bool {
+    url.is_empty() || url == "about:blank"
+}
 
 pub struct AddressBar {
     window_id: u64,
     tx: UnboundedSender<AppMsg>,
     input: Entity<TextInput>,
-    load: LoadState,
     /// The shown tab's address, restored whenever the bar is called or
     /// dismissed.
     url: String,
@@ -100,10 +114,12 @@ pub struct AddressBar {
     editing: bool,
     /// The shown page's bookmark state; `None` if it cannot be bookmarked.
     bookmarked: Option<bool>,
-    /// The profile's extensions with a toolbar action, as buttons.
-    extensions: Vec<Extension>,
-    /// Bumped on every reveal so the slide-in animation restarts.
+    /// Bumped on every reveal so the opening animations restart.
     reveal: usize,
+    /// Centred, or near the page's top.
+    place: BarPlace,
+    /// Bumped when the list goes from no rows to some, so it fades in.
+    list_epoch: usize,
     palette: bool,
     rows: Vec<BarRow>,
     selected: usize,
@@ -114,11 +130,14 @@ impl AddressBar {
     pub fn new(
         window_id: u64,
         tx: UnboundedSender<AppMsg>,
-        extensions: Vec<Extension>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| TextInput::new(ADDRESS_PLACEHOLDER, cx));
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new(BLANK_PLACEHOLDER, cx);
+            input.set_omnibox(true);
+            input
+        });
         cx.subscribe(&input, |this, _, event: &InputEvent, cx| match event {
             InputEvent::Submitted(text) => {
                 let pick = this
@@ -150,12 +169,12 @@ impl AddressBar {
             window_id,
             tx,
             input,
-            load: LoadState::Unloaded,
             url: String::new(),
             editing: false,
             bookmarked: None,
-            extensions,
             reveal: 0,
+            place: BarPlace::Centre,
+            list_epoch: 0,
             palette: false,
             rows: Vec::new(),
             selected: 0,
@@ -186,28 +205,38 @@ impl AddressBar {
 
     /// Mirrors the shown tab, unless the Person is typing.
     pub fn show_tab(&mut self, tab: &Tab, bookmarked: Option<bool>, cx: &mut Context<Self>) {
-        self.load = tab.load.clone();
         self.bookmarked = bookmarked;
         self.url = tab.url.clone();
         if !self.editing {
-            self.input
-                .update(cx, |input, cx| input.set_text(tab.url.clone(), cx));
+            let text = self.shown_text();
+            self.input.update(cx, |input, cx| input.set_text(text, cx));
         }
         cx.notify();
     }
 
     /// Takes keyboard focus: the shown address selected, or, as the
     /// palette, an empty field.
-    pub fn reveal(&mut self, palette: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn reveal(
+        &mut self,
+        palette: bool,
+        place: BarPlace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.reveal += 1;
+        self.place = place;
         self.palette = palette;
         self.editing = true;
         self.rows.clear();
         self.selected = 0;
+        // Search's placeholders: a blank tab asks for an address; over a
+        // page, the field says it will use this tab.
         let (placeholder, text) = if palette {
             (PALETTE_PLACEHOLDER, String::new())
+        } else if is_blank(&self.url) {
+            (BLANK_PLACEHOLDER, String::new())
         } else {
-            (ADDRESS_PLACEHOLDER, self.url.clone())
+            (THIS_TAB_PLACEHOLDER, self.url.clone())
         };
         window.focus(&self.input.focus_handle(cx), cx);
         self.input.update(cx, |input, cx| {
@@ -224,12 +253,21 @@ impl AddressBar {
         self.editing = false;
         self.rows.clear();
         self.selected = 0;
-        let url = self.url.clone();
+        let text = self.shown_text();
         self.input.update(cx, |input, cx| {
-            input.set_placeholder(ADDRESS_PLACEHOLDER, cx);
-            input.set_text(url, cx);
+            input.set_placeholder(BLANK_PLACEHOLDER, cx);
+            input.set_text(text, cx);
         });
         cx.notify();
+    }
+
+    /// The shown tab's address, nothing for a blank page.
+    fn shown_text(&self) -> String {
+        if is_blank(&self.url) {
+            String::new()
+        } else {
+            self.url.clone()
+        }
     }
 
     /// Rows for `query`; ignored if the Person has typed on since.
@@ -243,50 +281,14 @@ impl AddressBar {
         if self.input.read(cx).text() != query {
             return;
         }
+        let was_empty = self.rows.is_empty();
         self.selected = selected.min(rows.len().saturating_sub(1));
         self.rows = rows;
+        if was_empty && !self.rows.is_empty() {
+            self.list_epoch += 1;
+        }
         self.list.scroll_to_item(self.selected);
         cx.notify();
-    }
-
-    pub fn set_extensions(&mut self, extensions: Vec<Extension>, cx: &mut Context<Self>) {
-        self.extensions = extensions;
-        cx.notify();
-    }
-
-    fn extension_button(
-        &self,
-        ix: usize,
-        extension: &Extension,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let id = extension.id.clone();
-        let t = theme::tokens_in(self.window_id, cx);
-        let icon = match &extension.icon {
-            Some(path) => img(path.clone()).size(px(16.)).into_any_element(),
-            None => div()
-                .text_size(px(12.))
-                .child(extension.name.chars().next().unwrap_or('?').to_string())
-                .into_any_element(),
-        };
-        div()
-            .id(("extension", ix))
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(28.))
-            .rounded(px(8.))
-            .hover(move |style| style.bg(theme::c(t.hover)))
-            .active(move |style| style.bg(theme::c(t.pressed)))
-            .on_click(cx.listener(move |this, _, _, _| {
-                this.send(AppMsg::ExtensionAction {
-                    window: this.window_id,
-                    extension: id.clone(),
-                });
-            }))
-            .child(icon)
-            .into_any_element()
     }
 
     fn star(&self, bookmarked: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -313,15 +315,28 @@ impl AddressBar {
     fn row(&self, ix: usize, row: &BarRow, cx: &mut Context<Self>) -> AnyElement {
         let pick = row.pick.clone();
         let t = theme::tokens_in(self.window_id, cx);
-        let muted = |text: &str| {
+        // Search `Omnibox.swift`: the key text (the address, `www.`
+        // dropped) in 13 pt ink, the page's title after it in 12 pt.
+        let (key, title) = if row.detail.is_empty() {
+            (row.title.as_str(), "")
+        } else {
+            (row.detail.as_str(), row.title.as_str())
+        };
+        let key = key.strip_prefix("www.").unwrap_or(key);
+        let name = match &row.pick {
+            Pick::Text(_) => "magnifyingglass",
+            Pick::Open(_) => "clock.arrow.circlepath",
+            Pick::Tab(_) => "macwindow",
+            _ => "command",
+        };
+        let secondary = |text: &str, color: aeri_core::appearance::Rgba| {
             div()
-                .flex_none()
-                .max_w(px(260.))
+                .min_w_0()
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
                 .text_size(px(12.))
-                .text_color(theme::c(t.text_tertiary))
+                .text_color(theme::c(color))
                 .child(SharedString::from(text.to_owned()))
         };
         div()
@@ -332,7 +347,7 @@ impl AddressBar {
             .gap(px(10.))
             .h(px(SUGGESTION_HEIGHT as f32))
             .px(px(12.))
-            .rounded(px(8.))
+            .rounded(px(9.))
             .text_size(px(13.))
             .text_color(theme::c(t.text))
             .when(ix == self.selected, |row| row.bg(theme::c(t.selected)))
@@ -342,15 +357,26 @@ impl AddressBar {
             .on_click(cx.listener(move |this, _, _, _| this.pick(pick.clone())))
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(14.))
+                    .child(symbol(name, 10., Weight::Medium, t.icon_muted)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .max_w(px(300.))
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .child(SharedString::from(row.title.clone())),
+                    .child(SharedString::from(key.to_owned())),
             )
-            .when(!row.detail.is_empty(), |el| el.child(muted(&row.detail)))
-            .when(!row.hint.is_empty(), |el| el.child(muted(&row.hint)))
+            .child(secondary(title, t.text_secondary).flex_1())
+            .when(!row.hint.is_empty(), |el| {
+                el.child(secondary(&row.hint, t.text_tertiary).flex_none())
+            })
             .into_any_element()
     }
 
@@ -359,14 +385,6 @@ impl AddressBar {
             window: self.window_id,
             shortcut,
         });
-    }
-
-    fn status_color(&self, t: &Tokens) -> gpui::Rgba {
-        theme::c(match self.load {
-            LoadState::Loading => t.accent,
-            LoadState::Failed { .. } | LoadState::Crashed { .. } => t.danger,
-            _ => t.text_disabled,
-        })
     }
 }
 
@@ -377,64 +395,93 @@ impl Focusable for AddressBar {
 }
 
 impl Render for AddressBar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
+        let still = motion::still(self.window_id, cx);
         let mut buttons: Vec<AnyElement> = Vec::new();
         if let (Some(bookmarked), false) = (self.bookmarked, self.palette) {
             buttons.push(self.star(bookmarked, cx));
         }
-        buttons.extend(
-            self.extensions
-                .iter()
-                .enumerate()
-                .map(|(ix, extension)| self.extension_button(ix, extension, cx)),
-        );
-        let pill = div()
+
+        // The window is the page: the field is 560 wide (Search
+        // `Metrics.fieldWidth`, `Omnibox.swift`) and sits so its centre is
+        // (height - 60) / 2 down, SwiftUI's `.padding(.bottom, 60)` under a
+        // centred stack.
+        let viewport = window.viewport_size();
+        let (page_w, page_h) = (f32::from(viewport.width), f32::from(viewport.height));
+        let width = FIELD_WIDTH.min(page_w - FIELD_MARGIN).max(120.);
+        let left = (page_w - width) / 2.;
+        let top = match self.place {
+            BarPlace::Centre => (page_h - FIELD_LIFT) / 2. - FIELD_HEIGHT / 2.,
+            BarPlace::Upper => UPPER_TOP,
+        }
+        .max(8.);
+
+        let field = div()
             .relative()
             .flex()
             .flex_none()
             .items_center()
             .gap(px(10.))
-            .h(px(40.))
-            .w_full()
-            .pl(px(14.))
-            .pr(px(if buttons.is_empty() { 14. } else { 6. }))
-            .rounded(px(12.))
-            .bg(theme::c(t.raised))
+            .w(px(width))
+            .h(px(FIELD_HEIGHT))
+            .pl(px(22.))
+            .pr(px(if buttons.is_empty() { 22. } else { 14. }))
+            .rounded(px(14.))
+            .bg(theme::c(t.panel))
             .border_1()
-            .border_color(theme::c(t.card_border))
+            .border_color(theme::c(t.separator))
+            .shadow(vec![BoxShadow {
+                color: theme::ca(t.card_shadow, 0.06).into(),
+                offset: point(px(0.), px(8.)),
+                blur_radius: px(24.),
+                spread_radius: px(0.),
+                inset: false,
+            }])
             .text_color(theme::c(t.text))
-            .text_size(px(14.))
-            .line_height(px(20.))
-            .child(if self.palette {
-                div()
-                    .flex_none()
-                    .text_color(theme::c(t.text_tertiary))
-                    .child("›")
-                    .into_any_element()
-            } else {
-                div()
-                    .flex_none()
-                    .size(px(8.))
-                    .rounded_full()
-                    .bg(self.status_color(&t))
-                    .into_any_element()
+            .text_size(px(15.5))
+            .line_height(px(22.))
+            .when(self.palette, |field| {
+                field.child(
+                    div()
+                        .flex_none()
+                        .text_color(theme::c(t.text_tertiary))
+                        .child("›"),
+                )
             })
             .child(div().flex_1().min_w_0().child(self.input.clone()))
-            .when(!buttons.is_empty(), |pill| {
-                pill.child(div().flex().flex_none().gap(px(2.)).children(buttons))
+            .when(!buttons.is_empty(), |field| {
+                field.child(div().flex().flex_none().gap(px(2.)).children(buttons))
             });
-
-        let pill = if cx.reduce_motion() {
-            pill.into_any_element()
+        // Opens at 97 % and full opacity on `settle`, about the field's
+        // centre (GPUI has no scale, so its box shrinks within a fixed slot).
+        let field = if still {
+            field.into_any_element()
         } else {
-            pill.with_animation(
-                ("address-bar-reveal", self.reveal),
-                Animation::new(SLIDE).with_easing(ease_out_quint()),
-                |pill, delta| pill.top(px(-16. * (1. - delta))).opacity(delta),
-            )
-            .into_any_element()
+            field
+                .with_spring(
+                    ("address-field", self.reveal),
+                    SpringAnimation::new(motion::SETTLE)
+                        .to(1.0_f32)
+                        .from(0.0_f32),
+                    move |field, open| {
+                        let scale = 0.97 + 0.03 * open;
+                        field
+                            .w(px(width * scale))
+                            .h(px(FIELD_HEIGHT * scale))
+                            .opacity(open.clamp(0., 1.))
+                    },
+                )
+                .into_any_element()
         };
+        let slot = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .w(px(width))
+            .h(px(FIELD_HEIGHT))
+            .child(field);
 
         let rows: Vec<AnyElement> = self
             .rows
@@ -442,19 +489,81 @@ impl Render for AddressBar {
             .enumerate()
             .map(|(ix, row)| self.row(ix, row, cx))
             .collect();
-        let visible = rows.len().min(MAX_VISIBLE_SUGGESTIONS) as f32;
-        // SUGGESTION_CHROME: 6 gap, 2 × 4 padding, 2 × 1 border.
-        let list_padding = 4.;
+        let list = (!rows.is_empty()).then(|| {
+            let visible = rows.len().min(MAX_VISIBLE_SUGGESTIONS) as f32;
+            let room = page_h - (top + FIELD_HEIGHT + LIST_GAP) - 8.;
+            let height =
+                (visible * SUGGESTION_HEIGHT as f32 + SUGGESTION_CHROME as f32).min(room.max(0.));
+            let list = div()
+                .id("suggestions")
+                .flex()
+                .flex_col()
+                .flex_none()
+                .w(px(width))
+                .p(px(6.))
+                .rounded(px(14.))
+                .bg(theme::c(t.panel))
+                .border_1()
+                .border_color(theme::c(t.separator))
+                .shadow(vec![BoxShadow {
+                    color: theme::c(t.card_shadow).into(),
+                    offset: point(px(0.), px(6.)),
+                    blur_radius: px(20.),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+                .overflow_y_scroll()
+                .track_scroll(&self.list)
+                .children(rows);
+            // Fades in growing a little downwards from the field (Search:
+            // scale .98 anchored at the top), on `quick`. Rows themselves
+            // change instantly.
+            if still {
+                list.h(px(height)).into_any_element()
+            } else {
+                list.with_animation(
+                    ("address-list", self.list_epoch),
+                    motion::quick(),
+                    move |list, d| list.h(px(height * (0.98 + 0.02 * d))).opacity(d),
+                )
+                .into_any_element()
+            }
+        });
+
+        let scrim = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .rounded(px(10.))
+            .bg(theme::c(t.scrim))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| {
+                    this.send(AppMsg::AddressDismissed {
+                        window: this.window_id,
+                    })
+                }),
+            );
+        let scrim = if still {
+            scrim.into_any_element()
+        } else {
+            scrim
+                .with_animation(
+                    ("address-scrim", self.reveal),
+                    motion::quick(),
+                    |scrim, d| scrim.opacity(d),
+                )
+                .into_any_element()
+        };
 
         div()
             .size_full()
-            .flex()
-            .flex_col()
-            .px(px(4.))
-            .py(px(8.))
-            .on_action(
-                cx.listener(|this, _: &FocusAddressBar, window, cx| this.reveal(false, window, cx)),
-            )
+            .relative()
+            .on_action(cx.listener(|this, _: &FocusAddressBar, window, cx| {
+                let place = this.place;
+                this.reveal(false, place, window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &CommandPalette, _, _| {
                     this.shortcut(Shortcut::CommandPalette)
@@ -496,28 +605,19 @@ impl Render for AddressBar {
             .on_action(cx.listener(|this, _: &ToggleFullScreen, _, _| {
                 this.shortcut(Shortcut::ToggleFullScreen)
             }))
-            .child(pill)
-            .when(!rows.is_empty(), |bar| {
-                bar.child(
-                    div()
-                        .id("suggestions")
-                        .flex()
-                        .flex_col()
-                        .flex_none()
-                        .mt(px(6.))
-                        .py(px(list_padding))
-                        .px(px(4.))
-                        .h(px(visible * SUGGESTION_HEIGHT as f32
-                            + SUGGESTION_CHROME as f32
-                            - 6.))
-                        .rounded(px(12.))
-                        .bg(theme::c(t.raised))
-                        .border_1()
-                        .border_color(theme::c(t.card_border))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.list)
-                        .children(rows),
-                )
-            })
+            .child(scrim)
+            .child(
+                div()
+                    .absolute()
+                    .top(px(top))
+                    .left(px(left))
+                    .w(px(width))
+                    .flex()
+                    .flex_col()
+                    .gap(px(LIST_GAP))
+                    .occlude()
+                    .child(slot)
+                    .children(list),
+            )
     }
 }

@@ -14,7 +14,14 @@ use crate::space_editor::SpaceEditor;
 impl Shell {
     /// The native menu under the sidebar's space header: every space, then
     /// space commands.
-    pub(super) fn space_menu(&mut self, window_id: u64, x: f32, y: f32, _cx: &mut App) {
+    pub(super) fn space_menu(
+        &mut self,
+        window_id: u64,
+        x: f32,
+        y: f32,
+        align: Align,
+        _cx: &mut App,
+    ) {
         let Some(w) = self.window(window_id) else {
             return;
         };
@@ -75,7 +82,7 @@ impl Shell {
         let picks = std::cell::RefCell::new(picks);
         self.later(move |_| {
             let (x, y) = (f64::from(x), f64::from(y));
-            frame.pop_up_menu(x, y, Align::Left, &entries, move |ix| {
+            frame.pop_up_menu(x, y, align, &entries, move |ix| {
                 if let Some(msg) = picks.borrow_mut().get_mut(ix).and_then(Option::take) {
                     let _ = tx.unbounded_send(msg);
                 }

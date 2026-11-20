@@ -110,7 +110,7 @@ impl Shell {
     }
 
     /// The strip's "Popup blocked" menu at (`x`, `y`).
-    pub(super) fn popup_menu(&mut self, window_id: u64, x: f32, y: f32) {
+    pub(super) fn popup_menu(&mut self, window_id: u64, x: f32, y: f32, align: Align) {
         let Some((tab, url)) = self.shown_blocked_popup(window_id) else {
             return;
         };
@@ -136,21 +136,15 @@ impl Shell {
         let tx = self.tx.clone();
         let frame = w.frame.clone();
         self.later(move |_| {
-            frame.pop_up_menu(
-                f64::from(x),
-                f64::from(y),
-                Align::Right,
-                &entries,
-                move |ix| {
-                    if let Some(&command) = picks.get(ix) {
-                        let _ = tx.unbounded_send(AppMsg::Tab {
-                            window: window_id,
-                            tab,
-                            command,
-                        });
-                    }
-                },
-            );
+            frame.pop_up_menu(f64::from(x), f64::from(y), align, &entries, move |ix| {
+                if let Some(&command) = picks.get(ix) {
+                    let _ = tx.unbounded_send(AppMsg::Tab {
+                        window: window_id,
+                        tab,
+                        command,
+                    });
+                }
+            });
         });
     }
 
@@ -251,7 +245,7 @@ impl Shell {
 
     /// The strip's downloads menu at (`x`, `y`): the session's newest
     /// downloads, then Chrome's full list.
-    pub(super) fn downloads_menu(&mut self, window_id: u64, x: f32, y: f32) {
+    pub(super) fn downloads_menu(&mut self, window_id: u64, x: f32, y: f32, align: Align) {
         let Some(w) = self.window(window_id) else {
             return;
         };
@@ -301,20 +295,14 @@ impl Shell {
         let frame = w.frame.clone();
         let picks = RefCell::new(picks);
         self.later(move |_| {
-            frame.pop_up_menu(
-                f64::from(x),
-                f64::from(y),
-                Align::Right,
-                &entries,
-                move |ix| {
-                    if let Some(pick) = picks.borrow_mut().get_mut(ix).and_then(Option::take) {
-                        let _ = tx.unbounded_send(AppMsg::DownloadPick {
-                            window: window_id,
-                            pick,
-                        });
-                    }
-                },
-            );
+            frame.pop_up_menu(f64::from(x), f64::from(y), align, &entries, move |ix| {
+                if let Some(pick) = picks.borrow_mut().get_mut(ix).and_then(Option::take) {
+                    let _ = tx.unbounded_send(AppMsg::DownloadPick {
+                        window: window_id,
+                        pick,
+                    });
+                }
+            });
         });
     }
 

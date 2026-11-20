@@ -36,12 +36,9 @@ pub(super) fn start(db: &AppDb, tx: UnboundedSender<AppMsg>, cx: &mut App) {
         })
         .unwrap_or_else(Recipe::aeri);
     apply_app_appearance(app, recipe.base);
-    cx.set_global(Theme::new(
-        app,
-        recipe,
-        mac::accessibility(),
-        mac::system_is_dark(),
-    ));
+    let a11y = mac::accessibility();
+    cx.set_reduce_motion(a11y.reduce_motion);
+    cx.set_global(Theme::new(app, recipe, a11y, mac::system_is_dark()));
     mac::watch_appearance(move || {
         let _ = tx.unbounded_send(AppMsg::SystemAppearanceChanged);
     });
@@ -70,9 +67,11 @@ fn appearance_title(app: AppAppearance) -> &'static str {
 impl Shell {
     /// macOS switched light/dark or an accessibility display setting.
     pub(super) fn system_appearance_changed(&mut self, cx: &mut App) {
+        let a11y = mac::accessibility();
+        cx.set_reduce_motion(a11y.reduce_motion);
         let changed = cx.update_global::<Theme, _>(|theme, _| {
             theme.system_dark = mac::system_is_dark();
-            theme.a11y = mac::accessibility();
+            theme.a11y = a11y;
             theme.refresh()
         });
         if changed {
