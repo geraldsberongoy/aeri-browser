@@ -20,11 +20,14 @@ actions!(
     [
         FocusAddressBar,
         NewTab,
+        NewWindow,
         CloseTab,
         ReopenClosedTab,
         NextTab,
         PreviousTab,
         ToggleSidebar,
+        PreviousSpace,
+        NextSpace,
         Quit,
         ToggleFullScreen
     ]
@@ -39,6 +42,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     let mut bindings = vec![
         KeyBinding::new("cmd-l", FocusAddressBar, None),
         KeyBinding::new("cmd-t", NewTab, None),
+        KeyBinding::new("cmd-n", NewWindow, None),
         KeyBinding::new("cmd-w", CloseTab, None),
         KeyBinding::new("cmd-shift-t", ReopenClosedTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
@@ -46,6 +50,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-s", ToggleSidebar, None),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
+        KeyBinding::new("alt-cmd-left", PreviousSpace, None),
+        KeyBinding::new("alt-cmd-right", NextSpace, None),
     ];
     let keys = [
         "cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9",
@@ -242,6 +248,7 @@ impl Render for AddressBar {
             .py(px(8.))
             .on_action(cx.listener(|this, _: &FocusAddressBar, window, cx| this.reveal(window, cx)))
             .on_action(cx.listener(|this, _: &NewTab, _, _| this.shortcut(Shortcut::NewTab)))
+            .on_action(cx.listener(|this, _: &NewWindow, _, _| this.shortcut(Shortcut::NewWindow)))
             .on_action(cx.listener(|this, _: &CloseTab, _, _| this.shortcut(Shortcut::CloseTab)))
             .on_action(cx.listener(|this, _: &ReopenClosedTab, _, _| {
                 this.shortcut(Shortcut::ReopenClosedTab)
@@ -256,6 +263,10 @@ impl Render for AddressBar {
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, _, _| this.shortcut(Shortcut::ToggleSidebar)),
             )
+            .on_action(
+                cx.listener(|this, _: &PreviousSpace, _, _| this.shortcut(Shortcut::PreviousSpace)),
+            )
+            .on_action(cx.listener(|this, _: &NextSpace, _, _| this.shortcut(Shortcut::NextSpace)))
             .on_action(cx.listener(|this, _: &Quit, _, _| this.shortcut(Shortcut::Quit)))
             .on_action(cx.listener(|this, _: &ToggleFullScreen, _, _| {
                 this.shortcut(Shortcut::ToggleFullScreen)

@@ -34,6 +34,8 @@ pub use window::{TabObserver, TabWindow};
 pub enum Shortcut {
     FocusAddressBar,
     NewTab,
+    /// ⌘N: a window on a space no window shows.
+    NewWindow,
     CloseTab,
     ReopenClosedTab,
     NextTab,
@@ -41,6 +43,8 @@ pub enum Shortcut {
     /// ⌘1–⌘9: the nth tab; 9 is the last.
     SelectTab(u8),
     ToggleSidebar,
+    PreviousSpace,
+    NextSpace,
     Quit,
     ToggleFullScreen,
 }

@@ -112,12 +112,13 @@ session is saved. Aeri replaces Chromium's own handlers, which end the
 process at once and lose recent cookies. Closing the last window does not
 quit; the Dock icon opens a window again (that profile's session).
 
-Keys (from a page or the address bar): ⌘L address bar, ⌘T new tab, ⌘W close
-tab, ⌘⇧T reopen the last closed tab, ⌃Tab / ⌃⇧Tab next and previous tab,
-⌘1–⌘8 that tab, ⌘9 the last tab, ⌘S show or hide the sidebar, ⌃⌘F full
-screen, ⌘Q quit. A profile's records (session, closed tabs, history) are in
-`Profiles/<id>/profile.db` under the data directory; `sqlite3` reads it once
-Aeri has quit.
+Keys (from a page or the address bar): ⌘L address bar, ⌘T new tab, ⌘N new
+window (on a space no window shows), ⌘W close tab, ⌘⇧T reopen the last
+closed tab, ⌃Tab / ⌃⇧Tab next and previous tab, ⌘1–⌘8 that tab (favourites
+first), ⌘9 the last tab, ⌘⌥← / ⌘⌥→ previous and next space, ⌘S show or hide
+the sidebar, ⌃⌘F full screen, ⌘Q quit. A profile's records (spaces,
+favourites, windows, closed tabs, history) are in `Profiles/<id>/profile.db`
+under the data directory; `sqlite3` reads it once Aeri has quit.
 
 Running under `lldb` (launch or attach) raises a system "Developer Tools
 Access" dialog and stalls until it is answered. Aeri also needs fds 3 and 4

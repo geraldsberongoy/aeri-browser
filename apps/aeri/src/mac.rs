@@ -31,9 +31,9 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSColor, NSView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowDidBecomeKeyNotification, NSWindowDidEnterFullScreenNotification,
-    NSWindowDidExitFullScreenNotification, NSWindowDidResizeNotification, NSWindowOrderingMode,
-    NSWindowStyleMask,
+    NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification,
+    NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
+    NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -234,18 +234,23 @@ impl Frame {
         // SAFETY: AppKit notification names; the blocks run on the main
         // thread (the posting thread) and hold the frame weakly.
         unsafe {
+            // The frame rarely becomes key itself: a child that shares its
+            // key state (the bar, a tab) takes the keyboard. Becoming main
+            // marks the Person bringing this window forward.
             for name in [
                 NSWindowDidResizeNotification,
                 NSWindowDidEnterFullScreenNotification,
                 NSWindowDidExitFullScreenNotification,
                 NSWindowDidBecomeKeyNotification,
+                NSWindowDidBecomeMainNotification,
             ] {
                 let this = Rc::downgrade(self);
                 let resized = std::ptr::eq(name, NSWindowDidResizeNotification);
-                let becomes_key = std::ptr::eq(name, NSWindowDidBecomeKeyNotification);
+                let activated = std::ptr::eq(name, NSWindowDidBecomeKeyNotification)
+                    || std::ptr::eq(name, NSWindowDidBecomeMainNotification);
                 let block = RcBlock::new(move |_: NonNull<NSNotification>| {
                     let Some(this) = this.upgrade() else { return };
-                    if !becomes_key {
+                    if !activated {
                         this.layout();
                     }
                     // A full-screen transition can leave the frame key
@@ -253,6 +258,11 @@ impl Frame {
                     // button: hand the keyboard back either way.
                     if !resized {
                         this.forward_key();
+                    }
+                    if activated {
+                        let _ = this.tx.unbounded_send(AppMsg::WindowKey {
+                            window: this.window_id,
+                        });
                     }
                 });
                 tokens.push(center.addObserverForName_object_queue_usingBlock(
@@ -532,7 +542,11 @@ impl TabObserver for Frame {
         window.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenAuxiliary);
         style_card(&window);
         share_parent_key_state(&window);
-        self.tabs.borrow_mut().push((tab, window));
+        // A tab moving in from another window may have been here before.
+        let mut tabs = self.tabs.borrow_mut();
+        tabs.retain(|(id, _)| *id != tab);
+        tabs.push((tab, window));
+        drop(tabs);
         self.layout();
         if self.active.get() == Some(tab) {
             self.activate(tab);

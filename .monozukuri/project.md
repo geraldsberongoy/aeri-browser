@@ -49,8 +49,13 @@ window/tab module (`apps/aeri/src/shell/windows.rs`), a plain sidebar, ⌘S,
 ⌘1–9, ⌘⇧T, session restore with lazy tabs, history, "Open in <profile>"
 from the tab menu; `cargo xtask isolation` 13/13; sidebar mouse actions
 driven live. Evidence:
-`.monozukuri/specifications/phase-6-tabs-and-session.md`. Next: Phase 7
-(spaces and favourites).
+`.monozukuri/specifications/phase-6-tabs-and-session.md`. Phase 7 (spaces
+and favourites) is built: spaces per profile (header menu, switcher chips,
+⌘⌥←/→, a space editor window), one window per space with the others parked
+(pages alive, hidden), favourites as one live page that follows the key
+window, moves by menu and drag, ⌘N, `profile.db` migration 2; isolation
+13/13 and live mouse checks. Evidence:
+`.monozukuri/specifications/phase-7-spaces-and-favourites.md`. Next: Phase 8.
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

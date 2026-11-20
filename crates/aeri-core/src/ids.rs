@@ -51,3 +51,14 @@ impl fmt::Display for TabId {
         write!(f, "tab-{}", self.0)
     }
 }
+
+/// A space's identifier within its profile. Persisted in `profile.db`; the
+/// shell allocates new ones above the highest in use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SpaceId(pub i64);
+
+impl fmt::Display for SpaceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "space-{}", self.0)
+    }
+}

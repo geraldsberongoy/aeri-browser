@@ -9,6 +9,7 @@ mod mac;
 mod native_menu;
 mod profile_manager;
 mod shell;
+mod space_editor;
 mod text_input;
 mod window_frame;
 

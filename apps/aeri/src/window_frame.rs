@@ -6,7 +6,7 @@
 //! window sits beside it as a rounded card (`mac::Frame::layout`).
 
 use aeri_cef::Shortcut;
-use aeri_core::ids::TabId;
+use aeri_core::ids::{SpaceId, TabId};
 use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
@@ -33,9 +33,22 @@ pub struct SidebarTab {
     pub id: TabId,
     pub label: String,
     pub pinned: bool,
+    /// One of the profile's favourites rather than the space's own.
+    pub favourite: bool,
     pub active: bool,
     pub loading: bool,
     pub audible: bool,
+}
+
+/// One of the profile's spaces, as the sidebar shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpaceChip {
+    pub id: SpaceId,
+    pub name: String,
+    pub colour: u32,
+    pub icon: String,
+    /// The space this window shows.
+    pub current: bool,
 }
 
 /// A sidebar row being dragged to a new position; also its drag preview.
@@ -69,6 +82,7 @@ pub struct WindowFrame {
     can_go_back: bool,
     can_go_forward: bool,
     tabs: Vec<SidebarTab>,
+    spaces: Vec<SpaceChip>,
     sidebar_shown: bool,
 }
 
@@ -93,6 +107,7 @@ impl WindowFrame {
             can_go_back: false,
             can_go_forward: false,
             tabs: Vec::new(),
+            spaces: Vec::new(),
             sidebar_shown: true,
         }
     }
@@ -101,6 +116,14 @@ impl WindowFrame {
     pub fn set_tabs(&mut self, tabs: Vec<SidebarTab>, cx: &mut Context<Self>) {
         if self.tabs != tabs {
             self.tabs = tabs;
+            cx.notify();
+        }
+    }
+
+    /// Mirrors the profile's spaces, in order.
+    pub fn set_spaces(&mut self, spaces: Vec<SpaceChip>, cx: &mut Context<Self>) {
+        if self.spaces != spaces {
+            self.spaces = spaces;
             cx.notify();
         }
     }
@@ -209,27 +232,27 @@ impl WindowFrame {
         let _ = self.tx.unbounded_send(msg);
     }
 
-    /// The window's tabs, pinned first, under a New Tab row. A click shows a
-    /// tab, a middle click or × closes it, a right click opens its menu, and
-    /// dragging moves it within its group.
+    /// Under a header naming the shown space: a New Tab row, the profile's
+    /// favourites, then the space's pinned and regular tabs; at the foot,
+    /// one chip per space. A click shows a tab, a middle click or × closes
+    /// it, a right click opens its menu. Dragging moves a tab within its
+    /// list, between the favourites and the space's tabs, or onto another
+    /// space's chip.
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
-        let pinned = self.tabs.iter().filter(|t| t.pinned).count();
         let mut list = div()
-            .id("sidebar")
+            .id("sidebar-tabs")
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(SIDEBAR_WIDTH as f32))
-            .h_full()
-            .px(px(PAGE_EDGE + 2.))
-            .pb(px(PAGE_EDGE))
+            .flex_1()
+            .min_h_0()
             .gap(px(2.))
             .overflow_y_scroll()
             .child(
                 div()
                     .id("new-tab")
                     .flex()
+                    .flex_none()
                     .items_center()
                     .h(px(30.))
                     .px(px(10.))
@@ -245,21 +268,177 @@ impl WindowFrame {
                     }))
                     .child("+  New Tab"),
             );
-        for (index, tab) in self.tabs.iter().enumerate() {
+        let divider = || {
+            div()
+                .flex_none()
+                .h(px(1.))
+                .mx(px(10.))
+                .my(px(4.))
+                .bg(rgba(0xffffff1a))
+        };
+        let favourites: Vec<&SidebarTab> = self.tabs.iter().filter(|t| t.favourite).collect();
+        let tabs: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
+        let pinned = tabs.iter().filter(|t| t.pinned).count();
+        for (index, tab) in favourites.iter().enumerate() {
+            list = list.child(self.row(index, tab, cx));
+        }
+        if !favourites.is_empty() {
+            list = list.child(divider());
+        }
+        for (index, tab) in tabs.iter().enumerate() {
             if index == pinned && pinned > 0 {
-                list = list.child(div().h(px(1.)).mx(px(10.)).my(px(4.)).bg(rgba(0xffffff1a)));
+                list = list.child(divider());
             }
             list = list.child(self.row(index, tab, cx));
         }
-        list
+        div()
+            .id("sidebar")
+            .flex()
+            .flex_col()
+            .w(px(SIDEBAR_WIDTH as f32))
+            .flex_1()
+            .min_h_0()
+            .px(px(PAGE_EDGE + 2.))
+            .pb(px(PAGE_EDGE))
+            .gap(px(4.))
+            .child(self.space_header(cx))
+            .child(list)
+            .child(self.space_switcher(cx))
     }
 
+    /// The shown space's colour, icon and name; a click opens the space
+    /// menu below it.
+    fn space_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let window = self.window_id;
+        let current = self.spaces.iter().find(|s| s.current);
+        let (name, colour, icon) = current.map_or((String::new(), 0x5b7cfa, String::new()), |s| {
+            (s.name.clone(), s.colour, s.icon.clone())
+        });
+        div()
+            .id("space-header")
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.))
+            .h(px(30.))
+            .px(px(10.))
+            .rounded(px(7.))
+            .text_size(px(13.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(0xe4e5e9))
+            .hover(|style| style.bg(rgba(0xffffff0f)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, _, _| {
+                    this.send(AppMsg::SpaceMenu {
+                        window,
+                        x: PAGE_EDGE + 10.,
+                        y: STRIP_HEIGHT as f32 + 30.,
+                    });
+                }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(10.))
+                    .rounded_full()
+                    .bg(rgb(colour)),
+            )
+            .when(!icon.is_empty(), |row| {
+                row.child(div().flex_none().child(SharedString::from(icon)))
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(SharedString::from(name)),
+            )
+            .child(div().flex_none().text_color(rgb(0x8a8c93)).child("▾"))
+    }
+
+    /// One chip per space (click to show it, drop a tab to move it there)
+    /// and a chip for a new space.
+    fn space_switcher(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let window = self.window_id;
+        let chip = |id: gpui::ElementId| {
+            div()
+                .id(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(26.))
+                .rounded(px(7.))
+                .text_size(px(12.))
+                .hover(|style| style.bg(rgba(0xffffff14)))
+        };
+        let mut row = div()
+            .flex()
+            .flex_none()
+            .flex_wrap()
+            .items_center()
+            .gap(px(4.))
+            .pt(px(4.));
+        for space in &self.spaces {
+            let id = space.id;
+            let mark = match space.icon.as_str() {
+                "" => space.name.chars().next().unwrap_or('·').to_string(),
+                icon => icon.to_owned(),
+            };
+            row = row.child(
+                chip(("space", id.0 as usize).into())
+                    .when(space.current, |chip| chip.bg(rgba(0xffffff1f)))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(18.))
+                            .rounded_full()
+                            .bg(rgb(space.colour))
+                            .text_color(rgb(0xffffff))
+                            .child(SharedString::from(mark)),
+                    )
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                        this.send(AppMsg::SwitchSpace { window, space: id });
+                    }))
+                    .drag_over::<DraggedTab>(|style, _, _, _| style.bg(rgba(0x5b8cff55)))
+                    .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, _| {
+                        this.send(AppMsg::Tab {
+                            window,
+                            tab: dragged.id,
+                            command: TabCommand::MoveToSpace(id),
+                        });
+                    })),
+            );
+        }
+        row.child(
+            chip("new-space".into())
+                .text_color(rgb(0x9a9ca3))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                    this.send(AppMsg::EditSpace {
+                        window,
+                        space: None,
+                    });
+                }))
+                .child("+"),
+        )
+    }
+
+    /// A tab's row. `index` is its place in its own list (favourites, or
+    /// the space's tabs); a drop on the row moves the dragged tab there.
     fn row(&self, index: usize, tab: &SidebarTab, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let id = tab.id;
+        let favourite = tab.favourite;
         let label = SharedString::from(tab.label.clone());
         let mut status = String::new();
-        if tab.pinned {
+        if tab.favourite {
+            status.push('★');
+        } else if tab.pinned {
             status.push('•');
         }
         if tab.loading {
@@ -273,9 +452,10 @@ impl WindowFrame {
             label: label.clone(),
         };
         div()
-            .id(("tab", index))
+            .id(("tab", id.0 as usize))
             .group("tab")
             .flex()
+            .flex_none()
             .items_center()
             .gap(px(6.))
             .h(px(30.))
@@ -326,7 +506,7 @@ impl WindowFrame {
                 this.send(AppMsg::Tab {
                     window,
                     tab: dragged.id,
-                    command: TabCommand::MoveTo(index),
+                    command: TabCommand::MoveTo { index, favourite },
                 });
             }))
             .child(
@@ -348,7 +528,7 @@ impl WindowFrame {
             })
             .child(
                 div()
-                    .id(("close", index))
+                    .id(("close", id.0 as usize))
                     .flex()
                     .flex_none()
                     .items_center()

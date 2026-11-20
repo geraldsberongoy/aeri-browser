@@ -23,7 +23,8 @@
    message, on the main thread (a few small rows; WAL). Measured below.
 3. **What is remembered**: closing a window that is not its profile's last
    forgets it (as in Chrome). Closing a profile's last window, or quitting,
-   keeps the session as it was just before.
+   keeps the session as it was just before. *Superseded by Phase 7
+   decision 1: a closed window's space keeps its tabs.*
 4. **Start-up**: with no `AERI_START_URL`, each opened profile restores its
    session (a new tab if it has none). An explicit start URL (development,
    tests) opens one window on it instead.

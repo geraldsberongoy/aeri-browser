@@ -43,7 +43,8 @@ pub trait TabObserver {
 struct State {
     tab: TabId,
     view: BrowserView,
-    observer: Rc<dyn TabObserver>,
+    /// Where window events go: the frame that holds the tab now.
+    observer: RefCell<Rc<dyn TabObserver>>,
     /// Where this tab's out-of-band signals go (`signals`).
     sink: SignalSink,
     window: RefCell<Option<Window>>,
@@ -152,7 +153,7 @@ impl TabWindow {
         let state = Rc::new(State {
             tab,
             view,
-            observer,
+            observer: RefCell::new(observer),
             sink,
             window: RefCell::default(),
             toolbar: RefCell::default(),
@@ -166,6 +167,17 @@ impl TabWindow {
 
     pub fn tab(&self) -> TabId {
         self.state.tab
+    }
+
+    /// Hands the tab's window to another observer (a tab moving between
+    /// windows). If the window exists, the new observer gets
+    /// [`TabObserver::created`] for it at once; the old one is not told.
+    pub fn move_to(&self, observer: Rc<dyn TabObserver>) {
+        *self.state.observer.borrow_mut() = observer.clone();
+        let window = self.state.window.borrow().clone();
+        if let Some(window) = window {
+            observer.created(self.state.tab, window.window_handle());
+        }
     }
 
     fn browser(&self) -> Option<Browser> {
@@ -338,7 +350,8 @@ wrap_window_delegate! {
             }
             // Known early, for tab signals and extension actions alike.
             request_window_id(&self.state, Vec::new());
-            self.state.observer.created(self.state.tab, window.window_handle());
+            let observer = self.state.observer.borrow().clone();
+            observer.created(self.state.tab, window.window_handle());
         }
 
         fn on_window_destroyed(&self, _window: Option<&mut Window>) {
@@ -349,7 +362,8 @@ wrap_window_delegate! {
             BY_BROWSER.with_borrow_mut(|tabs| {
                 tabs.retain(|_, state| !std::ptr::eq(state.as_ptr(), Rc::as_ptr(&self.state)));
             });
-            self.state.observer.destroyed(self.state.tab);
+            let observer = self.state.observer.borrow().clone();
+            observer.destroyed(self.state.tab);
         }
 
         fn can_close(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int {
@@ -435,7 +449,8 @@ wrap_browser_view_delegate! {
                 return 0;
             };
             let sink = popup.sink.clone();
-            let window = match TabWindow::host(popup.tab, view.clone(), opener.observer.clone(), sink) {
+            let observer = opener.observer.borrow().clone();
+            let window = match TabWindow::host(popup.tab, view.clone(), observer, sink) {
                 Ok(window) => window,
                 Err(error) => {
                     tracing::warn!(%error, "no window for a popup; CEF opens it");

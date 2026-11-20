@@ -20,6 +20,7 @@
 //! goes, it turns dormant and the context is released. Aeri keeps running
 //! with no windows, like other Mac browsers.
 
+mod spaces;
 mod windows;
 
 use std::cell::RefCell;
@@ -32,9 +33,10 @@ use std::time::Instant;
 use aeri_cef::{
     DevTools, Extension, ExtensionsWatch, ProfileContext, Runtime, RuntimeConfig, Shortcut, Signal,
 };
-use aeri_core::ids::{ProfileId, TabId};
+use aeri_core::ids::{ProfileId, SpaceId, TabId};
 use aeri_core::profile_db::ProfileDb;
 use aeri_core::store::{ACCENTS, AppDb, Profile};
+use aeri_core::workspace::TabList;
 use anyhow::{Context as _, Result};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
@@ -43,11 +45,14 @@ use gpui::{
     WindowOptions, actions, px, size,
 };
 
-use self::windows::{AeriWindow, Place, TabStart, WindowSeed};
+pub use self::spaces::SPACE_ICONS;
+use self::spaces::{Parked, SpaceInfo};
+use self::windows::{AeriWindow, Place, TabEntry, TabStart};
 use crate::address_bar;
 use crate::mac;
 use crate::native_menu::{Align, Entry};
 use crate::profile_manager::{self, ProfileManager};
+use crate::space_editor::SpaceEditor;
 use crate::text_input;
 
 /// Neutral default search provider (stage 1, open question 1).
@@ -144,6 +149,43 @@ pub enum AppMsg {
         new: bool,
     },
     ProfileManagerClosed,
+    /// The sidebar's space header was clicked at (`x`, `y`) in the window.
+    SpaceMenu {
+        window: u64,
+        x: f32,
+        y: f32,
+    },
+    SwitchSpace {
+        window: u64,
+        space: SpaceId,
+    },
+    /// Open the space editor: on `space`, or for a new space.
+    EditSpace {
+        window: u64,
+        space: Option<SpaceId>,
+    },
+    /// From the space editor. A new space (`space: None`) is shown in
+    /// `window` once made.
+    SaveSpace {
+        profile: ProfileId,
+        space: Option<SpaceId>,
+        name: String,
+        colour: u32,
+        icon: String,
+        window: Option<u64>,
+    },
+    /// Delete a space; `confirmed` once the Person agreed (asked only if the
+    /// space has tabs).
+    DeleteSpace {
+        window: u64,
+        space: SpaceId,
+        confirmed: bool,
+    },
+    SpaceEditorClosed,
+    /// A window's frame became key.
+    WindowKey {
+        window: u64,
+    },
     /// The Dock icon was clicked.
     Reopen,
     Quit,
@@ -165,8 +207,14 @@ pub enum TabCommand {
     CloseOthers,
     Duplicate,
     TogglePin,
-    /// Drag and drop: move to this position in the window's tab list.
-    MoveTo(usize),
+    ToggleFavourite,
+    MoveToSpace(SpaceId),
+    /// Drag and drop: move to this position among the favourites or the
+    /// space's tabs, (un)favouriting it if it came from the other list.
+    MoveTo {
+        index: usize,
+        favourite: bool,
+    },
 }
 
 pub struct Config {
@@ -193,9 +241,10 @@ type Effect = Box<dyn FnOnce(&mut Shell)>;
 
 /// What to open once a profile is ready.
 enum Plan {
-    /// Its saved session (a new tab if there is none).
+    /// Its saved windows (one window on its first space if none).
     Restore,
-    /// One window on this address.
+    /// A window on this address: a new tab in the first space no window
+    /// shows.
     Url(String),
 }
 
@@ -212,6 +261,14 @@ struct OpenProfile {
     extensions: Vec<Extension>,
     _extensions_watch: Option<ExtensionsWatch>,
     opened_at: Instant,
+    /// The profile's spaces, in the Person's order.
+    spaces: Vec<SpaceInfo>,
+    /// The tabs of spaces no window shows.
+    parked: HashMap<SpaceId, Parked>,
+    /// Shown at the top of every space; one page each.
+    favourites: TabList<TabEntry>,
+    /// The window whose frame holds each live favourite's page.
+    favourite_home: HashMap<TabId, u64>,
 }
 
 struct Shell {
@@ -230,6 +287,7 @@ struct Shell {
     windows: Vec<AeriWindow>,
     next_window: u64,
     manager: Option<WindowHandle<ProfileManager>>,
+    space_editor: Option<WindowHandle<SpaceEditor>>,
     tx: UnboundedSender<AppMsg>,
     quitting: bool,
     effects: RefCell<Vec<Effect>>,
@@ -329,6 +387,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         windows: Vec::new(),
         next_window: 1,
         manager: None,
+        space_editor: None,
         tx,
         quitting: false,
         effects: RefCell::default(),
@@ -513,6 +572,24 @@ impl Shell {
             AppMsg::DeleteProfile { profile } => self.delete_profile(profile, cx),
             AppMsg::ShowProfiles { new } => self.show_profile_manager(new, cx),
             AppMsg::ProfileManagerClosed => self.manager = None,
+            AppMsg::SpaceMenu { window, x, y } => self.space_menu(window, x, y, cx),
+            AppMsg::SwitchSpace { window, space } => self.switch_space(window, space, cx),
+            AppMsg::EditSpace { window, space } => self.show_space_editor(window, space, cx),
+            AppMsg::SaveSpace {
+                profile,
+                space,
+                name,
+                colour,
+                icon,
+                window,
+            } => self.save_space(profile, space, name, colour, icon, window, cx),
+            AppMsg::DeleteSpace {
+                window,
+                space,
+                confirmed,
+            } => self.delete_space(window, space, confirmed, cx),
+            AppMsg::SpaceEditorClosed => self.space_editor = None,
+            AppMsg::WindowKey { window } => self.window_key(window, cx),
             AppMsg::Reopen => {
                 if self.windows.is_empty() && !self.quitting {
                     match self.db.launch_profile() {
@@ -576,6 +653,10 @@ impl Shell {
                         extensions: Vec::new(),
                         _extensions_watch: None,
                         opened_at: Instant::now(),
+                        spaces: Vec::new(),
+                        parked: HashMap::new(),
+                        favourites: TabList::default(),
+                        favourite_home: HashMap::new(),
                     },
                 );
             }
@@ -586,27 +667,8 @@ impl Shell {
     /// Opens a ready profile's window(s) for `plan`.
     fn open_planned(&mut self, profile: ProfileId, plan: Plan, cx: &mut App) {
         match plan {
-            Plan::Url(url) => self.open_window(profile, WindowSeed::url(&url), cx),
-            Plan::Restore => {
-                let session = self
-                    .open
-                    .get(&profile)
-                    .and_then(|open| open.db.as_ref())
-                    .map(|db| db.session())
-                    .transpose()
-                    .inspect_err(|err| tracing::warn!(%err, %profile, "could not read the session"))
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
-                if session.is_empty() {
-                    self.open_window(profile, WindowSeed::url(NEW_TAB_URL), cx);
-                    return;
-                }
-                tracing::info!(%profile, windows = session.len(), "restoring session");
-                for saved in session {
-                    self.open_window(profile, saved.into(), cx);
-                }
-            }
+            Plan::Url(url) => self.open_url_window(profile, url, cx),
+            Plan::Restore => self.restore_windows(profile, cx),
         }
     }
 
@@ -620,6 +682,10 @@ impl Shell {
             let _ = tx.unbounded_send(AppMsg::ExtensionsChanged { profile });
         });
         open.extensions = open.context.extensions();
+        self.load_workspace(profile);
+        let Some(open) = self.open.get_mut(&profile) else {
+            return;
+        };
         tracing::info!(
             %profile,
             ms = open.opened_at.elapsed().as_millis() as u64,
@@ -881,10 +947,8 @@ impl Shell {
     /// toolbar button would; its popup opens at the page's top right.
     fn extension_action(&mut self, window_id: u64, extension: String, cx: &mut App) {
         self.hide_bar(window_id, cx);
-        let (Some(devtools), Some(page)) = (
-            self.devtools.clone(),
-            self.window(window_id).and_then(AeriWindow::active_cef),
-        ) else {
+        let (Some(devtools), Some(page)) = (self.devtools.clone(), self.shown_cef(window_id))
+        else {
             tracing::warn!(extension, "extension actions are unavailable");
             return;
         };

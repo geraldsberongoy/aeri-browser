@@ -243,6 +243,7 @@ wrap_life_span_handler! {
 /// `windows_key_code` values (Windows virtual-key codes, used on every OS).
 const VK_TAB: i32 = 0x09;
 const VK_L: i32 = 0x4C;
+const VK_N: i32 = 0x4E;
 const VK_Q: i32 = 0x51;
 const VK_T: i32 = 0x54;
 const VK_W: i32 = 0x57;
@@ -250,20 +251,24 @@ const VK_F: i32 = 0x46;
 const VK_S: i32 = 0x53;
 const VK_1: i32 = 0x31;
 const VK_9: i32 = 0x39;
+const VK_LEFT: i32 = 0x25;
+const VK_RIGHT: i32 = 0x27;
 
 const COMMAND: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0;
 const CONTROL: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0;
 const SHIFT: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_SHIFT_DOWN.0;
+const OPTION: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0;
 
 /// Maps a key press in a page to a browser shortcut, if it is one.
 fn shortcut_for(event: &KeyEvent) -> Option<Shortcut> {
     if event.type_ != KeyEventType::RAWKEYDOWN {
         return None;
     }
-    let modifiers = event.modifiers & (COMMAND | CONTROL | SHIFT);
+    let modifiers = event.modifiers & (COMMAND | CONTROL | SHIFT | OPTION);
     match (event.windows_key_code, modifiers) {
         (VK_L, m) if m == COMMAND => Some(Shortcut::FocusAddressBar),
         (VK_T, m) if m == COMMAND => Some(Shortcut::NewTab),
+        (VK_N, m) if m == COMMAND => Some(Shortcut::NewWindow),
         (VK_T, m) if m == COMMAND | SHIFT => Some(Shortcut::ReopenClosedTab),
         (VK_S, m) if m == COMMAND => Some(Shortcut::ToggleSidebar),
         (code @ VK_1..=VK_9, m) if m == COMMAND => {
@@ -274,6 +279,8 @@ fn shortcut_for(event: &KeyEvent) -> Option<Shortcut> {
         (VK_TAB, m) if m == CONTROL => Some(Shortcut::NextTab),
         (VK_TAB, m) if m == CONTROL | SHIFT => Some(Shortcut::PreviousTab),
         (VK_F, m) if m == COMMAND | CONTROL => Some(Shortcut::ToggleFullScreen),
+        (VK_LEFT, m) if m == COMMAND | OPTION => Some(Shortcut::PreviousSpace),
+        (VK_RIGHT, m) if m == COMMAND | OPTION => Some(Shortcut::NextSpace),
         _ => None,
     }
 }

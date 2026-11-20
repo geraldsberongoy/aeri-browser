@@ -110,7 +110,7 @@ pub fn run() -> Result<()> {
                 "{}: history {history:?}",
                 db.display()
             );
-            let session = sqlite(db, "SELECT url FROM tabs")?;
+            let session = sqlite(db, "SELECT url FROM space_tabs")?;
             ensure!(
                 session.lines().any(|u| u.starts_with(&site.origin)),
                 "{}: session {session:?}",
