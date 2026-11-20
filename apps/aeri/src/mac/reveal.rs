@@ -32,7 +32,7 @@ use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, N
 use super::frame::{Frame, pinned_side_width};
 use crate::window_frame::STRIP_HEIGHT;
 use aeri_core::appearance::Motion;
-use aeri_core::layout::{Layout, Side};
+use aeri_core::layout::{Layout, Side, TabPlace};
 
 /// Width of the side edge lane (Search `Fold.edge`), and of the top one.
 const EDGE: f64 = 6.0;
@@ -388,10 +388,13 @@ impl Frame {
 }
 
 /// Whether the chrome at `edge` slides in under this layout: it is not
-/// pinned, or it is a rail that opens into the sidebar.
+/// pinned, or it is a rail that opens into the sidebar. As in Search, a
+/// strip only exists for tabs along the top: with tabs in the sidebar, the
+/// sidebar's band carries the lights and history, and nothing comes down
+/// from the top edge.
 fn slides(layout: &Layout, edge: Edge) -> bool {
     match edge {
         Edge::Side => !layout.sidebar_pinned || (layout.rail && layout.rail_expands),
-        Edge::Top => !layout.top_pinned,
+        Edge::Top => !layout.top_pinned && layout.tabs == TabPlace::Top,
     }
 }

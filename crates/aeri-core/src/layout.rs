@@ -46,6 +46,16 @@ pub enum BarPlace {
     Upper,
 }
 
+/// What a tab wears beside its title and on a pinned square (Search
+/// Settings › Appearance › Tabs show).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Glyph {
+    #[default]
+    Letters,
+    Icons,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Layout {
@@ -65,6 +75,40 @@ pub struct Layout {
     pub bar: BarPlace,
     /// The window's close, minimise and zoom buttons.
     pub window_buttons: bool,
+    // Search's Settings › Appearance and Tabs (`Prefs.swift` keys in the
+    // comments).
+    /// The page as a card beside the sidebar (`layout.cards`); off, edge
+    /// to edge with a hairline.
+    pub cards: bool,
+    /// The card stays in full screen (`layout.cardsFullScreen`).
+    pub cards_full_screen: bool,
+    /// The sidebar slides in and out eased, not on the springs
+    /// (`sidebar.slides`).
+    pub slides: bool,
+    /// ⌘S makes the sidebar an icon column instead of hiding it
+    /// (`sidebar.foldIcons`).
+    pub fold_icons: bool,
+    /// Back, forward and reload beside the window buttons, top tabs only
+    /// (`toolbar.left`).
+    pub nav_left: bool,
+    /// A shorter strip, 36 pt (`tabs.compact`).
+    pub compact_strip: bool,
+    /// Taller rows (36) and larger titles (14) in the sidebar
+    /// (`sidebar.roomy`).
+    pub roomy: bool,
+    pub glyph: Glyph,
+    /// Tab titles in ink, not soft grey (`tabs.highContrast`).
+    pub high_contrast: bool,
+    /// The shown tab says its site, not its title; the title comes back
+    /// under the pointer (`tabs.address`).
+    pub address_on_tab: bool,
+    /// Numbers on the first nine tabs while ⌘ is held (`tabs.shortcuts`).
+    pub tab_numbers: bool,
+    /// Everything happens at once (`motion.instant`).
+    pub reduce_animations: bool,
+    /// Springs become a short ease-out in Low Power Mode or when the Mac
+    /// runs hot (`motion.light`).
+    pub light_motion: bool,
 }
 
 impl Default for Layout {
@@ -82,6 +126,19 @@ impl Default for Layout {
             favourites: FavouriteStyle::Grid,
             bar: BarPlace::Centre,
             window_buttons: true,
+            cards: true,
+            cards_full_screen: false,
+            slides: false,
+            fold_icons: false,
+            nav_left: false,
+            compact_strip: false,
+            roomy: false,
+            glyph: Glyph::Letters,
+            high_contrast: false,
+            address_on_tab: true,
+            tab_numbers: false,
+            reduce_animations: false,
+            light_motion: false,
         }
     }
 }

@@ -229,17 +229,6 @@ impl Shell {
                     self.apply_layout_everywhere(cx);
                 }
             }
-            ChromeMsg::Close { window } => self.close_window(window, cx),
-            ChromeMsg::Minimise { window } => {
-                if let Some(frame) = self.window(window).map(|w| w.frame.clone()) {
-                    self.later(move |_| frame.minimise());
-                }
-            }
-            ChromeMsg::Zoom { window } => {
-                if let Some(frame) = self.window(window).map(|w| w.frame.clone()) {
-                    self.later(move |_| frame.toggle_fullscreen());
-                }
-            }
         }
     }
 

@@ -37,11 +37,6 @@ pub const RAIL_WIDTH: f64 = 84.0;
 /// (`Lights.swift`); AppKit's button is about 14 x 14, so its origin is the
 /// centre less 7. The integrator checks this against a screenshot.
 pub const TRAFFIC_LIGHTS: gpui::Point<Pixels> = point(px(19.), px(19.));
-/// A traffic light's disc and the distance between two (Search: lights span
-/// x 19..79, `Design.swift` `lights`); Aeri's own lights, drawn where the
-/// real ones are under the page, sit exactly there.
-const LIGHT: f32 = 14.;
-const LIGHT_PITCH: f32 = 23.;
 /// Where the strip's controls start after the three lights (Search
 /// `sideLights` 80 inside a 10 pt padding).
 const CONTROLS_LEFT: f32 = 90.;
@@ -306,31 +301,15 @@ impl WindowFrame {
         }
     }
 
-    /// The window's profile: its avatar and name. A click opens the profile
-    /// menu under it.
-    fn profile_badge(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The window's profile: its avatar as a door (the sidebar's foot has
+    /// the same). A click opens the profile menu under it.
+    fn profile_door(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let t = theme::tokens_in(self.window_id, cx);
-        div()
-            .id("profile")
-            .role(gpui::Role::Button)
-            .aria_label(SharedString::from(format!(
-                "Profile, {}",
-                self.profile.name
-            )))
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(7.))
-            .h(px(28.))
-            .max_w(px(220.))
-            .pl(px(4.))
-            .pr(px(10.))
-            .rounded(px(8.))
-            .hover(move |style| style.bg(theme::c(t.hover)))
-            .active(move |style| style.bg(theme::c(t.pressed)))
+        doors::door("profile", "Profile", t)
+            .child(avatar(&self.profile, 18.))
             .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
-                // The menu hangs from the badge, right edges aligned.
+                // The menu hangs from the door, right edges aligned.
                 let _ = this.tx.unbounded_send(AppMsg::ProfileMenu {
                     window,
                     x: f32::from(win.viewport_size().width) - PAGE_EDGE,
@@ -338,17 +317,6 @@ impl WindowFrame {
                     align: Align::Right,
                 });
             }))
-            .child(avatar(&self.profile, 20.))
-            .child(
-                div()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_size(px(13.))
-                    .text_color(theme::c(t.text_secondary))
-                    .child(SharedString::from(self.profile.name.clone())),
-            )
     }
 
     fn send(&self, msg: AppMsg) {

@@ -58,8 +58,13 @@ naming the Search file they come from.
 | Lights centred at (26, 26), history doors from x 90, letter rows from y 52, foot at H−36 | Observed | screenshot of a fresh window (dark): close disc centre (26, 26), back chevron box 90–116, first row 52–80, foot doors along the bottom |
 | Pin squares follow Search's grid maths | Tested | `plan` tests at 232 wide |
 | Glide, settle, fold springs and the centred field on screen | Not observed | the owner was using the Mac; scripted input stopped when Aeri lost the front |
+| Native window buttons stand where the page covers the frame's own (sliding sidebar, strip, a right-hand sidebar), at the same centres | Observed | right-hand sidebar, fresh profile: AppKit's three discs drawn in the band beside the history doors (window capture) |
+| The top strip no longer comes down from the top edge unless tabs run along the top | Implemented | `reveal::slides`; not driven live |
 
 ## Residual risks
 
 - GPUI cannot scale a view: rows arrive by growing in height and fading,
   not by Search's 0.94 scale.
+- Window buttons, the frame's own as well as the standalone ones, drew
+  grey in every window capture, even with Aeri in front; the key-state
+  hook (`mac/lights.rs`) is in, but coloured buttons were not seen.

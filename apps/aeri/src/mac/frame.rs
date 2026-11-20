@@ -30,17 +30,19 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
-    NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSColor, NSWindow,
-    NSWindowButton, NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSApplication,
+    NSApplicationDidBecomeActiveNotification, NSApplicationDidResignActiveNotification, NSColor,
+    NSWindow, NSWindowButton, NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
     NSWindowDidBecomeMainNotification, NSWindowDidEnterFullScreenNotification,
-    NSWindowDidExitFullScreenNotification, NSWindowDidResizeNotification, NSWindowOrderingMode,
-    NSWindowStyleMask,
+    NSWindowDidExitFullScreenNotification, NSWindowDidResignKeyNotification,
+    NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
 };
 
 use super::fold::Fold;
+use super::lights::Lights;
 use super::reveal::{self, Reveal};
 use super::window_of;
 use crate::native_menu;
@@ -73,6 +75,9 @@ pub struct Frame {
     bar: RefCell<Option<Retained<NSWindow>>>,
     /// The sidebar and the strip as they slide in, by [`Edge`] index.
     pub(super) overlays: RefCell<Option<[Retained<NSWindow>; 2]>>,
+    /// The native window buttons over the chrome: side overlay, strip
+    /// overlay, frame (see [`super::lights`]).
+    pub(super) lights: RefCell<Option<[Lights; 3]>>,
     pub(super) tabs: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
     active: Cell<Option<TabId>>,
     /// The tab window currently ordered in, which can lag `active` until the
@@ -103,6 +108,7 @@ impl Frame {
             bar_visible: Cell::new(false),
             layout: Cell::new(Layout::default()),
             motion: Cell::new(Motion::default()),
+            lights: RefCell::default(),
             overlays: RefCell::default(),
             reveal: Reveal::default(),
             fold: Fold::default(),
@@ -141,6 +147,7 @@ impl Frame {
             child.setIgnoresMouseEvents(true);
             share_parent_key_state(child);
         }
+        self.make_lights(&frame, &side, &strip);
         *self.frame.borrow_mut() = Some(frame.clone());
         *self.bar.borrow_mut() = Some(bar);
         *self.overlays.borrow_mut() = Some([side, strip]);
@@ -182,6 +189,7 @@ impl Frame {
                         this.forward_key();
                     }
                     if activated {
+                        this.redraw_lights();
                         let _ = this.tx.unbounded_send(AppMsg::WindowKey {
                             window: this.window_id,
                         });
@@ -190,6 +198,27 @@ impl Frame {
                 tokens.push(center.addObserverForName_object_queue_usingBlock(
                     Some(name),
                     Some(frame),
+                    None,
+                    &block,
+                ));
+            }
+            // The window buttons' colour follows the app's and any of the
+            // window's family's key state.
+            for name in [
+                NSApplicationDidBecomeActiveNotification,
+                NSApplicationDidResignActiveNotification,
+                NSWindowDidBecomeKeyNotification,
+                NSWindowDidResignKeyNotification,
+            ] {
+                let this = Rc::downgrade(self);
+                let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+                    if let Some(this) = this.upgrade() {
+                        this.redraw_lights();
+                    }
+                });
+                tokens.push(center.addObserverForName_object_queue_usingBlock(
+                    Some(name),
+                    None,
                     None,
                     &block,
                 ));
@@ -314,6 +343,7 @@ impl Frame {
             );
         }
         self.replace_side();
+        self.place_lights(&frame);
         if let Some(bar) = self.bar.borrow().as_ref() {
             // Over the page, so the scrim dims the page and not the sidebar;
             // the view places the field and the list within it.
@@ -399,12 +429,6 @@ impl Frame {
         }
     }
 
-    pub fn minimise(&self) {
-        if let Some(frame) = self.frame.borrow().as_ref() {
-            frame.miniaturize(None);
-        }
-    }
-
     /// Forgets a tab window that is closing.
     pub fn remove_tab(&self, tab: TabId) {
         let removed = {
@@ -469,6 +493,7 @@ impl Frame {
             // SAFETY: removing our own observer tokens on the main thread.
             unsafe { center.removeObserver(token.as_ref()) };
         }
+        self.remove_lights();
     }
 }
 

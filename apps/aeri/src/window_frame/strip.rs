@@ -2,12 +2,10 @@
 //! lights the strip and the sidebar's band share.
 
 use aeri_core::layout::TabPlace;
-use gpui::{ClickEvent, Context, MouseButton, div, prelude::*, px, rgb};
+use gpui::{ClickEvent, Context, div, prelude::*, px};
 
-use super::{
-    COLUMN_PAD, CONTROLS_LEFT, Host, LIGHT, LIGHT_PITCH, PAGE_EDGE, STRIP_HEIGHT, TRAFFIC_LIGHTS,
-    WindowFrame, drag,
-};
+use super::doors::symbol_door;
+use super::{COLUMN_PAD, CONTROLS_LEFT, Host, PAGE_EDGE, STRIP_HEIGHT, WindowFrame, drag};
 use crate::mac::Edge;
 use crate::shell::{AppMsg, ChromeMsg};
 use crate::theme;
@@ -17,8 +15,8 @@ impl WindowFrame {
     /// history doors, the trust notices and the profile. Its empty parts
     /// move the window; a double-click zooms (or minimises, per System
     /// Settings). The doors sit between them, so a press on one is never a
-    /// drag. In an overlay, Aeri draws the window buttons (the real ones
-    /// are under the page).
+    /// drag. In an overlay, `mac::Frame` puts native window buttons over
+    /// the lights' room (the real ones are under the page).
     pub fn strip(&self, host: Host, cx: &mut Context<Self>) -> gpui::Div {
         let room = if self.lights_hidden() {
             COLUMN_PAD
@@ -31,7 +29,7 @@ impl WindowFrame {
             .w_full()
             .items_center()
             .h(px(STRIP_HEIGHT as f32))
-            .child(self.lights(host == Host::Overlay, host, room, 0., cx))
+            .child(self.lights(host, room))
             .child(self.helm(cx))
             .when(self.layout.tabs == TabPlace::Top, |strip| {
                 strip
@@ -66,10 +64,17 @@ impl WindowFrame {
                 ))
             });
         strip
-            .when(host == Host::Overlay, |strip| {
-                strip.child(self.pin_button(Edge::Top, host, cx))
-            })
-            .child(self.profile_badge(cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(2.))
+                    .when(host == Host::Overlay, |doors| {
+                        doors.child(self.pin_button(Edge::Top, host, cx))
+                    })
+                    .child(self.profile_door(cx)),
+            )
             .child(drag(host).w(px(PAGE_EDGE)))
     }
 
@@ -79,59 +84,11 @@ impl WindowFrame {
     }
 
     /// The traffic lights' room, `room` points wide, at the chrome's top
-    /// left, which is `origin` points from the window's left: AppKit's are
-    /// there, or with `proxy` Aeri's own (in an overlay, or in a right
-    /// sidebar's band, where AppKit's are under the page) are drawn on the
-    /// same spots.
-    pub(super) fn lights(
-        &self,
-        proxy: bool,
-        host: Host,
-        room: f32,
-        origin: f32,
-        cx: &mut Context<Self>,
-    ) -> gpui::Div {
-        let lights = drag(host).relative().flex_none().w(px(room));
-        if !proxy || self.lights_hidden() {
-            return lights;
-        }
-        let id = self.window_id;
-        let light =
-            |name: &'static str, label: &'static str, colour: u32, msg: fn(u64) -> ChromeMsg| {
-                div()
-                    .id(name)
-                    .role(gpui::Role::Button)
-                    .aria_label(label)
-                    .size(px(LIGHT))
-                    .rounded_full()
-                    .bg(rgb(colour))
-                    .border_1()
-                    .border_color(gpui::rgba(0x0000_0026))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                        this.send(AppMsg::Chrome(msg(id)));
-                    }))
-            };
-        let top = (STRIP_HEIGHT as f32 - LIGHT) / 2.;
-        // AppKit's own colours: they mean the same in every theme.
-        lights.child(
-            div()
-                .absolute()
-                .top(px(top))
-                .left(px(f32::from(TRAFFIC_LIGHTS.x) - origin))
-                .flex()
-                .items_center()
-                .gap(px(LIGHT_PITCH - LIGHT))
-                .child(light("close", "Close Window", 0xff5f57, |window| {
-                    ChromeMsg::Close { window }
-                }))
-                .child(light("minimise", "Minimise", 0xfebc2e, |window| {
-                    ChromeMsg::Minimise { window }
-                }))
-                .child(light("zoom", "Zoom", 0x28c840, |window| ChromeMsg::Zoom {
-                    window,
-                })),
-        )
+    /// left: AppKit's are there, or (in an overlay, or in a right sidebar's
+    /// band, where AppKit's are under the page) `mac::Frame` puts native
+    /// ones over this room. The room moves the window.
+    pub(super) fn lights(&self, host: Host, room: f32) -> gpui::Div {
+        drag(host).relative().flex_none().w(px(room))
     }
 
     /// Keeps the strip beside the page (in an overlay), or lets it slide
@@ -142,23 +99,13 @@ impl WindowFrame {
         let pinned = host == Host::Frame;
         // Full screen pins nothing; the button would do nothing there.
         let hidden = self.fullscreen;
-        div()
-            .id(match edge {
-                Edge::Side => "pin-sidebar",
-                Edge::Top => "pin-strip",
-            })
-            .role(gpui::Role::Button)
-            .aria_label(if pinned { "Auto-hide" } else { "Pin" })
-            .flex()
-            .flex_none()
-            .items_center()
-            .h(px(24.))
-            .px(px(8.))
-            .rounded(px(6.))
-            .text_size(px(12.))
-            .text_color(theme::c(t.text_secondary))
-            .hover(move |style| style.bg(theme::c(t.hover)))
-            .active(move |style| style.bg(theme::c(t.pressed)))
+        let (id, label, symbol) = match (edge, pinned) {
+            (Edge::Side, false) => ("pin-sidebar", "Pin", "pin"),
+            (Edge::Side, true) => ("pin-sidebar", "Auto-hide", "pin.slash"),
+            (Edge::Top, false) => ("pin-strip", "Pin", "pin"),
+            (Edge::Top, true) => ("pin-strip", "Auto-hide", "pin.slash"),
+        };
+        symbol_door(id, label, symbol, true, t)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                 this.send(AppMsg::Chrome(ChromeMsg::Pin {
                     edge,
@@ -166,7 +113,6 @@ impl WindowFrame {
                 }));
             }))
             .when(hidden, |button| button.invisible())
-            .child(if pinned { "Auto-hide" } else { "Pin" })
     }
 }
 

@@ -42,7 +42,6 @@ impl WindowFrame {
     /// column's inner edge drags to resize and a double-click on it resets.
     pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let width = self.sidebar_width();
-        let right = self.layout.side == Side::Right;
         // Search: `lights = fullScreen ? 0 : max(0, min(80, width - 20 - 86))`.
         let room = if self.lights_hidden() {
             0.
@@ -58,8 +57,8 @@ impl WindowFrame {
                 .h(px(STRIP_HEIGHT as f32))
                 .child(drag(host).w(px(COLUMN_PAD)))
                 // Where AppKit's lights are under the page (a right column,
-                // an overlay), Aeri draws its own.
-                .child(self.lights(host == Host::Overlay || right, host, room, COLUMN_PAD, cx))
+                // an overlay), the native ones come over this room.
+                .child(self.lights(host, room))
                 .child(self.helm(cx))
                 .child(drag(host).flex_1())
         });
@@ -312,9 +311,8 @@ impl WindowFrame {
             .pb(px(COLUMN_PAD))
             .overflow_y_scroll()
             .when(!self.layout.top_pinned, |rail| {
-                let right = self.layout.side == Side::Right;
                 rail.child(
-                    self.lights(right, Host::Frame, RAIL_WIDTH as f32, 0., cx)
+                    self.lights(Host::Frame, RAIL_WIDTH as f32)
                         .h(px(STRIP_HEIGHT as f32)),
                 )
             })

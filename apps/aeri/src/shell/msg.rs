@@ -224,25 +224,9 @@ pub enum AppMsg {
 #[derive(Clone, Copy, Debug)]
 pub enum ChromeMsg {
     /// Keep the chrome at `edge` beside the page, or let it slide in.
-    Pin {
-        edge: Edge,
-        pinned: bool,
-    },
-    /// Aeri's own window buttons, drawn while the strip slides in.
-    Close {
-        window: u64,
-    },
-    Minimise {
-        window: u64,
-    },
-    Zoom {
-        window: u64,
-    },
+    Pin { edge: Edge, pinned: bool },
     /// The sidebar's edge was dragged to `width`; `done` when let go.
-    Width {
-        width: u16,
-        done: bool,
-    },
+    Width { width: u16, done: bool },
 }
 
 /// The theme editor window (Phase 12). Every change is previewed live in

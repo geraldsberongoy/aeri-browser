@@ -9,6 +9,7 @@
 mod appearance;
 mod fold;
 mod frame;
+mod lights;
 mod pressure;
 mod reveal;
 pub mod symbols;
