@@ -73,7 +73,7 @@
 | 5 | done (export written but not driven live: the save panel run was stopped when keystrokes reached another app) |
 | 6 | done (toolbar slots stay fixed: the strip's few buttons did not earn an editor) |
 | 7 | done (the space editor's emoji field was not driven live; the window was covered by another app) |
-| 8 | pending |
+| 8 | done (VoiceOver itself was not run; see residual risks) |
 
 ## Evidence ledger
 
@@ -115,6 +115,9 @@
 | A rebound key works inside a page | Observed | after New Tab = ⌘K, ⌘K in the page opened an `about:blank` tab (CDP target list) |
 | A tab's own name and icon survive saving, reopening a closed tab and migration | Tested | `profile_db` round trips with named, iconed pinned tabs (workspace and closed tabs); migration 9 |
 | Rename Tab… names a tab and gives it an icon; the sidebar shows both; profile.db keeps them | Observed | tab menu → Rename Tab…, "Docs" + ♥: `tab look changed named=true icon=true`; sidebar row "♥ Docs"; `space_tabs` row `Target|Docs|♥` |
+| Chrome slides in 0.18 s with a 14 pt travel (Standard), fades in 0.12 s (Subtle), appears at once (Off); Reduce Motion turns it off | Tested + Observed | `tokens` test: Reduce Motion resolves motion to Off; NSAnimationContext path in `mac/reveal.rs`; `chrome slides` logs with the overlay shown and hidden |
+| No idle cost from the chrome | Observed | `top` on Aeri's main process, static page, 6 samples 2 s apart: chrome pinned 0.2–1.6 % (mean 0.6), chrome hidden 0.3–1.4 % (mean 0.7); textured, see-through theme on |
+| Phase 12 controls carry accessibility roles and names | Observed (partial) | tabs (Tab, title, selected, Pinned/Favourite/Playing audio), window buttons, Copy Link, sidebar splitter, space tabs, Settings rows and shortcut buttons, theme editor radios, swatches and steppers, tab editor chips; GPUI logged `Accessibility activated` for each window when an AX client asked; System Events listed no elements |
 
 ## Residual risks
 
@@ -126,3 +129,8 @@
   Window menu still has it.
 - With nothing pinned the page reaches the window edge, so the inner few
   points of the edge resize from outside the window only.
+- VoiceOver has not been run over the Phase 12 windows: GPUI's AccessKit
+  adapter activated for each window, but System Events' element listing
+  came back empty, so the names are unverified end to end.
+- Tab rows on a gradient or see-through theme show a faint selection; the
+  selected token is mixed with the sidebar tint, not the backdrop under it.

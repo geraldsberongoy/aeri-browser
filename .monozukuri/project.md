@@ -90,7 +90,16 @@ shell rests through the put-away path on a minute check and a libdispatch
 memory-pressure source; a Resources window reads CEF's task manager (held
 only while open; cef-rs's `task_info` drops its out-param, so it is called
 raw). Evidence: `.monozukuri/specifications/phase-11-resource-stewardship.md`.
-Next: Phase 12 (appearance and customisation).
+Phase 12 (appearance and customisation) is built from the GPT-6.2 Sol design
+(`docs/design/phase-12-appearance.md`): `aeri-core::appearance` (OKLCH,
+contrast-kept tokens, recipes and `.aeritheme` files, harmonies, library),
+`aeri-core::layout`, `aeri-core::keymap` (one map for pages and Aeri's
+windows); page-first chrome in transparent overlay windows with an
+app-local edge monitor; scoped themes (space over profile over app,
+`profile.db` migrations 8–9 also keep tab names and icons); theme editor,
+Settings and tab editor windows; see-through window via GPUI's blurred
+background. Evidence: `.monozukuri/specifications/phase-12-appearance-and-customisation.md`.
+Next: Phase 13 (benchmarks and optimisation).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

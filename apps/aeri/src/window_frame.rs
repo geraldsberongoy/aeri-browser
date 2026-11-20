@@ -240,6 +240,8 @@ impl WindowFrame {
         let t = theme::tokens_in(self.window_id, cx);
         div()
             .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(SharedString::from(label.clone()))
             .flex()
             .flex_none()
             .items_center()
@@ -283,6 +285,12 @@ impl WindowFrame {
         let t = theme::tokens_in(self.window_id, cx);
         div()
             .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(match nav {
+                Nav::Back => "Back",
+                Nav::Forward => "Forward",
+                _ => "Reload",
+            })
             .flex()
             .items_center()
             .justify_center()
@@ -312,6 +320,11 @@ impl WindowFrame {
         let t = theme::tokens_in(self.window_id, cx);
         div()
             .id("profile")
+            .role(gpui::Role::Button)
+            .aria_label(SharedString::from(format!(
+                "Profile, {}",
+                self.profile.name
+            )))
             .flex()
             .flex_none()
             .items_center()
@@ -424,32 +437,37 @@ impl WindowFrame {
             return lights;
         }
         let id = self.window_id;
-        let light = |name: &'static str, colour: u32, msg: fn(u64) -> ChromeMsg| {
-            div()
-                .id(name)
-                .size(px(12.))
-                .rounded_full()
-                .bg(rgb(colour))
-                .border_1()
-                .border_color(gpui::rgba(0x0000_0026))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                    this.send(AppMsg::Chrome(msg(id)));
-                }))
-        };
+        let light =
+            |name: &'static str, label: &'static str, colour: u32, msg: fn(u64) -> ChromeMsg| {
+                div()
+                    .id(name)
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .size(px(12.))
+                    .rounded_full()
+                    .bg(rgb(colour))
+                    .border_1()
+                    .border_color(gpui::rgba(0x0000_0026))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                        this.send(AppMsg::Chrome(msg(id)));
+                    }))
+            };
         // AppKit's own colours: they mean the same in every theme.
         lights
             .flex()
             .items_center()
             .gap(px(8.))
             .pl(TRAFFIC_LIGHTS.x)
-            .child(light("close", 0xff5f57, |window| ChromeMsg::Close {
+            .child(light("close", "Close Window", 0xff5f57, |window| {
+                ChromeMsg::Close { window }
+            }))
+            .child(light("minimise", "Minimise", 0xfebc2e, |window| {
+                ChromeMsg::Minimise { window }
+            }))
+            .child(light("zoom", "Zoom", 0x28c840, |window| ChromeMsg::Zoom {
                 window,
             }))
-            .child(light("minimise", 0xfebc2e, |window| ChromeMsg::Minimise {
-                window,
-            }))
-            .child(light("zoom", 0x28c840, |window| ChromeMsg::Zoom { window }))
     }
 
     /// Keeps the chrome at `edge` beside the page (in an overlay), or lets
@@ -469,6 +487,8 @@ impl WindowFrame {
                 Edge::Side => "pin-sidebar",
                 Edge::Top => "pin-strip",
             })
+            .role(gpui::Role::Button)
+            .aria_label(if pinned { "Auto-hide" } else { "Pin" })
             .flex()
             .flex_none()
             .items_center()
@@ -515,6 +535,8 @@ impl WindowFrame {
         lane.child(
             div()
                 .id("top-new-tab")
+                .role(gpui::Role::Button)
+                .aria_label("New Tab")
                 .flex()
                 .flex_none()
                 .items_center()

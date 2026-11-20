@@ -115,8 +115,26 @@ impl WindowFrame {
             tab: id,
             command,
         };
+        let mut notes = Vec::new();
+        if tab.favourite {
+            notes.push("Favourite");
+        } else if tab.pinned {
+            notes.push("Pinned");
+        }
+        if tab.loading {
+            notes.push("Loading");
+        }
+        if tab.audible {
+            notes.push("Playing audio");
+        }
         div()
             .id((key, id.0 as usize))
+            .role(gpui::Role::Tab)
+            .aria_label(SharedString::from(tab.label.clone()))
+            .aria_selected(tab.active)
+            .when(!notes.is_empty(), |el| {
+                el.aria_description(SharedString::from(notes.join(", ")))
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                 this.send(send(TabCommand::Select));
             }))
@@ -215,6 +233,8 @@ impl WindowFrame {
             .child(
                 div()
                     .id(("close", id.0 as usize))
+                    .role(gpui::Role::Button)
+                    .aria_label("Close Tab")
                     .flex()
                     .flex_none()
                     .items_center()

@@ -35,6 +35,13 @@ impl ThemeEditor {
                 let on_it = ix == selected;
                 div()
                     .id((id, ix))
+                    .role(gpui::Role::RadioButton)
+                    .aria_label(SharedString::from(*label))
+                    .aria_toggled(if on_it {
+                        gpui::accesskit::Toggled::True
+                    } else {
+                        gpui::accesskit::Toggled::False
+                    })
                     .h(px(24.))
                     .px(px(10.))
                     .flex()
@@ -78,6 +85,7 @@ impl ThemeEditor {
             .gap(px(8.))
             .child(
                 button((id, 0usize), "-", t, true)
+                    .aria_label(SharedString::from(format!("Decrease {id}")))
                     .on_click(cx.listener(move |this, _, _, cx| on(this, -1, cx))),
             )
             .child(
@@ -90,6 +98,7 @@ impl ThemeEditor {
             )
             .child(
                 button((id, 1usize), "+", t, true)
+                    .aria_label(SharedString::from(format!("Increase {id}")))
                     .on_click(cx.listener(move |this, _, _, cx| on(this, 1, cx))),
             )
     }

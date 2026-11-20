@@ -100,7 +100,9 @@ impl Shell {
             })
         });
         for w in &self.windows {
-            let material = cx.global::<Theme>().resolved_in(w.id).material.is_some();
+            let resolved = cx.global::<Theme>().resolved_in(w.id);
+            w.frame.set_motion(resolved.motion);
+            let material = resolved.material.is_some();
             if material == self.see_through.contains(&w.id) {
                 continue;
             }

@@ -21,6 +21,7 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 
 use aeri_cef::TabObserver;
+use aeri_core::appearance::Motion;
 use aeri_core::ids::TabId;
 use aeri_core::layout::{BarPlace, Layout, Side};
 use block2::RcBlock;
@@ -85,7 +86,10 @@ pub struct Frame {
     /// Suggestion rows under the bar; its window grows downwards to fit.
     bar_rows: Cell<usize>,
     /// Where the chrome sits (Phase 12).
-    layout: Cell<Layout>,
+    pub(super) layout: Cell<Layout>,
+    /// How chrome comes and goes: the theme's motion, off under Reduce
+    /// Motion.
+    pub(super) motion: Cell<Motion>,
     pub(super) reveal: Reveal,
     notifications: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
@@ -103,6 +107,7 @@ impl Frame {
             bar_visible: Cell::new(false),
             bar_rows: Cell::new(0),
             layout: Cell::new(Layout::default()),
+            motion: Cell::new(Motion::default()),
             overlays: RefCell::default(),
             reveal: Reveal::default(),
             notifications: RefCell::default(),
@@ -256,6 +261,11 @@ impl Frame {
             show_window_buttons(frame, layout.window_buttons);
         }
         self.layout();
+    }
+
+    /// Takes the theme's motion for sliding chrome.
+    pub fn set_motion(&self, motion: Motion) {
+        self.motion.set(motion);
     }
 
     fn active_window(&self) -> Option<Retained<NSWindow>> {

@@ -33,8 +33,11 @@ pub fn button(
     enabled: bool,
 ) -> Stateful<Div> {
     let t = *t;
+    let text: SharedString = text.into();
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(text.clone())
         .h(px(26.))
         .px(px(12.))
         .flex()
@@ -48,7 +51,7 @@ pub fn button(
                 .hover(move |s| s.bg(c(t.pressed)))
                 .active(move |s| s.bg(c(t.pressed)))
         })
-        .child(text.into())
+        .child(text)
 }
 
 /// A round colour swatch; the selected one is ringed.
@@ -61,6 +64,8 @@ pub fn swatch(
 ) -> Stateful<Div> {
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(SharedString::from(format!("Colour {}", color.to_hex())))
         .size(px(size))
         .rounded_full()
         .border_2()

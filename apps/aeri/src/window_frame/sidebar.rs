@@ -47,6 +47,8 @@ impl WindowFrame {
             .child(
                 div()
                     .id("new-tab")
+                    .role(gpui::Role::Button)
+                    .aria_label("New Tab")
                     .flex()
                     .flex_none()
                     .items_center()
@@ -134,6 +136,8 @@ impl WindowFrame {
         let handle = (host == Host::Frame).then(|| {
             div()
                 .id("sidebar-resize")
+                .role(gpui::Role::Splitter)
+                .aria_label("Sidebar width")
                 .absolute()
                 .top_0()
                 .bottom_0()
@@ -194,6 +198,8 @@ impl WindowFrame {
             .child(
                 div()
                     .id("rail-new-tab")
+                    .role(gpui::Role::Button)
+                    .aria_label("New Tab")
                     .flex()
                     .flex_none()
                     .items_center()
@@ -251,6 +257,8 @@ impl WindowFrame {
             .child(
                 div()
                     .id("hint-ok")
+                    .role(gpui::Role::Button)
+                    .aria_label("Got It")
                     .flex_none()
                     .self_end()
                     .px(px(8.))
@@ -274,6 +282,12 @@ impl WindowFrame {
         let empty = self.address.is_empty();
         div()
             .id("address")
+            .role(gpui::Role::Button)
+            .aria_label(if empty {
+                SharedString::from("Search or enter address")
+            } else {
+                SharedString::from(format!("Address, {}", self.address))
+            })
             .flex()
             .flex_none()
             .items_center()
@@ -313,6 +327,8 @@ impl WindowFrame {
                 row.child(
                     div()
                         .id("copy-link")
+                        .role(gpui::Role::Button)
+                        .aria_label("Copy Link")
                         .flex_none()
                         .px(px(6.))
                         .py(px(2.))
@@ -339,6 +355,8 @@ impl WindowFrame {
         });
         div()
             .id("space-header")
+            .role(gpui::Role::Button)
+            .aria_label(SharedString::from(format!("Space {name}, open menu")))
             .flex()
             .flex_none()
             .items_center()
@@ -420,6 +438,9 @@ impl WindowFrame {
             };
             row = row.child(
                 chip(("space", id.0 as usize).into())
+                    .role(gpui::Role::Tab)
+                    .aria_label(SharedString::from(space.name.clone()))
+                    .aria_selected(space.current)
                     .when(space.current, |chip| chip.bg(theme::c(t.selected)))
                     .child(
                         div()
@@ -449,6 +470,8 @@ impl WindowFrame {
         }
         row.child(
             chip("new-space".into())
+                .role(gpui::Role::Button)
+                .aria_label("New Space")
                 .text_color(theme::c(t.text_tertiary))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                     this.send(AppMsg::EditSpace {

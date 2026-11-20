@@ -154,6 +154,22 @@ macOS memory pressure rests the longest-unseen tabs first; checking that
 needs root: `sudo memory_pressure -S -l warn` (then `-l normal`). The
 Resources window samples Chromium's task manager only while open.
 
+Appearance (Phase 12): the chrome is page-first. The sidebar and top bar
+are transparent child windows (`chrome_overlay.rs`) that slide in when the
+pointer rests 120 ms in a 4 pt lane at the window's edge (`mac/reveal.rs`,
+an app-local event monitor) or by ⌘S / ⌘L; Pin keeps them beside the page.
+The layout is one JSON value in `app.db` (`layout`); the app theme is
+`app_theme`, the light/dark choice `appearance`, the keymap `keymap` (only
+changes from the defaults). A profile's theme lives in its `profile.db`
+settings (`theme`), a space's in `spaces.theme`; the Person's theme files
+in `<data>/Themes/*.aeritheme`. Views paint only with tokens
+(`theme::tokens_in(window, cx)` for a browser window, `theme::tokens(cx)`
+for others). Settings is ⌘, (also the Aeri menu and the palette); the
+theme editor opens from the palette (Edit Space Theme…, Edit Profile
+Theme…, Edit Theme for All Windows…), the tab editor from the tab menu
+(Rename Tab…). Scripted checks that drive the GUI must confirm Aeri is
+frontmost before every key or click: another app in front receives them.
+
 Running under `lldb` (launch or attach) raises a system "Developer Tools
 Access" dialog and stalls until it is answered. Aeri also needs fds 3 and 4
 free at start for its private DevTools pipe (ADR 0006); if a parent process

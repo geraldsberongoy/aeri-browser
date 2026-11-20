@@ -126,6 +126,9 @@ impl SettingsWindow {
         let on = self.selected == ix;
         div()
             .id(SharedString::from(format!("nav-{ix}")))
+            .role(gpui::Role::Tab)
+            .aria_label(SharedString::from(title.to_owned()))
+            .aria_selected(on)
             .flex_none()
             .px(px(10.))
             .h(px(28.))
@@ -168,6 +171,18 @@ impl SettingsWindow {
             let pick = row.pick.clone();
             out.push(
                 row_base(SharedString::from(format!("row-{ix}-{n}")), &t)
+                    .role(gpui::Role::Button)
+                    .aria_label(SharedString::from(row.title.clone()))
+                    .when(!row.detail.is_empty() || row.hint == "\u{2713}", |d| {
+                        let mut description = row.detail.clone();
+                        if row.hint == "\u{2713}" {
+                            if !description.is_empty() {
+                                description.push_str(", ");
+                            }
+                            description.push_str("selected");
+                        }
+                        d.aria_description(SharedString::from(description))
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -287,6 +302,12 @@ impl SettingsWindow {
             };
             let key_button = div()
                 .id(SharedString::from(format!("key-{n}")))
+                .role(gpui::Role::Button)
+                .aria_label(SharedString::from(format!(
+                    "{} shortcut, {}",
+                    key.title,
+                    if none { "None" } else { key.keys.as_str() }
+                )))
                 .flex_none()
                 .min_w(px(88.))
                 .h(px(24.))
@@ -329,6 +350,7 @@ impl SettingsWindow {
                     .child(key_button)
                     .child(if key.changed {
                         link(SharedString::from(format!("reset-{n}")), "Reset", &t)
+                            .aria_label(SharedString::from(format!("Reset {}", key.title)))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                                 this.send(SettingsMsg::Reset(shortcut))
                             }))
@@ -340,6 +362,7 @@ impl SettingsWindow {
                         div().w(px(40.)).into_any_element()
                     } else {
                         link(SharedString::from(format!("clear-{n}")), "Clear", &t)
+                            .aria_label(SharedString::from(format!("Clear {}", key.title)))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                                 this.send(SettingsMsg::Clear(shortcut))
                             }))
@@ -373,6 +396,8 @@ fn button(id: &'static str, label: &'static str, t: &Tokens) -> Stateful<gpui::D
     let t = *t;
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(label)
         .flex_none()
         .px(px(12.))
         .py(px(3.))
@@ -388,6 +413,8 @@ fn link(id: SharedString, label: &'static str, t: &Tokens) -> Stateful<gpui::Div
     let t = *t;
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(label)
         .flex_none()
         .w(px(40.))
         .text_size(px(12.))

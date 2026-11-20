@@ -16,12 +16,14 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::{
-    NSApplicationDidResignActiveNotification, NSEvent, NSEventMask, NSEventType, NSWindow,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSApplicationDidResignActiveNotification,
+    NSEvent, NSEventMask, NSEventType, NSWindow,
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSTimer};
 
 use super::frame::{Frame, SIDE_OVERLAY_EXTRA, pinned_side_width};
 use crate::window_frame::STRIP_HEIGHT;
+use aeri_core::appearance::Motion;
 use aeri_core::layout::{Layout, Side};
 
 /// Width of the edge lanes, in points.
@@ -30,6 +32,8 @@ const LANE: f64 = 4.0;
 const OPEN_AFTER: f64 = 0.12;
 /// How long after the pointer leaves before the chrome closes.
 const CLOSE_AFTER: f64 = 0.32;
+/// How far chrome travels as it slides in, in points.
+const SLIDE: f64 = 14.0;
 
 /// An edge chrome slides in from; the index of its overlay window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,8 +239,38 @@ impl Frame {
             return;
         };
         tracing::debug!(window = self.window_id, ?edge, shown, "chrome slides");
-        overlay.setAlphaValue(if shown { 1.0 } else { 0.0 });
         overlay.setIgnoresMouseEvents(!shown);
+        let duration = match self.motion.get() {
+            Motion::Off => {
+                overlay.setAlphaValue(if shown { 1.0 } else { 0.0 });
+                return;
+            }
+            Motion::Subtle => 0.12,
+            Motion::Standard => 0.18,
+        };
+        // Standard motion slides in from the edge; leaving only fades, so
+        // the overlay ends where the layout put it.
+        let target = overlay.frame();
+        let slide = shown && self.motion.get() == Motion::Standard;
+        if slide {
+            let mut start = target;
+            match edge {
+                Edge::Side if self.layout.get().side == Side::Right => start.origin.x += SLIDE,
+                Edge::Side => start.origin.x -= SLIDE,
+                Edge::Top => start.origin.y += SLIDE,
+            }
+            overlay.setFrame_display(start, false);
+        }
+        let changes = RcBlock::new(move |context: NonNull<NSAnimationContext>| {
+            // SAFETY: AppKit passes the live context for this group.
+            unsafe { context.as_ref() }.setDuration(duration);
+            let animator = overlay.animator();
+            animator.setAlphaValue(if shown { 1.0 } else { 0.0 });
+            if slide {
+                animator.setFrame_display(target, true);
+            }
+        });
+        NSAnimationContext::runAnimationGroup(&changes);
     }
 
     fn schedule(self: &Rc<Self>, edge: Edge, open: bool) {

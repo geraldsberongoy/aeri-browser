@@ -124,6 +124,8 @@ fn button(id: &'static str, label: &'static str, t: &Tokens) -> gpui::Stateful<g
     let t = *t;
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(label)
         .h(px(28.))
         .px(px(14.))
         .flex()
@@ -177,6 +179,8 @@ impl Render for TabEditor {
                     let selected = current == icon;
                     div()
                         .id(("chip", ix))
+                        .role(gpui::Role::Button)
+                        .aria_label(SharedString::from(format!("Icon {icon}")))
                         .size(px(24.))
                         .flex()
                         .items_center()
