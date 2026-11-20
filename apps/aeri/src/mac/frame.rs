@@ -22,16 +22,17 @@ use std::rc::Rc;
 
 use aeri_cef::TabObserver;
 use aeri_core::ids::TabId;
+use aeri_core::layout::{BarPlace, Layout, Side};
 use block2::RcBlock;
 use futures::channel::mpsc::UnboundedSender;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSColor, NSWindow, NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
-    NSWindowDidBecomeMainNotification, NSWindowDidEnterFullScreenNotification,
-    NSWindowDidExitFullScreenNotification, NSWindowDidResizeNotification, NSWindowOrderingMode,
-    NSWindowStyleMask,
+    NSApplication, NSColor, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
+    NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification,
+    NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
+    NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -41,7 +42,7 @@ use super::reveal::{self, Reveal};
 use super::window_of;
 use crate::native_menu;
 use crate::shell::AppMsg;
-use crate::window_frame::{SIDEBAR_WIDTH, STRIP_HEIGHT};
+use crate::window_frame::{RAIL_WIDTH, STRIP_HEIGHT};
 
 /// Address bar geometry, in points. Like Zen's floating URL bar, the bar
 /// floats over the page, centred across and with its middle
@@ -65,6 +66,8 @@ const PAGE_INSET: f64 = 8.0;
 const PAGE_RADIUS: f64 = 10.0;
 /// The side overlay's width beyond the sidebar: its margin and shadow.
 pub const SIDE_OVERLAY_EXTRA: f64 = 18.0;
+/// From the page's top to the bar's, when it opens in the upper centre.
+const BAR_UPPER: f64 = 64.0;
 
 pub struct Frame {
     pub(super) window_id: u64,
@@ -81,8 +84,8 @@ pub struct Frame {
     bar_visible: Cell<bool>,
     /// Suggestion rows under the bar; its window grows downwards to fit.
     bar_rows: Cell<usize>,
-    /// Chrome that keeps its place beside the page: (sidebar, strip).
-    pinned: Cell<(bool, bool)>,
+    /// Where the chrome sits (Phase 12).
+    layout: Cell<Layout>,
     pub(super) reveal: Reveal,
     notifications: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
@@ -99,7 +102,7 @@ impl Frame {
             shown: RefCell::default(),
             bar_visible: Cell::new(false),
             bar_rows: Cell::new(0),
-            pinned: Cell::new((true, true)),
+            layout: Cell::new(Layout::default()),
             overlays: RefCell::default(),
             reveal: Reveal::default(),
             notifications: RefCell::default(),
@@ -140,6 +143,7 @@ impl Frame {
         *self.frame.borrow_mut() = Some(frame.clone());
         *self.bar.borrow_mut() = Some(bar);
         *self.overlays.borrow_mut() = Some([side, strip]);
+        show_window_buttons(&frame, self.layout.get().window_buttons);
         self.observe(&frame);
         reveal::register(self);
         self.layout();
@@ -204,40 +208,54 @@ impl Frame {
         }
     }
 
-    /// Pinned chrome in effect: full screen pins nothing (design §4.1).
-    pub(super) fn pinned_now(&self, frame: &NSWindow) -> (bool, bool) {
+    /// The layout in effect: full screen pins nothing (design §4.1).
+    pub(super) fn layout_now(&self, frame: &NSWindow) -> Layout {
+        let mut layout = self.layout.get();
         if frame.styleMask().contains(NSWindowStyleMask::FullScreen) {
-            (false, false)
-        } else {
-            self.pinned.get()
+            layout.sidebar_pinned = false;
+            layout.top_pinned = false;
         }
+        layout
     }
 
     /// Where the active tab's window goes, in screen coordinates: the whole
     /// window with nothing pinned, else a card beside the pinned chrome.
     fn page_rect(&self, frame: &NSWindow) -> NSRect {
         let rect = frame.frame();
-        let (side, top) = self.pinned_now(frame);
-        if !side && !top {
+        let layout = self.layout_now(frame);
+        let side = pinned_side_width(&layout, rect.size.width);
+        if side == 0.0 && !layout.top_pinned {
             return rect;
         }
-        let left = if side { SIDEBAR_WIDTH } else { PAGE_INSET };
-        let top = if top { STRIP_HEIGHT } else { PAGE_INSET };
+        let (left, right) = match layout.side {
+            _ if side == 0.0 => (PAGE_INSET, PAGE_INSET),
+            Side::Left => (side, PAGE_INSET),
+            Side::Right => (PAGE_INSET, side),
+        };
+        let top = if layout.top_pinned {
+            STRIP_HEIGHT
+        } else {
+            PAGE_INSET
+        };
         NSRect::new(
             NSPoint::new(rect.origin.x + left, rect.origin.y + PAGE_INSET),
             NSSize::new(
-                (rect.size.width - left - PAGE_INSET).max(1.0),
+                (rect.size.width - left - right).max(1.0),
                 (rect.size.height - top - PAGE_INSET).max(1.0),
             ),
         )
     }
 
-    /// Pins or unpins the sidebar and the strip, and refits the page.
-    pub fn set_pinned(&self, sidebar: bool, strip: bool) {
-        if self.pinned.replace((sidebar, strip)) != (sidebar, strip) {
-            self.hide_chrome();
-            self.layout();
+    /// Takes a new layout: refits the page, the overlays and the bar.
+    pub fn set_layout(&self, layout: Layout) {
+        if self.layout.replace(layout) == layout {
+            return;
         }
+        self.hide_chrome();
+        if let Some(frame) = self.frame.borrow().as_ref() {
+            show_window_buttons(frame, layout.window_buttons);
+        }
+        self.layout();
     }
 
     fn active_window(&self) -> Option<Retained<NSWindow>> {
@@ -262,19 +280,18 @@ impl Frame {
         if let Some([side, strip]) = self.overlays.borrow().as_ref() {
             let rect = frame.frame();
             let window_top = rect.origin.y + rect.size.height;
+            let layout = self.layout_now(&frame);
             // A pinned strip stays; the sliding sidebar comes in below it.
-            let below = if self.pinned_now(&frame).1 {
-                STRIP_HEIGHT
-            } else {
-                0.0
+            let below = if layout.top_pinned { STRIP_HEIGHT } else { 0.0 };
+            let width = layout.sidebar_width_in(rect.size.width) + SIDE_OVERLAY_EXTRA;
+            let x = match layout.side {
+                Side::Left => rect.origin.x,
+                Side::Right => rect.origin.x + rect.size.width - width,
             };
             side.setFrame_display(
                 NSRect::new(
-                    rect.origin,
-                    NSSize::new(
-                        SIDEBAR_WIDTH + SIDE_OVERLAY_EXTRA,
-                        (rect.size.height - below).max(1.0),
-                    ),
+                    NSPoint::new(x, rect.origin.y),
+                    NSSize::new(width, (rect.size.height - below).max(1.0)),
                 ),
                 true,
             );
@@ -290,8 +307,11 @@ impl Frame {
             // Centred over the page, not the window.
             let width = (page.size.width - 2.0 * BAR_SIDE_MARGIN).clamp(240.0, BAR_MAX_WIDTH);
             let page_top = page.origin.y + page.size.height;
-            let y = (page_top - page.size.height * BAR_FROM_TOP - BAR_HEIGHT / 2.0)
-                .min(page_top - BAR_MIN_TOP - BAR_HEIGHT);
+            let y = match self.layout.get().bar {
+                BarPlace::Centre => page_top - page.size.height * BAR_FROM_TOP - BAR_HEIGHT / 2.0,
+                BarPlace::Upper => page_top - BAR_UPPER - BAR_HEIGHT,
+            }
+            .min(page_top - BAR_MIN_TOP - BAR_HEIGHT);
             // The pill stays put; rows hang below it, never past the card.
             let top = y + BAR_HEIGHT;
             let rows = self.bar_rows.get().min(MAX_VISIBLE_SUGGESTIONS);
@@ -455,6 +475,29 @@ impl Frame {
         for token in self.notifications.borrow_mut().drain(..) {
             // SAFETY: removing our own observer tokens on the main thread.
             unsafe { center.removeObserver(token.as_ref()) };
+        }
+    }
+}
+
+/// Width a pinned sidebar (or rail) keeps beside the page; 0 when the
+/// sidebar slides in.
+pub(super) fn pinned_side_width(layout: &Layout, window_width: f64) -> f64 {
+    match (layout.sidebar_pinned, layout.rail) {
+        (false, _) => 0.0,
+        (true, true) => RAIL_WIDTH,
+        (true, false) => layout.sidebar_width_in(window_width),
+    }
+}
+
+/// Shows or hides the frame's own close, minimise and zoom buttons.
+fn show_window_buttons(frame: &NSWindow, shown: bool) {
+    for kind in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ] {
+        if let Some(button) = frame.standardWindowButton(kind) {
+            button.setHidden(!shown);
         }
     }
 }

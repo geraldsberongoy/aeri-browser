@@ -1,58 +1,37 @@
-//! The sidebar of a window frame: address row, space header, tab rows, and
-//! the space switcher, with the drag preview for moving a tab.
+//! The sidebar of a window frame: address row, space header, favourites,
+//! tab rows and the space switcher; and the icon rail it collapses to.
 
 use aeri_cef::Shortcut;
 use aeri_core::appearance::Rgba;
-use aeri_core::ids::TabId;
+use aeri_core::layout::{FavouriteStyle, Side};
 use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, SharedString, Window, div,
+    ClickEvent, Context, CursorStyle, FontWeight, MouseButton, MouseDownEvent, SharedString, div,
     prelude::*, px, rgb,
 };
 
-use super::{Host, PAGE_EDGE, SIDEBAR_WIDTH, STRIP_HEIGHT, SidebarTab, WindowFrame, drag};
+use super::tab_items::{DraggedTab, Metrics};
+use super::{Host, PAGE_EDGE, RAIL_WIDTH, STRIP_HEIGHT, SidebarTab, WindowFrame, drag};
 use crate::mac::Edge;
 use crate::shell::{AppMsg, ChromeMsg, Nav, TabCommand};
 use crate::theme;
 
-/// A sidebar row being dragged to a new position; also its drag preview.
-#[derive(Clone)]
-struct DraggedTab {
-    id: TabId,
-    label: SharedString,
-}
-
-impl Render for DraggedTab {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = theme::tokens(cx);
-        div()
-            .w(px(SIDEBAR_WIDTH as f32 - 16.))
-            .px(px(10.))
-            .py(px(6.))
-            .rounded(px(7.))
-            .bg(theme::c(t.sidebar))
-            .text_size(px(13.))
-            .text_color(theme::c(t.text))
-            .overflow_hidden()
-            .text_ellipsis()
-            .whitespace_nowrap()
-            .child(self.label.clone())
-    }
-}
-
 impl WindowFrame {
     /// Under a header naming the shown space: a New Tab row, the profile's
-    /// favourites, then the space's pinned and regular tabs; at the foot,
-    /// one chip per space. A click shows a tab, a middle click or × closes
-    /// it, a right click opens its menu. Dragging moves a tab within its
-    /// list, between the favourites and the space's tabs, or onto another
-    /// space's chip. Without a pinned strip, the sidebar's top row carries
-    /// the window buttons and history.
+    /// favourites (a grid or rows), then the space's pinned and regular
+    /// tabs; at the foot, one chip per space. A click shows a tab, a middle
+    /// click or × closes it, a right click opens its menu. Dragging moves a
+    /// tab within its list, between the favourites and the space's tabs, or
+    /// onto another space's chip. Without a pinned strip, the sidebar's top
+    /// row carries the window buttons and history. Pinned, its inner edge
+    /// drags to resize.
     pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let t = theme::tokens(cx);
+        let m = Metrics::of(cx);
+        let width = self.sidebar_width();
         // Menus open in the frame's coordinates; an overlay under a pinned
         // strip starts lower.
-        let dy = if host == Host::Overlay && self.top_pinned {
+        let dy = if host == Host::Overlay && self.layout.top_pinned {
             STRIP_HEIGHT as f32
         } else {
             0.
@@ -71,10 +50,10 @@ impl WindowFrame {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .h(px(30.))
-                    .px(px(10.))
+                    .h(px(m.row - 2.))
+                    .px(px(m.pad))
                     .rounded(px(7.))
-                    .text_size(px(13.))
+                    .text_size(px(m.text))
                     .text_color(theme::c(t.text_tertiary))
                     .hover(move |style| style.bg(theme::c(t.hover)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
@@ -96,8 +75,16 @@ impl WindowFrame {
         let favourites: Vec<&SidebarTab> = self.tabs.iter().filter(|t| t.favourite).collect();
         let tabs: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
         let pinned = tabs.iter().filter(|t| t.pinned).count();
-        for (index, tab) in favourites.iter().enumerate() {
-            list = list.child(self.row(index, tab, dy, cx));
+        if self.layout.favourites == FavouriteStyle::Grid && !favourites.is_empty() {
+            let mut grid = div().flex().flex_none().flex_wrap().gap(px(4.)).py(px(2.));
+            for (index, tab) in favourites.iter().enumerate() {
+                grid = grid.child(self.tab_cell(index, tab, dy, cx));
+            }
+            list = list.child(grid);
+        } else {
+            for (index, tab) in favourites.iter().enumerate() {
+                list = list.child(self.tab_row(index, tab, dy, cx));
+            }
         }
         if !favourites.is_empty() {
             list = list.child(divider());
@@ -106,16 +93,20 @@ impl WindowFrame {
             if index == pinned && pinned > 0 {
                 list = list.child(divider());
             }
-            list = list.child(self.row(index, tab, dy, cx));
+            list = list.child(self.tab_row(index, tab, dy, cx));
         }
-        let head = (!self.top_pinned).then(|| {
+        let head = (!self.layout.top_pinned).then(|| {
             div()
                 .flex()
                 .flex_none()
                 .items_center()
                 .gap(px(2.))
                 .h(px(STRIP_HEIGHT as f32))
-                .child(self.lights(host, cx))
+                .child(self.lights(
+                    host == Host::Overlay || self.layout.side == Side::Right,
+                    host,
+                    cx,
+                ))
                 .child(self.button("back", "←", self.can_go_back, Nav::Back, cx))
                 .child(self.button("forward", "→", self.can_go_forward, Nav::Forward, cx))
                 .child(self.button("reload", "↻", true, Nav::Reload, cx))
@@ -125,7 +116,7 @@ impl WindowFrame {
             .id("sidebar")
             .flex()
             .flex_col()
-            .w(px(SIDEBAR_WIDTH as f32))
+            .w(px(width))
             .flex_1()
             .min_h_0()
             .px(px(PAGE_EDGE + 2.))
@@ -139,14 +130,103 @@ impl WindowFrame {
             .child(self.space_header(dy, cx))
             .child(list)
             .child(self.space_switcher(host, cx));
+        let right = self.layout.side == Side::Right;
+        let handle = (host == Host::Frame).then(|| {
+            div()
+                .id("sidebar-resize")
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .w(px(6.))
+                .when(right, |handle| handle.left_0())
+                .when(!right, |handle| handle.right_0())
+                .cursor(CursorStyle::ResizeLeftRight)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.resizing = Some((f32::from(event.position.x), this.sidebar_width()));
+                    }),
+                )
+        });
         div()
+            .relative()
             .flex()
             .flex_col()
-            .flex_1()
+            .flex_none()
+            .h_full()
             .min_h_0()
-            .w(px(SIDEBAR_WIDTH as f32))
+            .w(px(width))
             .children(head)
             .child(body)
+            .children(handle)
+    }
+
+    /// The collapsed sidebar: New Tab, the favourites and the space's tabs
+    /// as icons. Resting on it opens the full sidebar over the page.
+    pub(crate) fn rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let window = self.window_id;
+        let t = theme::tokens(cx);
+        let m = Metrics::of(cx);
+        let favourites: Vec<&SidebarTab> = self.tabs.iter().filter(|t| t.favourite).collect();
+        let tabs: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
+        let mut rail = div()
+            .id("rail")
+            .flex()
+            .flex_col()
+            .items_center()
+            .flex_none()
+            .h_full()
+            .min_h_0()
+            .w(px(RAIL_WIDTH as f32))
+            .gap(px(6.))
+            .pb(px(PAGE_EDGE))
+            .overflow_y_scroll()
+            .when(!self.layout.top_pinned, |rail| {
+                let right = self.layout.side == Side::Right;
+                rail.child(
+                    self.lights(right, Host::Frame, cx)
+                        .flex_none()
+                        .w(px(RAIL_WIDTH as f32))
+                        .h(px(STRIP_HEIGHT as f32)),
+                )
+            })
+            .child(
+                div()
+                    .id("rail-new-tab")
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(m.cell))
+                    .rounded(px(8.))
+                    .text_size(px(m.text + 4.))
+                    .text_color(theme::c(t.text_tertiary))
+                    .hover(move |style| style.bg(theme::c(t.hover)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                        this.send(AppMsg::Shortcut {
+                            window,
+                            shortcut: Shortcut::NewTab,
+                        });
+                    }))
+                    .child("+"),
+            );
+        for (index, tab) in favourites.iter().enumerate() {
+            rail = rail.child(self.tab_cell(index, tab, 0., cx));
+        }
+        if !favourites.is_empty() {
+            rail = rail.child(
+                div()
+                    .flex_none()
+                    .h(px(1.))
+                    .w(px(m.cell))
+                    .bg(theme::c(t.separator)),
+            );
+        }
+        for (index, tab) in tabs.iter().enumerate() {
+            rail = rail.child(self.tab_cell(index, tab, 0., cx));
+        }
+        rail
     }
 
     /// The one-time note on where the chrome went (page-first default).
@@ -223,10 +303,29 @@ impl WindowFrame {
                     .whitespace_nowrap()
                     .child(SharedString::from(if empty {
                         "Search or enter address".to_owned()
+                    } else if self.layout.domain_only {
+                        domain(&self.address).to_owned()
                     } else {
                         self.address.clone()
                     })),
             )
+            .when(self.layout.copy_link && !empty, |row| {
+                row.child(
+                    div()
+                        .id("copy-link")
+                        .flex_none()
+                        .px(px(6.))
+                        .py(px(2.))
+                        .rounded(px(5.))
+                        .text_color(theme::c(t.text_tertiary))
+                        .hover(move |style| style.bg(theme::c(t.pressed)))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.send(AppMsg::Chrome(ChromeMsg::CopyLink { window }));
+                        }))
+                        .child("Copy"),
+                )
+            })
     }
 
     /// The shown space's colour, icon and name; a click opens the space
@@ -362,134 +461,9 @@ impl WindowFrame {
         .child(div().flex_1())
         .child(self.pin_button(Edge::Side, host, cx))
     }
+}
 
-    /// A tab's row. `index` is its place in its own list (favourites, or
-    /// the space's tabs); a drop on the row moves the dragged tab there.
-    fn row(
-        &self,
-        index: usize,
-        tab: &SidebarTab,
-        dy: f32,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let window = self.window_id;
-        let t = theme::tokens(cx);
-        let id = tab.id;
-        let favourite = tab.favourite;
-        let label = SharedString::from(tab.label.clone());
-        let mut status = String::new();
-        if tab.favourite {
-            status.push('★');
-        } else if tab.pinned {
-            status.push('•');
-        }
-        if tab.loading {
-            status.push('…');
-        }
-        if tab.audible {
-            status.push('♪');
-        }
-        let dragged = DraggedTab {
-            id,
-            label: label.clone(),
-        };
-        div()
-            .id(("tab", id.0 as usize))
-            .group("tab")
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(6.))
-            .h(px(30.))
-            .pl(px(10.))
-            .pr(px(4.))
-            .rounded(px(7.))
-            .text_size(px(13.))
-            .when(tab.active, |row| {
-                row.bg(theme::c(t.selected)).text_color(theme::c(t.text))
-            })
-            .when(!tab.active, |row| {
-                row.text_color(theme::c(t.text_secondary))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
-            })
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                this.send(AppMsg::Tab {
-                    window,
-                    tab: id,
-                    command: TabCommand::Select,
-                });
-            }))
-            .on_mouse_down(
-                MouseButton::Middle,
-                cx.listener(move |this, _: &MouseDownEvent, _, _| {
-                    this.send(AppMsg::Tab {
-                        window,
-                        tab: id,
-                        command: TabCommand::Close,
-                    });
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                    this.send(AppMsg::TabMenu {
-                        window,
-                        tab: id,
-                        x: f32::from(event.position.x),
-                        y: f32::from(event.position.y) + dy,
-                    });
-                }),
-            )
-            .on_drag(dragged, |dragged: &DraggedTab, _, _, cx| {
-                cx.new(|_| dragged.clone())
-            })
-            .drag_over::<DraggedTab>(move |style, _, _, _| style.bg(theme::ca(t.accent, 0.2)))
-            .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, _| {
-                this.send(AppMsg::Tab {
-                    window,
-                    tab: dragged.id,
-                    command: TabCommand::MoveTo { index, favourite },
-                });
-            }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .child(label),
-            )
-            .when(!status.is_empty(), |row| {
-                row.child(
-                    div()
-                        .flex_none()
-                        .text_color(theme::c(t.text_tertiary))
-                        .child(SharedString::from(status)),
-                )
-            })
-            .child(
-                div()
-                    .id(("close", id.0 as usize))
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .size(px(22.))
-                    .rounded(px(5.))
-                    .text_color(theme::c(t.text_tertiary))
-                    .opacity(0.)
-                    .group_hover("tab", |style| style.opacity(1.))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.send(AppMsg::Tab {
-                            window,
-                            tab: id,
-                            command: TabCommand::Close,
-                        });
-                    }))
-                    .child("×"),
-            )
-    }
+/// The site part of a shown address (`example.com/a/b` → `example.com`).
+fn domain(address: &str) -> &str {
+    address.split(['/', '?', '#']).next().unwrap_or(address)
 }

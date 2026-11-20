@@ -198,6 +198,15 @@ pub enum ChromeMsg {
     },
     /// The one-time note on the page-first layout was read.
     DismissHint,
+    /// The sidebar's edge was dragged to `width`; `done` when let go.
+    Width {
+        width: u16,
+        done: bool,
+    },
+    /// The resting address's Copy button.
+    CopyLink {
+        window: u64,
+    },
 }
 
 /// The strip's history buttons.

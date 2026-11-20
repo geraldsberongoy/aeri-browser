@@ -170,8 +170,8 @@ struct Shell {
     library: Option<(WindowHandle<Library>, ProfileId)>,
     /// Resting tabs and the resource view.
     resting: Resting,
-    /// Which chrome is pinned (Phase 12).
-    layout: chrome::Layout,
+    /// Where the chrome sits (Phase 12).
+    chrome: chrome::Chrome,
     tx: UnboundedSender<AppMsg>,
     quitting: bool,
     effects: RefCell<Vec<Effect>>,
@@ -261,7 +261,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     mac::intercept_termination(send(|| AppMsg::Quit));
     quit_on_signals(tx.clone());
     let resting = Resting::start(&db, config.rest_after, tx.clone(), cx);
-    let layout = chrome::Layout::load(&db);
+    let chrome = chrome::Chrome::load(&db);
 
     let mut shell = Shell {
         profiles: db.profiles()?,
@@ -279,7 +279,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         space_editor: None,
         library: None,
         resting,
-        layout,
+        chrome,
         tx,
         quitting: false,
         effects: RefCell::default(),

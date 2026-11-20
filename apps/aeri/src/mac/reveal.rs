@@ -20,8 +20,9 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSTimer};
 
-use super::frame::{Frame, SIDE_OVERLAY_EXTRA};
-use crate::window_frame::{SIDEBAR_WIDTH, STRIP_HEIGHT};
+use super::frame::{Frame, SIDE_OVERLAY_EXTRA, pinned_side_width};
+use crate::window_frame::STRIP_HEIGHT;
+use aeri_core::layout::{Layout, Side};
 
 /// Width of the edge lanes, in points.
 const LANE: f64 = 4.0;
@@ -149,22 +150,32 @@ impl Frame {
         }
         let rect = frame.frame();
         let at = NSEvent::mouseLocation();
-        let x = at.x - rect.origin.x;
         let y = rect.origin.y + rect.size.height - at.y;
+        // Distance from the sidebar's own edge, whichever side it is on.
+        let layout = self.layout_now(&frame);
+        let x = match layout.side {
+            Side::Left => at.x - rect.origin.x,
+            Side::Right => rect.origin.x + rect.size.width - at.x,
+        };
         let clicked = kind != NSEventType::MouseMoved;
         let on_page = self.is_page(window);
-        let pinned = self.pinned_now(&frame);
-        let side_top = if pinned.1 { STRIP_HEIGHT } else { 0.0 };
+        let side_top = if layout.top_pinned { STRIP_HEIGHT } else { 0.0 };
+        let slide = layout.sidebar_width_in(rect.size.width) + SIDE_OVERLAY_EXTRA;
+        // A pinned rail is its own lane: resting on it opens the sidebar.
+        let side_lane = match pinned_side_width(&layout, rect.size.width) {
+            0.0 => LANE,
+            rail => rail,
+        };
         for edge in EDGES {
-            if pinned_edge(pinned, edge) {
+            if !slides(&layout, edge) {
                 continue;
             }
             // In the shared corner the top wins.
             let (lane, region) = match edge {
                 Edge::Top => (y <= LANE, y <= STRIP_HEIGHT),
                 Edge::Side => (
-                    x <= LANE && y > LANE,
-                    x <= SIDEBAR_WIDTH + SIDE_OVERLAY_EXTRA && y >= side_top,
+                    x <= side_lane && y > LANE.max(side_top),
+                    x <= slide && y >= side_top,
                 ),
             };
             let i = edge as usize;
@@ -193,7 +204,7 @@ impl Frame {
         let Some(frame) = self.frame.borrow().clone() else {
             return false;
         };
-        if pinned_edge(self.pinned_now(&frame), edge) {
+        if !slides(&self.layout_now(&frame), edge) {
             return false;
         }
         let i = edge as usize;
@@ -260,9 +271,11 @@ impl Frame {
     }
 }
 
-fn pinned_edge(pinned: (bool, bool), edge: Edge) -> bool {
+/// Whether the chrome at `edge` slides in under this layout: it is not
+/// pinned, or it is a rail that opens into the sidebar.
+fn slides(layout: &Layout, edge: Edge) -> bool {
     match edge {
-        Edge::Side => pinned.0,
-        Edge::Top => pinned.1,
+        Edge::Side => !layout.sidebar_pinned || (layout.rail && layout.rail_expands),
+        Edge::Top => !layout.top_pinned,
     }
 }

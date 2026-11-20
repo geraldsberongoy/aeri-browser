@@ -7,7 +7,7 @@ pub mod recipe;
 pub mod tokens;
 
 pub use color::{Oklch, Rgba};
-pub use recipe::{Background, Base, Density, Recipe, Texture, ThemeError};
+pub use recipe::{Background, Base, Density, Recipe, Texture, ThemeError, UiSize};
 pub use tokens::{Accessibility, AppAppearance, Backdrop, Mode, Resolved, Tokens, resolve};
 
 /// The bundled themes (design §3.6), Aeri first. Each is an ordinary

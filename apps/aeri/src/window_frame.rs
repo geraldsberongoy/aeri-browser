@@ -8,14 +8,16 @@
 //! in its own windows (`chrome_overlay`), drawn by the same view.
 
 mod sidebar;
+mod tab_items;
 
 use aeri_core::appearance::Rgba;
 use aeri_core::ids::{SpaceId, TabId};
+use aeri_core::layout::{Layout, Side, TabPlace, clamp_width};
 use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, Window,
-    div, point, prelude::*, px, rgb,
+    ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, SharedString, Window, div, point, prelude::*, px, rgb,
 };
 
 use crate::mac::Edge;
@@ -24,8 +26,9 @@ use crate::theme;
 
 /// Height of the strip, in points; `mac::Frame` insets the page below it.
 pub const STRIP_HEIGHT: f64 = 44.0;
-/// Width of the sidebar, in points; `mac::Frame` puts the page right of it.
-pub const SIDEBAR_WIDTH: f64 = 240.0;
+/// Width of the collapsed sidebar (icon rail), in points: room for the
+/// window buttons above it.
+pub const RAIL_WIDTH: f64 = 84.0;
 /// Where AppKit puts the close button: centred in the strip.
 pub const TRAFFIC_LIGHTS: gpui::Point<Pixels> = point(px(18.), px(15.));
 /// The strip's controls start after the three lights, or, in full screen
@@ -66,17 +69,20 @@ pub struct WindowFrame {
     tabs: Vec<SidebarTab>,
     spaces: Vec<SpaceChip>,
     address: String,
-    /// Chrome kept beside the page; the rest slides in.
-    sidebar_pinned: bool,
-    top_pinned: bool,
+    /// Where the chrome sits; what is pinned stays beside the page.
+    layout: Layout,
     /// The one-time note on where the chrome went.
     hint: bool,
     /// The shown tab's page had a popup refused.
     popup_blocked: bool,
     /// The profile's downloads this session, as the strip labels them.
     downloads: Option<String>,
-    /// The frame is in full screen (overlays can't ask their own window).
+    /// The frame is in full screen, and its width (overlays draw from this
+    /// view but can't ask their own window).
     fullscreen: bool,
+    window_width: f32,
+    /// Dragging the sidebar's edge: where the press was, and the width then.
+    resizing: Option<(f32, f32)>,
 }
 
 /// Which window draws a piece of chrome: the frame (pinned) or an overlay
@@ -110,12 +116,13 @@ impl WindowFrame {
             tabs: Vec::new(),
             spaces: Vec::new(),
             address: String::new(),
-            sidebar_pinned: true,
-            top_pinned: true,
+            layout: Layout::default(),
             hint: false,
             popup_blocked: false,
             downloads: None,
             fullscreen: false,
+            window_width: 1280.,
+            resizing: None,
         }
     }
 
@@ -143,11 +150,51 @@ impl WindowFrame {
         }
     }
 
-    /// Which chrome is pinned, and whether to show the one-time note.
-    pub fn set_layout(&mut self, sidebar: bool, top: bool, hint: bool, cx: &mut Context<Self>) {
-        if (self.sidebar_pinned, self.top_pinned, self.hint) != (sidebar, top, hint) {
-            (self.sidebar_pinned, self.top_pinned, self.hint) = (sidebar, top, hint);
+    /// Where the chrome sits, and whether to show the one-time note.
+    pub fn set_layout(&mut self, layout: Layout, hint: bool, cx: &mut Context<Self>) {
+        if (self.layout, self.hint) != (layout, hint) {
+            (self.layout, self.hint) = (layout, hint);
             cx.notify();
+        }
+    }
+
+    /// The full sidebar's width in this window.
+    fn sidebar_width(&self) -> f32 {
+        self.layout.sidebar_width_in(f64::from(self.window_width)) as f32
+    }
+
+    /// The pointer moved while the sidebar's edge is held: follow it.
+    fn resize_to(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some((from, width)) = self.resizing else {
+            return;
+        };
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.end_resize(cx);
+            return;
+        }
+        let moved = f32::from(event.position.x) - from;
+        let moved = if self.layout.side == Side::Right {
+            -moved
+        } else {
+            moved
+        };
+        let wanted = clamp_width((width + moved).round().max(0.) as u16);
+        if wanted != self.layout.sidebar_width {
+            self.layout.sidebar_width = wanted;
+            self.send(AppMsg::Chrome(ChromeMsg::Width {
+                width: wanted,
+                done: false,
+            }));
+            cx.notify();
+        }
+    }
+
+    fn end_resize(&mut self, _: &mut Context<Self>) {
+        if self.resizing.take().is_some() {
+            self.send(AppMsg::Chrome(ChromeMsg::Width {
+                width: self.layout.sidebar_width,
+                done: true,
+            }));
         }
     }
 
@@ -325,10 +372,13 @@ impl WindowFrame {
             .items_center()
             .gap(px(2.))
             .h(px(STRIP_HEIGHT as f32))
-            .child(self.lights(host, cx))
+            .child(self.lights(host == Host::Overlay, host, cx))
             .child(self.button("back", "←", self.can_go_back, Nav::Back, cx))
             .child(self.button("forward", "→", self.can_go_forward, Nav::Forward, cx))
             .child(self.button("reload", "↻", true, Nav::Reload, cx))
+            .when(self.layout.tabs == TabPlace::Top, |strip| {
+                strip.child(self.top_tabs(cx))
+            })
             .child(drag(host).flex_1())
             .when(self.popup_blocked, |strip| {
                 strip.child(self.notice(
@@ -354,15 +404,16 @@ impl WindowFrame {
             .child(drag(host).w(px(PAGE_EDGE)))
     }
 
-    /// The traffic lights' place at the strip's left: room for AppKit's in
-    /// the frame, Aeri's own in an overlay; in full screen (no lights) the
-    /// controls start at the edge.
-    fn lights(&self, host: Host, cx: &mut Context<Self>) -> gpui::Div {
-        if self.fullscreen {
+    /// The traffic lights' place at the chrome's top left: room for
+    /// AppKit's, or with `proxy` Aeri's own (in an overlay, or in a right
+    /// sidebar's top row, where AppKit's are under the page). In full
+    /// screen, or with the buttons hidden, the controls start at the edge.
+    fn lights(&self, proxy: bool, host: Host, cx: &mut Context<Self>) -> gpui::Div {
+        if self.fullscreen || !self.layout.window_buttons {
             return drag(host).w(px(PAGE_EDGE));
         }
         let lights = drag(host).w(px(CONTROLS_LEFT));
-        if host == Host::Frame {
+        if !proxy {
             return lights;
         }
         let id = self.window_id;
@@ -432,6 +483,50 @@ impl WindowFrame {
     }
 }
 
+impl WindowFrame {
+    /// The tabs across the strip (Top Tabs layout): favourites and pinned
+    /// tabs as letters, then the space's tabs, then New Tab.
+    fn top_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let window = self.window_id;
+        let t = theme::tokens(cx);
+        let mut lane = div()
+            .id("top-tabs")
+            .flex()
+            .flex_shrink(1.)
+            .min_w_0()
+            .items_center()
+            .gap(px(2.))
+            .overflow_x_scroll();
+        let favourites = self.tabs.iter().filter(|t| t.favourite);
+        for (index, tab) in favourites.enumerate() {
+            lane = lane.child(self.tab_pill(index, tab, cx));
+        }
+        let tabs = self.tabs.iter().filter(|t| !t.favourite);
+        for (index, tab) in tabs.enumerate() {
+            lane = lane.child(self.tab_pill(index, tab, cx));
+        }
+        lane.child(
+            div()
+                .id("top-new-tab")
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(26.))
+                .rounded(px(7.))
+                .text_color(theme::c(t.text_tertiary))
+                .hover(move |style| style.bg(theme::c(t.hover)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                    this.send(AppMsg::Shortcut {
+                        window,
+                        shortcut: aeri_cef::Shortcut::NewTab,
+                    });
+                }))
+                .child("+"),
+        )
+    }
+}
+
 /// An empty part of the chrome that moves the window.
 fn drag(host: Host) -> gpui::Div {
     div().h_full().on_mouse_down(
@@ -453,19 +548,42 @@ fn drag(host: Host) -> gpui::Div {
 
 impl Render for WindowFrame {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.fullscreen != window.is_fullscreen() {
+        let width = f32::from(window.viewport_size().width);
+        if (self.fullscreen, self.window_width) != (window.is_fullscreen(), width) {
             // The overlays draw from this view too: let them catch up.
             self.fullscreen = window.is_fullscreen();
+            self.window_width = width;
             cx.notify();
         }
-        let frame = theme::backdrop(div().size_full().flex().flex_col(), cx);
+        let frame = theme::backdrop(div().size_full().flex().flex_col(), cx)
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                this.resize_to(event, cx);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_resize(cx)),
+            );
         // With nothing pinned the page covers the frame: draw nothing more.
+        let side = self.layout.sidebar_pinned.then(|| {
+            if self.layout.rail {
+                self.rail(cx).into_any_element()
+            } else {
+                self.sidebar(Host::Frame, cx).into_any_element()
+            }
+        });
         frame
-            .when(self.top_pinned, |frame| {
+            .when(self.layout.top_pinned, |frame| {
                 frame.child(self.strip(Host::Frame, cx))
             })
-            .when(self.sidebar_pinned, |frame| {
-                frame.child(self.sidebar(Host::Frame, cx))
-            })
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .when(self.layout.side == Side::Right, |row| {
+                        row.flex_row_reverse()
+                    })
+                    .children(side),
+            )
     }
 }

@@ -133,6 +133,7 @@ impl Shell {
                 }),
         );
         rows.extend(self.appearance_rows(&words, cx));
+        rows.extend(self.layout_rows(&words));
         let ranked = suggest::rank(text, self.candidates(window_id, text), now());
         rows.extend(ranked.suggestions.iter().map(suggestion_row));
         rows.extend(typed_row(text));
@@ -183,9 +184,9 @@ impl Shell {
             PaletteCommand::SiteSettings => "Site Settings…",
             PaletteCommand::OpenInDefaultBrowser => "Open in Default Browser",
             PaletteCommand::ToggleSidebar => "Show or Hide Sidebar",
-            PaletteCommand::PinSidebar if self.layout.sidebar => "Auto-hide Sidebar",
+            PaletteCommand::PinSidebar if self.chrome.layout.sidebar_pinned => "Auto-hide Sidebar",
             PaletteCommand::PinSidebar => "Pin Sidebar",
-            PaletteCommand::PinTopBar if self.layout.top => "Auto-hide Top Bar",
+            PaletteCommand::PinTopBar if self.chrome.layout.top_pinned => "Auto-hide Top Bar",
             PaletteCommand::PinTopBar => "Pin Top Bar",
             PaletteCommand::ToggleFullScreen => "Enter or Exit Full Screen",
             PaletteCommand::NewSpace => "New Space…",
@@ -251,14 +252,14 @@ impl Shell {
             PaletteCommand::PinSidebar => self.chrome_msg(
                 ChromeMsg::Pin {
                     edge: Edge::Side,
-                    pinned: !self.layout.sidebar,
+                    pinned: !self.chrome.layout.sidebar_pinned,
                 },
                 cx,
             ),
             PaletteCommand::PinTopBar => self.chrome_msg(
                 ChromeMsg::Pin {
                     edge: Edge::Top,
-                    pinned: !self.layout.top,
+                    pinned: !self.chrome.layout.top_pinned,
                 },
                 cx,
             ),

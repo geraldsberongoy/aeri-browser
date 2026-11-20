@@ -68,7 +68,8 @@
 | --- | --- |
 | 1 | done |
 | 2 | done (slide motion lands in slice 8) |
-| 3–8 | pending |
+| 3 | done (toolbar slot editor moves to slice 6; floating bar offers Page Centre and Upper Centre, not Attached) |
+| 4–8 | pending |
 
 ## Evidence ledger
 
@@ -88,6 +89,13 @@
 | Pin and Auto-hide persist and lay the page out beside pinned chrome | Observed | Pin buttons and palette commands; relaunch keeps the layout; side-only layout carries real traffic lights in the sidebar's top row |
 | ⌘S steps a pinned sidebar aside and back; calls an unpinned one | Observed | screenshots before and after ⌘S |
 | Aeri's window buttons work while the strip slides in; full screen pins nothing and drops them | Observed | proxy zoom entered full screen; in full screen the sliding sidebar shows no window buttons and no Pin |
+| Five layout presets set several choices at once and are recognised afterwards | Tested | `layout` tests: default is Page First; every preset round-trips and keeps side and width |
+| Stored layouts survive missing keys, bad values and bad JSON | Tested | `layout::stored_layouts_survive_missing_and_bad_values` |
+| Sidebar width snaps to 184–360 in 4 pt steps and leaves the page 320 pt | Tested | `layout::widths_snap_to_the_range_and_leave_the_page_room` |
+| Collapsed rail with hover expand, sidebar on the right (window buttons drawn by Aeri there), top tabs, favourites grid | Observed | palette layout rows; screenshots of each; hovering the rail slid the full sidebar in |
+| Dragging the sidebar's edge resizes it and the width persists | Observed | drag 240 to 324: `sidebar resized width=324`; relaunch kept 324 |
+| Domain-only address and Copy Link | Observed | address row showed `127.0.0.1:8766`; Copy put `http://127.0.0.1:8766/target.html` on the clipboard (pbpaste) |
+| Density and larger text change the chrome's rows and type | Observed | Density: Spacious + Larger Text screenshot |
 
 ## Residual risks
 

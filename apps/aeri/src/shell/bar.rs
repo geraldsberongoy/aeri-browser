@@ -34,6 +34,10 @@ pub enum Pick {
     Appearance(AppAppearance),
     /// A bundled theme, by its place in `appearance::presets()`.
     Theme(usize),
+    /// A layout preset or option.
+    Layout(super::chrome::LayoutChoice),
+    Density(aeri_core::appearance::Density),
+    UiSize(aeri_core::appearance::UiSize),
 }
 
 /// One row under the bar.
@@ -302,6 +306,18 @@ impl Shell {
             Pick::Theme(index) => {
                 self.hide_bar(window_id, cx);
                 self.use_preset(index, cx);
+            }
+            Pick::Layout(choice) => {
+                self.hide_bar(window_id, cx);
+                self.choose_layout(choice, cx);
+            }
+            Pick::Density(density) => {
+                self.hide_bar(window_id, cx);
+                self.adjust_theme(|recipe| recipe.density = density, cx);
+            }
+            Pick::UiSize(size) => {
+                self.hide_bar(window_id, cx);
+                self.adjust_theme(|recipe| recipe.ui_size = size, cx);
             }
         }
     }

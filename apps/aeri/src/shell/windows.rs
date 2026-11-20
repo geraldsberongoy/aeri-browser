@@ -282,7 +282,7 @@ impl Shell {
         super::spaces::ready_to_show(&mut tabs, favourite);
         let frame = Frame::new(id, self.tx.clone());
         // Before AppKit adopts the windows, so they start in place.
-        frame.set_pinned(self.layout.sidebar, self.layout.top);
+        frame.set_layout(self.chrome.layout);
         self.windows.push(AeriWindow {
             id,
             profile,
@@ -306,7 +306,7 @@ impl Shell {
         // The tab the window opens on loads even if another tab (the uBO
         // offer, say) is shown before the page work runs.
         let first = self.window(id).and_then(AeriWindow::shown);
-        let hint = self.layout.hint && !self.layout.sidebar;
+        let hint = self.chrome.hint && !self.chrome.layout.sidebar_pinned;
         self.later(move |shell| {
             if let (Some(frame_view), Some(bar_view), [Some(side), Some(strip)]) =
                 (frame_view, bar_view, overlay_views)

@@ -1,7 +1,7 @@
 //! Appearance (Phase 12): the app's theme and light/dark choice, kept in
 //! `app.db`, applied to every window at once, and following macOS.
 
-use aeri_core::appearance::{AppAppearance, Base, Recipe, presets};
+use aeri_core::appearance::{AppAppearance, Base, Density, Recipe, UiSize, presets};
 use aeri_core::store::AppDb;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{App, BorrowAppContext};
@@ -97,9 +97,19 @@ impl Shell {
 
     /// Makes a bundled theme the app's theme.
     pub(super) fn use_preset(&mut self, index: usize, cx: &mut App) {
-        let Some(recipe) = presets().into_iter().nth(index) else {
-            return;
-        };
+        if let Some(recipe) = presets().into_iter().nth(index) {
+            self.set_app_theme(recipe, cx);
+        }
+    }
+
+    /// The app theme with one look choice changed (density, text size).
+    pub(super) fn adjust_theme(&mut self, change: impl FnOnce(&mut Recipe), cx: &mut App) {
+        let mut recipe = cx.global::<Theme>().recipe.clone();
+        change(&mut recipe);
+        self.set_app_theme(recipe, cx);
+    }
+
+    fn set_app_theme(&mut self, recipe: Recipe, cx: &mut App) {
         if let Err(err) = self.db.set_setting(THEME, &recipe.to_file()) {
             tracing::warn!(%err, "could not save the theme");
         }
@@ -141,6 +151,35 @@ impl Shell {
                     pick: Pick::Theme(ix),
                 }),
         );
+        let densities = [
+            (Density::Compact, "Density: Compact"),
+            (Density::Standard, "Density: Standard"),
+            (Density::Spacious, "Density: Spacious"),
+        ];
+        rows.extend(
+            densities
+                .into_iter()
+                .filter(|(_, title)| matches(words, title))
+                .map(|(density, title)| BarRow {
+                    title: title.to_owned(),
+                    detail: "Appearance".to_owned(),
+                    hint: tick(density == theme.recipe.density),
+                    pick: Pick::Density(density),
+                }),
+        );
+        let large = theme.recipe.ui_size == UiSize::Large;
+        if matches(words, "Larger Text") {
+            rows.push(BarRow {
+                title: "Larger Text".to_owned(),
+                detail: "Appearance".to_owned(),
+                hint: tick(large),
+                pick: Pick::UiSize(if large {
+                    UiSize::Standard
+                } else {
+                    UiSize::Large
+                }),
+            });
+        }
         rows
     }
 }
