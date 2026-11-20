@@ -1,8 +1,8 @@
 //! The sidebar of a window frame: address row, space header, favourites,
 //! tab rows and the space switcher; and the icon rail it collapses to.
 
-use aeri_cef::Shortcut;
 use aeri_core::appearance::Rgba;
+use aeri_core::keymap::Shortcut;
 use aeri_core::layout::{FavouriteStyle, Side};
 use gpui::{
     ClickEvent, Context, CursorStyle, FontWeight, MouseButton, MouseDownEvent, SharedString, div,

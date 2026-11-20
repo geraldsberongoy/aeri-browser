@@ -38,6 +38,7 @@ mod quit;
 mod resources;
 mod resting;
 mod session;
+mod settings;
 mod shortcuts;
 mod space_settings;
 mod spaces;
@@ -72,6 +73,7 @@ pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand, ThemeEditorMsg};
 use self::profiles::remove_deleted_profiles;
 use self::quit::quit_on_signals;
 use self::resting::Resting;
+pub use self::settings::{SettingsModel, SettingsMsg};
 pub use self::spaces::SPACE_ICONS;
 use self::spaces::{Parked, SpaceInfo};
 use self::tabs::TabEntry;
@@ -82,7 +84,6 @@ use crate::library::Library;
 use crate::mac;
 use crate::profile_manager::ProfileManager;
 use crate::space_editor::SpaceEditor;
-use crate::text_input;
 
 /// Neutral default search provider (stage 1, open question 1).
 const SEARCH_TEMPLATE: &str = "https://duckduckgo.com/?q={query}";
@@ -182,6 +183,9 @@ struct Shell {
     resting: Resting,
     /// Where the chrome sits (Phase 12).
     chrome: chrome::Chrome,
+    /// Every command's keys (Phase 12).
+    keymap: aeri_core::keymap::Keymap,
+    settings: Option<settings::Settings>,
     tx: UnboundedSender<AppMsg>,
     quitting: bool,
     effects: RefCell<Vec<Effect>>,
@@ -248,8 +252,8 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         })
         .context("starting CEF")?;
 
-    cx.bind_keys(text_input::bindings());
-    cx.bind_keys(address_bar::bindings());
+    let keymap = settings::load_keymap(&db);
+    settings::install_keymap(&keymap, cx);
     let send = |msg: fn() -> AppMsg| {
         let tx = tx.clone();
         move || {
@@ -258,6 +262,8 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     };
     let quit = send(|| AppMsg::Quit);
     cx.on_action(move |_: &address_bar::Quit, _| quit());
+    let settings = send(|| AppMsg::OpenSettings);
+    cx.on_action(move |_: &address_bar::Settings, _| settings());
     let new = send(|| AppMsg::ShowProfiles { new: true });
     cx.on_action(move |_: &NewProfile, _| new());
     let manage = send(|| AppMsg::ShowProfiles { new: false });
@@ -293,6 +299,8 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         library: None,
         resting,
         chrome,
+        keymap,
+        settings: None,
         tx,
         quitting: false,
         effects: RefCell::default(),
@@ -349,7 +357,11 @@ fn menus(profiles: &[Profile]) -> Vec<Menu> {
     vec![
         Menu {
             name: "Aeri".into(),
-            items: vec![MenuItem::action("Quit Aeri", address_bar::Quit)],
+            items: vec![
+                MenuItem::action("Settings…", address_bar::Settings),
+                MenuItem::separator(),
+                MenuItem::action("Quit Aeri", address_bar::Quit),
+            ],
             disabled: false,
         },
         Menu {
@@ -477,6 +489,12 @@ impl Shell {
                 target,
                 recipe,
             } => self.set_target_theme(window, target, recipe, cx),
+            AppMsg::Settings(msg) => self.settings_msg(msg, cx),
+            AppMsg::OpenSettings => {
+                if let Some(id) = self.windows.last().map(|w| w.id) {
+                    self.show_settings(id, cx);
+                }
+            }
             AppMsg::Quit => self.quit(cx),
         }
         self.quitting && self.windows.is_empty()

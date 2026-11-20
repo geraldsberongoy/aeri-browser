@@ -71,7 +71,8 @@
 | 3 | done (toolbar slot editor moves to slice 6; floating bar offers Page Centre and Upper Centre, not Attached) |
 | 4 | done (the editor reverts with Cancel; it has no step-by-step undo) |
 | 5 | done (export written but not driven live: the save panel run was stopped when keystrokes reached another app) |
-| 6–8 | pending |
+| 6 | done (toolbar slots stay fixed: the strip's few buttons did not earn an editor) |
+| 7–8 | pending |
 
 ## Evidence ledger
 
@@ -107,6 +108,10 @@
 | Malformed or newer theme files are refused with the reason | Tested + Observed | `library::imports_refuse_bad_files_with_the_reason`; live import of `{"density":"roomy"}` showed a sheet with the reason; an unknown value now names the allowed ones (`recipe` test) |
 | A good file imports into `<data>/Themes` and can be used for the space at once | Observed | open panel import of Glass: `theme imported`, `Themes/Glass.aeritheme`, sheet "Use for This Space" applied it |
 | The macOS material shows the desktop through a blurred, tinted window | Observed | Glass (85%) over a light page behind the window showed through at the window's upper right; overlays stay opaque |
+| One keymap drives pages and Aeri's windows; conflicts refuse, replace or swap; typing and system keys cannot be taken; storage drops bad entries | Tested | `keymap` tests (5): defaults distinct, chord parsing and labels, refuse/replace/swap, reserved and modifier-less keys, reset and JSON round trip |
+| Settings (⌘,) shows appearance, themes, layout and keyboard | Observed | ⌘, opened the window; Appearance pane ticks Follow Theme and Standard density |
+| Rebind, conflict, swap, reset, persistence | Observed | New Tab to ⌘K (`keys changed`), then ⌘W showed "⌘W already runs Close Tab." and Swap stored `{"close-tab":"cmd-k","new-tab":"cmd-w"}` in app.db; Reset All stored `{}` |
+| A rebound key works inside a page | Observed | after New Tab = ⌘K, ⌘K in the page opened an `about:blank` tab (CDP target list) |
 
 ## Residual risks
 

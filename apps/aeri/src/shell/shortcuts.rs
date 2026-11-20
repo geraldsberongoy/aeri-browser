@@ -1,6 +1,6 @@
 //! Aeri's keyboard shortcuts, as CEF reports them from a page or the bar.
 
-use aeri_cef::Shortcut;
+use aeri_core::keymap::Shortcut;
 use gpui::App;
 
 use super::Shell;
@@ -60,6 +60,7 @@ impl Shell {
             Shortcut::ShowBookmarks => self.show_library(window_id, Section::Bookmarks, cx),
             Shortcut::ShowHistory => self.show_library(window_id, Section::History, cx),
             Shortcut::CommandPalette => self.show_palette(window_id, cx),
+            Shortcut::Settings => self.show_settings(window_id, cx),
             Shortcut::Quit => self.quit(cx),
             Shortcut::ToggleFullScreen => {
                 if let Some(frame) = self.window(window_id).map(|w| w.frame.clone()) {

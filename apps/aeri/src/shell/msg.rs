@@ -1,10 +1,11 @@
 //! What the shell's message loop handles: [`AppMsg`], sent by CEF
 //! callbacks, GPUI views and native menus.
 
-use aeri_cef::{Shortcut, Signal};
+use aeri_cef::Signal;
 use aeri_core::appearance::Recipe;
 use aeri_core::credentials::PasswordProvider;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
+use aeri_core::keymap::Shortcut;
 
 use super::Pick;
 use super::trust::DownloadPick;
@@ -193,6 +194,9 @@ pub enum AppMsg {
         target: super::themes::ThemeTarget,
         recipe: Recipe,
     },
+    Settings(super::settings::SettingsMsg),
+    /// The menu bar's Settings, with no browser window in front.
+    OpenSettings,
     Quit,
 }
 

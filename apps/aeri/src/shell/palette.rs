@@ -1,7 +1,7 @@
 //! The command palette (Phase 8): the bar in palette mode, listing commands,
 //! tabs, spaces and profiles beside the bar's suggestions.
 
-use aeri_cef::Shortcut;
+use aeri_core::keymap::Shortcut;
 use aeri_core::suggest;
 use gpui::App;
 
@@ -41,40 +41,62 @@ pub enum PaletteCommand {
     PreviousSpace,
     NewProfile,
     ManageProfiles,
+    Settings,
     Quit,
 }
 
-/// The palette's commands, in its order, with their shortcuts.
-const COMMANDS: &[(PaletteCommand, &str)] = &[
-    (PaletteCommand::NewTab, "⌘T"),
-    (PaletteCommand::NewWindow, "⌘N"),
-    (PaletteCommand::CloseTab, "⌘W"),
-    (PaletteCommand::ReopenClosedTab, "⇧⌘T"),
-    (PaletteCommand::DuplicateTab, ""),
-    (PaletteCommand::TogglePin, ""),
-    (PaletteCommand::ToggleFavourite, ""),
-    (PaletteCommand::ToggleBookmark, "⌘D"),
-    (PaletteCommand::ShowBookmarks, "⌥⌘B"),
-    (PaletteCommand::ShowHistory, "⌘Y"),
-    (PaletteCommand::ShowDownloads, ""),
-    (PaletteCommand::ClearBrowsingData, ""),
-    (PaletteCommand::ManagePasswords, ""),
-    (PaletteCommand::ShowResources, ""),
-    (PaletteCommand::SiteSettings, ""),
-    (PaletteCommand::OpenInDefaultBrowser, ""),
-    (PaletteCommand::ToggleSidebar, "⌘S"),
-    (PaletteCommand::PinSidebar, ""),
-    (PaletteCommand::PinTopBar, ""),
-    (PaletteCommand::ToggleFullScreen, "⌃⌘F"),
-    (PaletteCommand::NewSpace, ""),
-    (PaletteCommand::EditSpace, ""),
-    (PaletteCommand::DeleteSpace, ""),
-    (PaletteCommand::NextSpace, "⌥⌘→"),
-    (PaletteCommand::PreviousSpace, "⌥⌘←"),
-    (PaletteCommand::NewProfile, ""),
-    (PaletteCommand::ManageProfiles, ""),
-    (PaletteCommand::Quit, "⌘Q"),
+/// The palette's commands, in its order.
+const COMMANDS: &[PaletteCommand] = &[
+    PaletteCommand::NewTab,
+    PaletteCommand::NewWindow,
+    PaletteCommand::CloseTab,
+    PaletteCommand::ReopenClosedTab,
+    PaletteCommand::DuplicateTab,
+    PaletteCommand::TogglePin,
+    PaletteCommand::ToggleFavourite,
+    PaletteCommand::ToggleBookmark,
+    PaletteCommand::ShowBookmarks,
+    PaletteCommand::ShowHistory,
+    PaletteCommand::Settings,
+    PaletteCommand::ShowDownloads,
+    PaletteCommand::ClearBrowsingData,
+    PaletteCommand::ManagePasswords,
+    PaletteCommand::ShowResources,
+    PaletteCommand::SiteSettings,
+    PaletteCommand::OpenInDefaultBrowser,
+    PaletteCommand::ToggleSidebar,
+    PaletteCommand::PinSidebar,
+    PaletteCommand::PinTopBar,
+    PaletteCommand::ToggleFullScreen,
+    PaletteCommand::NewSpace,
+    PaletteCommand::EditSpace,
+    PaletteCommand::DeleteSpace,
+    PaletteCommand::NextSpace,
+    PaletteCommand::PreviousSpace,
+    PaletteCommand::NewProfile,
+    PaletteCommand::ManageProfiles,
+    PaletteCommand::Quit,
 ];
+
+/// The keyboard command a palette command runs, if it is one.
+fn shortcut_of(command: PaletteCommand) -> Option<Shortcut> {
+    Some(match command {
+        PaletteCommand::NewTab => Shortcut::NewTab,
+        PaletteCommand::NewWindow => Shortcut::NewWindow,
+        PaletteCommand::CloseTab => Shortcut::CloseTab,
+        PaletteCommand::ReopenClosedTab => Shortcut::ReopenClosedTab,
+        PaletteCommand::ToggleBookmark => Shortcut::ToggleBookmark,
+        PaletteCommand::ShowBookmarks => Shortcut::ShowBookmarks,
+        PaletteCommand::ShowHistory => Shortcut::ShowHistory,
+        PaletteCommand::ToggleSidebar => Shortcut::ToggleSidebar,
+        PaletteCommand::ToggleFullScreen => Shortcut::ToggleFullScreen,
+        PaletteCommand::NextSpace => Shortcut::NextSpace,
+        PaletteCommand::PreviousSpace => Shortcut::PreviousSpace,
+        PaletteCommand::Settings => Shortcut::Settings,
+        PaletteCommand::Quit => Shortcut::Quit,
+        _ => return None,
+    })
+}
 
 /// Lower-cased words of `text`; every one must appear for a match.
 pub(super) fn words(text: &str) -> Vec<String> {
@@ -96,12 +118,15 @@ impl Shell {
         let words = words(text);
         let mut rows: Vec<BarRow> = COMMANDS
             .iter()
-            .map(|&(command, keys)| (command, self.command_title(window_id, command), keys))
-            .filter(|(_, title, _)| matches(&words, title))
-            .map(|(command, title, keys)| BarRow {
+            .map(|&command| (command, self.command_title(window_id, command)))
+            .filter(|(_, title)| matches(&words, title))
+            .map(|(command, title)| BarRow {
                 title,
                 detail: String::new(),
-                hint: keys.to_owned(),
+                hint: shortcut_of(command)
+                    .and_then(|s| self.keymap.chord(s))
+                    .map(|chord| chord.label())
+                    .unwrap_or_default(),
                 pick: Pick::Command(command),
             })
             .collect();
@@ -198,6 +223,7 @@ impl Shell {
             PaletteCommand::PreviousSpace => "Previous Space",
             PaletteCommand::NewProfile => "New Profile…",
             PaletteCommand::ManageProfiles => "Manage Profiles…",
+            PaletteCommand::Settings => "Settings…",
             PaletteCommand::Quit => "Quit Aeri",
         };
         title.to_owned()
@@ -208,22 +234,7 @@ impl Shell {
             return;
         };
         let (shown, space) = (w.shown(), w.space);
-        let shortcut = match command {
-            PaletteCommand::NewTab => Some(Shortcut::NewTab),
-            PaletteCommand::NewWindow => Some(Shortcut::NewWindow),
-            PaletteCommand::CloseTab => Some(Shortcut::CloseTab),
-            PaletteCommand::ReopenClosedTab => Some(Shortcut::ReopenClosedTab),
-            PaletteCommand::ToggleBookmark => Some(Shortcut::ToggleBookmark),
-            PaletteCommand::ShowBookmarks => Some(Shortcut::ShowBookmarks),
-            PaletteCommand::ShowHistory => Some(Shortcut::ShowHistory),
-            PaletteCommand::ToggleSidebar => Some(Shortcut::ToggleSidebar),
-            PaletteCommand::ToggleFullScreen => Some(Shortcut::ToggleFullScreen),
-            PaletteCommand::NextSpace => Some(Shortcut::NextSpace),
-            PaletteCommand::PreviousSpace => Some(Shortcut::PreviousSpace),
-            PaletteCommand::Quit => Some(Shortcut::Quit),
-            _ => None,
-        };
-        if let Some(shortcut) = shortcut {
+        if let Some(shortcut) = shortcut_of(command) {
             self.shortcut(window_id, shortcut, cx);
             return;
         }

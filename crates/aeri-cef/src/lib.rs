@@ -19,11 +19,13 @@ mod window;
 #[cfg(target_os = "macos")]
 mod mac;
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use aeri_core::engine::Event;
 use aeri_core::ids::{ProfileId, TabId};
+use aeri_core::keymap::{Chord, Keymap, Shortcut};
 
 pub use devtools::DevTools;
 pub use downloads::cancel_download;
@@ -33,32 +35,19 @@ pub use resources::{Task, TaskKind, TaskMonitor};
 pub use runtime::{Runtime, RuntimeConfig, load};
 pub use window::{TabObserver, TabWindow};
 
-/// Browser shortcuts the page's keyboard handler hands to Aeri instead of the
-/// page (stage 1: every command is reachable from the keyboard).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Shortcut {
-    FocusAddressBar,
-    NewTab,
-    /// ⌘N: a window on a space no window shows.
-    NewWindow,
-    CloseTab,
-    ReopenClosedTab,
-    NextTab,
-    PreviousTab,
-    /// ⌘1–⌘9: the nth tab; 9 is the last.
-    SelectTab(u8),
-    ToggleSidebar,
-    PreviousSpace,
-    NextSpace,
-    /// ⌘D: bookmark the shown page, or remove its bookmarks.
-    ToggleBookmark,
-    /// ⌥⌘B and ⌘Y: the library window.
-    ShowBookmarks,
-    ShowHistory,
-    /// ⇧⌘P: the command palette.
-    CommandPalette,
-    Quit,
-    ToggleFullScreen,
+thread_local! {
+    /// The keys pages hand to Aeri instead of handling them (CEF's key
+    /// callbacks run on the main thread).
+    static KEYMAP: RefCell<Keymap> = RefCell::new(Keymap::default());
+}
+
+/// Makes `keymap` the keys pages hand to Aeri.
+pub fn set_keymap(keymap: Keymap) {
+    KEYMAP.with(|current| *current.borrow_mut() = keymap);
+}
+
+fn keymap_shortcut(chord: &Chord) -> Option<Shortcut> {
+    KEYMAP.with(|current| current.borrow().shortcut(chord))
 }
 
 /// What the adapter reports to the application.

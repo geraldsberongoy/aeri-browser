@@ -11,6 +11,7 @@ mod mac;
 mod native_menu;
 mod profile_manager;
 mod resource_view;
+mod settings_window;
 mod shell;
 mod space_editor;
 mod text_input;

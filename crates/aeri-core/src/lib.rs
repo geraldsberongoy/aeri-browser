@@ -6,6 +6,7 @@ pub mod appearance;
 pub mod credentials;
 pub mod engine;
 pub mod ids;
+pub mod keymap;
 pub mod layout;
 pub mod omnibox;
 pub mod profile_db;

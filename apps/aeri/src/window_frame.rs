@@ -524,7 +524,7 @@ impl WindowFrame {
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                     this.send(AppMsg::Shortcut {
                         window,
-                        shortcut: aeri_cef::Shortcut::NewTab,
+                        shortcut: aeri_core::keymap::Shortcut::NewTab,
                     });
                 }))
                 .child("+"),

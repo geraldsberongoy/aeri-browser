@@ -6,13 +6,15 @@
 
 use std::time::Duration;
 
-use aeri_cef::{Extension, Shortcut};
+use aeri_cef::Extension;
 use aeri_core::appearance::Tokens;
+use aeri_core::keymap::{Keymap, Shortcut};
 use aeri_core::tab::{LoadState, Tab};
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, Entity, FocusHandle, Focusable, KeyBinding,
-    ScrollHandle, SharedString, Window, actions, div, ease_out_quint, img, prelude::*, px,
+    Action, Animation, AnimationExt, AnyElement, App, Context, Entity, FocusHandle, Focusable,
+    KeyBinding, ScrollHandle, SharedString, Window, actions, div, ease_out_quint, img, prelude::*,
+    px,
 };
 
 use crate::mac::{MAX_VISIBLE_SUGGESTIONS, SUGGESTION_CHROME, SUGGESTION_HEIGHT};
@@ -37,6 +39,7 @@ actions!(
         ShowBookmarks,
         ShowHistory,
         CommandPalette,
+        Settings,
         Quit,
         ToggleFullScreen
     ]
@@ -47,34 +50,38 @@ actions!(
 #[action(namespace = address_bar, no_json)]
 pub struct SelectTab(pub u8);
 
-pub fn bindings() -> Vec<KeyBinding> {
-    let mut bindings = vec![
-        KeyBinding::new("cmd-l", FocusAddressBar, None),
-        KeyBinding::new("cmd-t", NewTab, None),
-        KeyBinding::new("cmd-n", NewWindow, None),
-        KeyBinding::new("cmd-w", CloseTab, None),
-        KeyBinding::new("cmd-shift-t", ReopenClosedTab, None),
-        KeyBinding::new("ctrl-tab", NextTab, None),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
-        KeyBinding::new("cmd-s", ToggleSidebar, None),
-        KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
-        KeyBinding::new("alt-cmd-left", PreviousSpace, None),
-        KeyBinding::new("alt-cmd-right", NextSpace, None),
-        KeyBinding::new("cmd-d", ToggleBookmark, None),
-        KeyBinding::new("alt-cmd-b", ShowBookmarks, None),
-        KeyBinding::new("cmd-y", ShowHistory, None),
-        KeyBinding::new("cmd-shift-p", CommandPalette, None),
-    ];
-    let keys = [
-        "cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9",
-    ];
-    bindings.extend(
-        (1..)
-            .zip(keys)
-            .map(|(n, keys)| KeyBinding::new(keys, SelectTab(n), None)),
-    );
-    bindings
+/// GPUI bindings for every command with keys in `keymap`; the page's
+/// keyboard handler reads the same map.
+pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
+    keymap
+        .bindings()
+        .into_iter()
+        .filter_map(|(shortcut, chord)| {
+            let action: Box<dyn Action> = match shortcut {
+                Shortcut::FocusAddressBar => Box::new(FocusAddressBar),
+                Shortcut::NewTab => Box::new(NewTab),
+                Shortcut::NewWindow => Box::new(NewWindow),
+                Shortcut::CloseTab => Box::new(CloseTab),
+                Shortcut::ReopenClosedTab => Box::new(ReopenClosedTab),
+                Shortcut::NextTab => Box::new(NextTab),
+                Shortcut::PreviousTab => Box::new(PreviousTab),
+                Shortcut::SelectTab(n) => Box::new(SelectTab(n)),
+                Shortcut::ToggleSidebar => Box::new(ToggleSidebar),
+                Shortcut::PreviousSpace => Box::new(PreviousSpace),
+                Shortcut::NextSpace => Box::new(NextSpace),
+                Shortcut::ToggleBookmark => Box::new(ToggleBookmark),
+                Shortcut::ShowBookmarks => Box::new(ShowBookmarks),
+                Shortcut::ShowHistory => Box::new(ShowHistory),
+                Shortcut::CommandPalette => Box::new(CommandPalette),
+                Shortcut::Settings => Box::new(Settings),
+                Shortcut::ToggleFullScreen => Box::new(ToggleFullScreen),
+                Shortcut::Quit => Box::new(Quit),
+            };
+            KeyBinding::load(&chord.to_string(), action, None, false, None, cx)
+                .inspect_err(|err| tracing::warn!(%err, keys = %chord, "unusable keys"))
+                .ok()
+        })
+        .collect()
 }
 
 const SLIDE: Duration = Duration::from_millis(180);
@@ -485,6 +492,7 @@ impl Render for AddressBar {
                 cx.listener(|this, _: &ShowHistory, _, _| this.shortcut(Shortcut::ShowHistory)),
             )
             .on_action(cx.listener(|this, _: &Quit, _, _| this.shortcut(Shortcut::Quit)))
+            .on_action(cx.listener(|this, _: &Settings, _, _| this.shortcut(Shortcut::Settings)))
             .on_action(cx.listener(|this, _: &ToggleFullScreen, _, _| {
                 this.shortcut(Shortcut::ToggleFullScreen)
             }))
