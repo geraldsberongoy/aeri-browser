@@ -2,16 +2,18 @@
 //!
 //! ```text
 //!   address bar   GPUI child window, above everything, shown when called
-//!   active tab    CEF window (one browser), child window inset as a card
+//!   strip overlay GPUI child window: the top chrome when it slides in
+//!   side overlay  GPUI child window: the sidebar when it slides in
+//!   active tab    CEF window (one browser), child window
 //!   other tabs    CEF windows, ordered out
-//!   frame         GPUI window: the strip with the traffic lights; owns
+//!   frame         GPUI window: pinned chrome with the traffic lights; owns
 //!                 resize, minimise, full screen, Spaces
 //! ```
 //!
-//! Child windows move with the frame and follow it into full screen. The
-//! active tab's window sits below the frame's strip, inset by `PAGE_INSET`
-//! with rounded corners, so the frame's own traffic lights stay uncovered.
-//! Tab windows have no title bar buttons of their own.
+//! Child windows move with the frame and follow it into full screen. With
+//! no chrome pinned (Phase 12's page-first default) the active tab's window
+//! covers the frame; pinned chrome reserves its side and the page sits
+//! beside it as an inset card. Tab windows have no title bar buttons.
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -35,10 +37,11 @@ use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
 };
 
+use super::reveal::{self, Reveal};
 use super::window_of;
 use crate::native_menu;
 use crate::shell::AppMsg;
-use crate::window_frame::STRIP_HEIGHT;
+use crate::window_frame::{SIDEBAR_WIDTH, STRIP_HEIGHT};
 
 /// Address bar geometry, in points. Like Zen's floating URL bar, the bar
 /// floats over the page, centred across and with its middle
@@ -60,13 +63,17 @@ const BAR_MIN_TOP: f64 = 8.0;
 /// edges, and the card's corner radius, in points.
 const PAGE_INSET: f64 = 8.0;
 const PAGE_RADIUS: f64 = 10.0;
+/// The side overlay's width beyond the sidebar: its margin and shadow.
+pub const SIDE_OVERLAY_EXTRA: f64 = 18.0;
 
 pub struct Frame {
-    window_id: u64,
+    pub(super) window_id: u64,
     tx: UnboundedSender<AppMsg>,
-    frame: RefCell<Option<Retained<NSWindow>>>,
+    pub(super) frame: RefCell<Option<Retained<NSWindow>>>,
     bar: RefCell<Option<Retained<NSWindow>>>,
-    tabs: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
+    /// The sidebar and the strip as they slide in, by [`Edge`] index.
+    pub(super) overlays: RefCell<Option<[Retained<NSWindow>; 2]>>,
+    pub(super) tabs: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
     active: Cell<Option<TabId>>,
     /// The tab window currently ordered in, which can lag `active` until the
     /// active tab's window exists.
@@ -74,8 +81,9 @@ pub struct Frame {
     bar_visible: Cell<bool>,
     /// Suggestion rows under the bar; its window grows downwards to fit.
     bar_rows: Cell<usize>,
-    /// Width of the sidebar left of the page card, in points (0: hidden).
-    sidebar: Cell<f64>,
+    /// Chrome that keeps its place beside the page: (sidebar, strip).
+    pinned: Cell<(bool, bool)>,
+    pub(super) reveal: Reveal,
     notifications: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
 
@@ -91,31 +99,49 @@ impl Frame {
             shown: RefCell::default(),
             bar_visible: Cell::new(false),
             bar_rows: Cell::new(0),
-            sidebar: Cell::new(0.0),
+            pinned: Cell::new((true, true)),
+            overlays: RefCell::default(),
+            reveal: Reveal::default(),
             notifications: RefCell::default(),
         })
     }
 
-    /// Adopts the GPUI frame window and the address bar window.
-    pub fn attach(self: &Rc<Self>, frame_view: *mut c_void, bar_view: *mut c_void) {
-        let (Some(frame), Some(bar)) = (window_of(frame_view), window_of(bar_view)) else {
-            tracing::error!("frame or address bar has no NSWindow");
+    /// Adopts the GPUI frame window, the address bar window and the two
+    /// overlay windows (sidebar, strip).
+    pub fn attach(
+        self: &Rc<Self>,
+        frame_view: *mut c_void,
+        bar_view: *mut c_void,
+        overlay_views: [*mut c_void; 2],
+    ) {
+        let (Some(frame), Some(bar), Some(side), Some(strip)) = (
+            window_of(frame_view),
+            window_of(bar_view),
+            window_of(overlay_views[0]),
+            window_of(overlay_views[1]),
+        ) else {
+            tracing::error!("frame, address bar or overlay has no NSWindow");
             return;
         };
-        // SAFETY: AppKit calls on the main thread.
-        unsafe {
-            frame.addChildWindow_ordered(&bar, NSWindowOrderingMode::Above);
-            // GPUI pop-ups float above every app; as a child, follow the frame.
-            bar.setLevel(frame.level());
-            bar.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenAuxiliary);
-            bar.setHasShadow(false);
+        for child in [&side, &strip, &bar] {
+            // SAFETY: AppKit calls on the main thread.
+            unsafe {
+                frame.addChildWindow_ordered(child, NSWindowOrderingMode::Above);
+                // GPUI pop-ups float above every app; as children, follow
+                // the frame.
+                child.setLevel(frame.level());
+                child.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenAuxiliary);
+                child.setHasShadow(false);
+            }
+            child.setAlphaValue(0.0);
+            child.setIgnoresMouseEvents(true);
+            share_parent_key_state(child);
         }
-        bar.setAlphaValue(0.0);
-        bar.setIgnoresMouseEvents(true);
-        share_parent_key_state(&bar);
         *self.frame.borrow_mut() = Some(frame.clone());
         *self.bar.borrow_mut() = Some(bar);
+        *self.overlays.borrow_mut() = Some([side, strip]);
         self.observe(&frame);
+        reveal::register(self);
         self.layout();
     }
 
@@ -178,27 +204,40 @@ impl Frame {
         }
     }
 
-    /// Where the active tab's card goes, in screen coordinates: below the
-    /// strip, right of the sidebar when it is shown.
+    /// Pinned chrome in effect: full screen pins nothing (design §4.1).
+    pub(super) fn pinned_now(&self, frame: &NSWindow) -> (bool, bool) {
+        if frame.styleMask().contains(NSWindowStyleMask::FullScreen) {
+            (false, false)
+        } else {
+            self.pinned.get()
+        }
+    }
+
+    /// Where the active tab's window goes, in screen coordinates: the whole
+    /// window with nothing pinned, else a card beside the pinned chrome.
     fn page_rect(&self, frame: &NSWindow) -> NSRect {
         let rect = frame.frame();
-        let left = match self.sidebar.get() {
-            0.0 => PAGE_INSET,
-            sidebar => sidebar,
-        };
+        let (side, top) = self.pinned_now(frame);
+        if !side && !top {
+            return rect;
+        }
+        let left = if side { SIDEBAR_WIDTH } else { PAGE_INSET };
+        let top = if top { STRIP_HEIGHT } else { PAGE_INSET };
         NSRect::new(
             NSPoint::new(rect.origin.x + left, rect.origin.y + PAGE_INSET),
             NSSize::new(
                 (rect.size.width - left - PAGE_INSET).max(1.0),
-                (rect.size.height - STRIP_HEIGHT - PAGE_INSET).max(1.0),
+                (rect.size.height - top - PAGE_INSET).max(1.0),
             ),
         )
     }
 
-    /// Shows or hides the sidebar (`width` 0) and refits the page.
-    pub fn set_sidebar(&self, width: f64) {
-        self.sidebar.set(width);
-        self.layout();
+    /// Pins or unpins the sidebar and the strip, and refits the page.
+    pub fn set_pinned(&self, sidebar: bool, strip: bool) {
+        if self.pinned.replace((sidebar, strip)) != (sidebar, strip) {
+            self.hide_chrome();
+            self.layout();
+        }
     }
 
     fn active_window(&self) -> Option<Retained<NSWindow>> {
@@ -210,7 +249,8 @@ impl Frame {
             .map(|(_, w)| w.clone())
     }
 
-    /// Fits every tab window to the page card and places the address bar.
+    /// Fits every tab window to the page, places the overlays along their
+    /// edges and the address bar over the page.
     pub fn layout(&self) {
         let Some(frame) = self.frame.borrow().clone() else {
             return;
@@ -218,6 +258,33 @@ impl Frame {
         let page = self.page_rect(&frame);
         for (_, tab) in self.tabs.borrow().iter() {
             tab.setFrame_display(page, true);
+        }
+        if let Some([side, strip]) = self.overlays.borrow().as_ref() {
+            let rect = frame.frame();
+            let window_top = rect.origin.y + rect.size.height;
+            // A pinned strip stays; the sliding sidebar comes in below it.
+            let below = if self.pinned_now(&frame).1 {
+                STRIP_HEIGHT
+            } else {
+                0.0
+            };
+            side.setFrame_display(
+                NSRect::new(
+                    rect.origin,
+                    NSSize::new(
+                        SIDEBAR_WIDTH + SIDE_OVERLAY_EXTRA,
+                        (rect.size.height - below).max(1.0),
+                    ),
+                ),
+                true,
+            );
+            strip.setFrame_display(
+                NSRect::new(
+                    NSPoint::new(rect.origin.x, window_top - STRIP_HEIGHT),
+                    NSSize::new(rect.size.width, STRIP_HEIGHT),
+                ),
+                true,
+            );
         }
         if let Some(bar) = self.bar.borrow().as_ref() {
             // Centred over the page, not the window.
@@ -261,21 +328,25 @@ impl Frame {
             frame.removeChildWindow(&previous);
             previous.orderOut(None);
         }
-        self.raise_bar();
+        self.raise_children();
         if !self.bar_visible.get() {
             next.makeKeyWindow();
         }
     }
 
-    /// Keeps the address bar above whichever tab window is in front.
-    fn raise_bar(&self) {
-        let (Some(frame), Some(bar)) = (self.frame.borrow().clone(), self.bar.borrow().clone())
-        else {
+    /// Keeps the overlays and then the address bar above whichever tab
+    /// window is in front.
+    fn raise_children(&self) {
+        let Some(frame) = self.frame.borrow().clone() else {
             return;
         };
-        frame.removeChildWindow(&bar);
-        // SAFETY: AppKit call on the main thread.
-        unsafe { frame.addChildWindow_ordered(&bar, NSWindowOrderingMode::Above) };
+        let overlays = self.overlays.borrow().clone();
+        let bar = self.bar.borrow().clone();
+        for child in overlays.iter().flatten().chain(bar.iter()) {
+            frame.removeChildWindow(child);
+            // SAFETY: AppKit call on the main thread.
+            unsafe { frame.addChildWindow_ordered(child, NSWindowOrderingMode::Above) };
+        }
     }
 
     /// Fits the bar's window to `rows` suggestion rows (0: the pill only).
@@ -312,6 +383,12 @@ impl Frame {
     pub fn toggle_fullscreen(&self) {
         if let Some(frame) = self.frame.borrow().as_ref() {
             frame.toggleFullScreen(None);
+        }
+    }
+
+    pub fn minimise(&self) {
+        if let Some(frame) = self.frame.borrow().as_ref() {
+            frame.miniaturize(None);
         }
     }
 

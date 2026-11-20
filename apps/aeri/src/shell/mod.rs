@@ -27,6 +27,7 @@
 
 mod appearance;
 mod bar;
+mod chrome;
 mod favourites;
 mod library;
 mod msg;
@@ -65,7 +66,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{App, Menu, MenuItem, WindowHandle, actions};
 
 pub use self::bar::{BarRow, Pick};
-pub use self::msg::{AppMsg, Nav, TabCommand};
+pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand};
 use self::profiles::remove_deleted_profiles;
 use self::quit::quit_on_signals;
 use self::resting::Resting;
@@ -169,6 +170,8 @@ struct Shell {
     library: Option<(WindowHandle<Library>, ProfileId)>,
     /// Resting tabs and the resource view.
     resting: Resting,
+    /// Which chrome is pinned (Phase 12).
+    layout: chrome::Layout,
     tx: UnboundedSender<AppMsg>,
     quitting: bool,
     effects: RefCell<Vec<Effect>>,
@@ -258,6 +261,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     mac::intercept_termination(send(|| AppMsg::Quit));
     quit_on_signals(tx.clone());
     let resting = Resting::start(&db, config.rest_after, tx.clone(), cx);
+    let layout = chrome::Layout::load(&db);
 
     let mut shell = Shell {
         profiles: db.profiles()?,
@@ -275,6 +279,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         space_editor: None,
         library: None,
         resting,
+        layout,
         tx,
         quitting: false,
         effects: RefCell::default(),
@@ -449,6 +454,7 @@ impl Shell {
             AppMsg::MemoryPressure(level) => self.memory_pressure(level, cx),
             AppMsg::Resources(msg) => self.resources_msg(msg, cx),
             AppMsg::SystemAppearanceChanged => self.system_appearance_changed(cx),
+            AppMsg::Chrome(msg) => self.chrome_msg(msg, cx),
             AppMsg::Quit => self.quit(cx),
         }
         self.quitting && self.windows.is_empty()
@@ -471,7 +477,7 @@ impl Shell {
 }
 
 /// The GPUI window's content `NSView`.
-fn content_view(window: &gpui::Window) -> Option<*mut std::ffi::c_void> {
+pub(crate) fn content_view(window: &gpui::Window) -> Option<*mut std::ffi::c_void> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     match HasWindowHandle::window_handle(window).ok()?.as_raw() {
         RawWindowHandle::AppKit(handle) => Some(handle.ns_view.as_ptr()),

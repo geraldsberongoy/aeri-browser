@@ -67,7 +67,8 @@
 | Slice | State |
 | --- | --- |
 | 1 | done |
-| 2–8 | pending |
+| 2 | done (slide motion lands in slice 8) |
+| 3–8 | pending |
 
 ## Evidence ledger
 
@@ -81,10 +82,19 @@
 | Choosing Light repaints every window and pages follow | Observed | palette "Appearance: Light": chrome light; `matchMedia('(prefers-color-scheme: dark)')` true before, false after (CDP) |
 | Theme and appearance survive relaunch | Observed | Tide restored from `app.db` after quit and relaunch |
 | Following macOS light/dark and accessibility changes live | Inferred | observers on `AppleInterfaceThemeChangedNotification` and the workspace accessibility notification; not toggled live (changing system appearance needs an automation prompt) |
+| A fresh install opens page-first, with the sidebar called once to show the note | Observed | fresh data dir: page covers the window; sidebar card with Aeri's window buttons, the note, Pin |
+| Resting 120 ms in the left or top lane slides the chrome in; leaving or a click on the page sends it away | Observed | pointer moves at x=1 pt and y=1 pt; `chrome slides` log lines and screenshots |
+| Transient chrome floats over CEF without moving the page | Observed | GPUI overlay child windows ordered between the tab window and the bar; page rect unchanged while shown |
+| Pin and Auto-hide persist and lay the page out beside pinned chrome | Observed | Pin buttons and palette commands; relaunch keeps the layout; side-only layout carries real traffic lights in the sidebar's top row |
+| ⌘S steps a pinned sidebar aside and back; calls an unpinned one | Observed | screenshots before and after ⌘S |
+| Aeri's window buttons work while the strip slides in; full screen pins nothing and drops them | Observed | proxy zoom entered full screen; in full screen the sliding sidebar shows no window buttons and no Pin |
 
 ## Residual risks
 
 - Pages follow only an app-wide colour scheme unless CEF allows per-browser
   emulation (design §3.7); per-space page scheme may not ship.
-- Window translucency behind GPUI and transient chrome over CEF child
-  windows need spikes (slices 2 and 5).
+- Window translucency behind GPUI needs a spike (slice 5).
+- Proxy window buttons lack AppKit's tiling menu on the green button; the
+  Window menu still has it.
+- With nothing pinned the page reaches the window edge, so the inner few
+  points of the edge resize from outside the window only.

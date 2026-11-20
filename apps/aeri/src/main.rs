@@ -5,6 +5,7 @@
 //! initializes inside GPUI's `run` callback.
 
 mod address_bar;
+mod chrome_overlay;
 mod library;
 mod mac;
 mod native_menu;

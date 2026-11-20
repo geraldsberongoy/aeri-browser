@@ -9,7 +9,8 @@ use super::bar::{BarRow, Pick, suggestion_row, typed_row};
 use super::passwords::PASSWORDS_PAGE;
 use super::session::now;
 use super::trust::{CLEAR_DATA_PAGE, DOWNLOADS_PAGE};
-use super::{Shell, TabCommand};
+use super::{ChromeMsg, Shell, TabCommand};
+use crate::mac::Edge;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaletteCommand {
@@ -30,6 +31,8 @@ pub enum PaletteCommand {
     SiteSettings,
     OpenInDefaultBrowser,
     ToggleSidebar,
+    PinSidebar,
+    PinTopBar,
     ToggleFullScreen,
     NewSpace,
     EditSpace,
@@ -60,6 +63,8 @@ const COMMANDS: &[(PaletteCommand, &str)] = &[
     (PaletteCommand::SiteSettings, ""),
     (PaletteCommand::OpenInDefaultBrowser, ""),
     (PaletteCommand::ToggleSidebar, "⌘S"),
+    (PaletteCommand::PinSidebar, ""),
+    (PaletteCommand::PinTopBar, ""),
     (PaletteCommand::ToggleFullScreen, "⌃⌘F"),
     (PaletteCommand::NewSpace, ""),
     (PaletteCommand::EditSpace, ""),
@@ -178,6 +183,10 @@ impl Shell {
             PaletteCommand::SiteSettings => "Site Settings…",
             PaletteCommand::OpenInDefaultBrowser => "Open in Default Browser",
             PaletteCommand::ToggleSidebar => "Show or Hide Sidebar",
+            PaletteCommand::PinSidebar if self.layout.sidebar => "Auto-hide Sidebar",
+            PaletteCommand::PinSidebar => "Pin Sidebar",
+            PaletteCommand::PinTopBar if self.layout.top => "Auto-hide Top Bar",
+            PaletteCommand::PinTopBar => "Pin Top Bar",
             PaletteCommand::ToggleFullScreen => "Enter or Exit Full Screen",
             PaletteCommand::NewSpace => "New Space…",
             PaletteCommand::EditSpace => "Edit Space…",
@@ -239,6 +248,20 @@ impl Shell {
             PaletteCommand::ClearBrowsingData => self.open_page(window_id, CLEAR_DATA_PAGE, cx),
             PaletteCommand::ManagePasswords => self.open_page(window_id, PASSWORDS_PAGE, cx),
             PaletteCommand::ShowResources => self.show_resources(window_id, cx),
+            PaletteCommand::PinSidebar => self.chrome_msg(
+                ChromeMsg::Pin {
+                    edge: Edge::Side,
+                    pinned: !self.layout.sidebar,
+                },
+                cx,
+            ),
+            PaletteCommand::PinTopBar => self.chrome_msg(
+                ChromeMsg::Pin {
+                    edge: Edge::Top,
+                    pinned: !self.layout.top,
+                },
+                cx,
+            ),
             _ => {}
         }
     }

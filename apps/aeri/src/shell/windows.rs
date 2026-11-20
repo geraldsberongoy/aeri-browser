@@ -24,8 +24,9 @@ use super::spaces::Parked;
 use super::tabs::{TabEntry, TabStart};
 use super::{NEW_TAB_URL, Nav, Shell, content_view};
 use crate::address_bar::AddressBar;
-use crate::mac::{BAR_HEIGHT, Frame};
-use crate::window_frame::{SIDEBAR_WIDTH, SidebarTab, SpaceChip, TRAFFIC_LIGHTS, WindowFrame};
+use crate::chrome_overlay::ChromeOverlay;
+use crate::mac::{BAR_HEIGHT, Edge, Frame};
+use crate::window_frame::{SidebarTab, SpaceChip, TRAFFIC_LIGHTS, WindowFrame};
 
 /// Where a tab lives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +47,10 @@ pub(super) struct AeriWindow {
     pub(super) bar_shown: bool,
     /// The bar is the command palette.
     pub(super) palette: bool,
-    pub(super) sidebar: bool,
+    /// ⌘S stepped the pinned sidebar aside in this window.
+    pub(super) sidebar_hidden: bool,
+    /// The sidebar and the strip as they slide in, by [`Edge`] index.
+    pub(super) overlays: [gpui::WindowHandle<ChromeOverlay>; 2],
     /// The space shown.
     pub(super) space: SpaceId,
     /// The shown space's tabs.
@@ -256,17 +260,29 @@ impl Shell {
                 return;
             }
         };
-        let frame_view = frame_window
-            .update(cx, |_, window, _| content_view(window))
-            .ok()
-            .flatten();
-        let bar_view = bar
-            .update(cx, |_, window, _| content_view(window))
-            .ok()
-            .flatten();
-
+        let Some(overlays) = super::chrome::open_overlays(&frame_window, cx) else {
+            let _ = bar.update(cx, |_, window, _| window.remove_window());
+            let _ = frame_window.update(cx, |_, window, _| window.remove_window());
+            self.park(profile, seed.space, tabs, favourite);
+            return;
+        };
+        let view = |handle: Option<gpui::AnyWindowHandle>, cx: &mut App| {
+            handle.and_then(|h| {
+                h.update(cx, |_, window, _| content_view(window))
+                    .ok()
+                    .flatten()
+            })
+        };
+        let frame_view = view(Some(frame_window.into()), cx);
+        let bar_view = view(Some(bar.into()), cx);
+        let overlay_views = [
+            view(Some(overlays[0].into()), cx),
+            view(Some(overlays[1].into()), cx),
+        ];
         super::spaces::ready_to_show(&mut tabs, favourite);
         let frame = Frame::new(id, self.tx.clone());
+        // Before AppKit adopts the windows, so they start in place.
+        frame.set_pinned(self.layout.sidebar, self.layout.top);
         self.windows.push(AeriWindow {
             id,
             profile,
@@ -275,7 +291,8 @@ impl Shell {
             bar,
             bar_shown: false,
             palette: false,
-            sidebar: true,
+            sidebar_hidden: false,
+            overlays,
             space: seed.space,
             tabs,
             favourite,
@@ -289,10 +306,16 @@ impl Shell {
         // The tab the window opens on loads even if another tab (the uBO
         // offer, say) is shown before the page work runs.
         let first = self.window(id).and_then(AeriWindow::shown);
+        let hint = self.layout.hint && !self.layout.sidebar;
         self.later(move |shell| {
-            if let (Some(frame_view), Some(bar_view)) = (frame_view, bar_view) {
-                frame.set_sidebar(SIDEBAR_WIDTH);
-                frame.attach(frame_view, bar_view);
+            if let (Some(frame_view), Some(bar_view), [Some(side), Some(strip)]) =
+                (frame_view, bar_view, overlay_views)
+            {
+                frame.attach(frame_view, bar_view, [side, strip]);
+                // First run: show where the sidebar went, with its note.
+                if hint {
+                    frame.call(Edge::Side);
+                }
             }
             shell.adopt_pages(id);
             if let Some(first) = first {
@@ -300,6 +323,7 @@ impl Shell {
             }
             shell.present(id);
         });
+        self.apply_layout(id, cx);
         self.refresh_window(id, cx);
         if starts_blank {
             self.show_bar(id, cx);
@@ -485,19 +509,6 @@ impl Shell {
         self.later(move |_| page.execute(&command));
     }
 
-    pub(super) fn toggle_sidebar(&mut self, window_id: u64, cx: &mut App) {
-        let Some(w) = self.window_mut(window_id) else {
-            return;
-        };
-        w.sidebar = !w.sidebar;
-        let shown = w.sidebar;
-        let _ = w
-            .frame_window
-            .update(cx, |frame, _, cx| frame.set_sidebar_shown(shown, cx));
-        let frame = w.frame.clone();
-        self.later(move |_| frame.set_sidebar(if shown { SIDEBAR_WIDTH } else { 0.0 }));
-    }
-
     /// Closes the window. Its space stays with its tabs, which go unseen as
     /// their pages close. A profile's last window is remembered as its
     /// session first, and takes every page of the profile with it.
@@ -605,6 +616,9 @@ impl Shell {
         let frame = w.frame.clone();
         self.later(move |_| frame.detach());
         let _ = w.bar.update(cx, |_, window, _| window.remove_window());
+        for overlay in w.overlays {
+            let _ = overlay.update(cx, |_, window, _| window.remove_window());
+        }
         let _ = w
             .frame_window
             .update(cx, |_, window, _| window.remove_window());

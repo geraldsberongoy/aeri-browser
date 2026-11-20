@@ -9,6 +9,7 @@
 mod appearance;
 mod frame;
 mod pressure;
+mod reveal;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -29,6 +30,7 @@ pub use self::frame::{
     BAR_HEIGHT, Frame, MAX_VISIBLE_SUGGESTIONS, SUGGESTION_CHROME, SUGGESTION_HEIGHT,
 };
 pub use self::pressure::{Pressure, watch_memory_pressure};
+pub use self::reveal::Edge;
 
 /// The `NSWindow` owning a content `NSView`.
 pub(super) fn window_of(view: *mut c_void) -> Option<Retained<NSWindow>> {
@@ -44,6 +46,23 @@ pub(super) fn window_of(view: *mut c_void) -> Option<Retained<NSWindow>> {
 pub fn bring_to_front(view: *mut c_void) {
     if let Some(window) = window_of(view) {
         window.makeKeyAndOrderFront(None);
+    }
+}
+
+/// From a press in an overlay of a frame (a child window): moves the frame
+/// with the pointer, or on a double-click zooms it. Call inside the mouse
+/// down handler, while AppKit's current event is that press.
+pub fn drag_parent(view: *mut c_void, double_click: bool) {
+    let Some(parent) = window_of(view).and_then(|w| w.parentWindow()) else {
+        return;
+    };
+    if double_click {
+        parent.zoom(None);
+        return;
+    }
+    let mtm = objc2::MainThreadMarker::from(&*parent);
+    if let Some(event) = objc2_app_kit::NSApplication::sharedApplication(mtm).currentEvent() {
+        parent.performWindowDragWithEvent(&event);
     }
 }
 

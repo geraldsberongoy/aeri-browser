@@ -1,10 +1,11 @@
 //! The GPUI frame window of an Aeri window. It owns the window's size,
-//! position, full screen and Space, and draws the strip along the top: the
-//! window's own traffic lights, back, forward and reload, and at the right
-//! the trust notices (a refused popup, downloads) and the window's profile
-//! (stage 1: every window shows its profile). Below the strip, at the left,
-//! the sidebar lists the window's tabs; the active tab's window sits beside
-//! it as a rounded card (`mac::Frame::layout`).
+//! position, full screen and Space, and draws the chrome that is pinned:
+//! the strip along the top (the window's own traffic lights, back, forward
+//! and reload, and at the right the trust notices and the window's
+//! profile) and the sidebar listing the window's tabs. The page sits beside
+//! pinned chrome as a rounded card, or covers the frame when nothing is
+//! pinned (`mac::Frame::layout`); unpinned chrome slides in over the page
+//! in its own windows (`chrome_overlay`), drawn by the same view.
 
 mod sidebar;
 
@@ -17,7 +18,8 @@ use gpui::{
     div, point, prelude::*, px, rgb,
 };
 
-use crate::shell::{AppMsg, Nav};
+use crate::mac::Edge;
+use crate::shell::{AppMsg, ChromeMsg, Nav};
 use crate::theme;
 
 /// Height of the strip, in points; `mac::Frame` insets the page below it.
@@ -64,11 +66,25 @@ pub struct WindowFrame {
     tabs: Vec<SidebarTab>,
     spaces: Vec<SpaceChip>,
     address: String,
-    sidebar_shown: bool,
+    /// Chrome kept beside the page; the rest slides in.
+    sidebar_pinned: bool,
+    top_pinned: bool,
+    /// The one-time note on where the chrome went.
+    hint: bool,
     /// The shown tab's page had a popup refused.
     popup_blocked: bool,
     /// The profile's downloads this session, as the strip labels them.
     downloads: Option<String>,
+    /// The frame is in full screen (overlays can't ask their own window).
+    fullscreen: bool,
+}
+
+/// Which window draws a piece of chrome: the frame (pinned) or an overlay
+/// (sliding in over the page, with Aeri's own window buttons).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Host {
+    Frame,
+    Overlay,
 }
 
 impl WindowFrame {
@@ -94,9 +110,12 @@ impl WindowFrame {
             tabs: Vec::new(),
             spaces: Vec::new(),
             address: String::new(),
-            sidebar_shown: true,
+            sidebar_pinned: true,
+            top_pinned: true,
+            hint: false,
             popup_blocked: false,
             downloads: None,
+            fullscreen: false,
         }
     }
 
@@ -124,9 +143,10 @@ impl WindowFrame {
         }
     }
 
-    pub fn set_sidebar_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
-        if self.sidebar_shown != shown {
-            self.sidebar_shown = shown;
+    /// Which chrome is pinned, and whether to show the one-time note.
+    pub fn set_layout(&mut self, sidebar: bool, top: bool, hint: bool, cx: &mut Context<Self>) {
+        if (self.sidebar_pinned, self.top_pinned, self.hint) != (sidebar, top, hint) {
+            (self.sidebar_pinned, self.top_pinned, self.hint) = (sidebar, top, hint);
             cx.notify();
         }
     }
@@ -291,28 +311,13 @@ pub fn avatar(profile: &Profile, size: f32) -> impl IntoElement {
         .child(SharedString::from(profile.monogram()))
 }
 
-impl Render for WindowFrame {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Full screen hides the traffic lights; the controls take their place.
-        let left = if window.is_fullscreen() {
-            PAGE_EDGE
-        } else {
-            CONTROLS_LEFT
-        };
-        // The strip's empty parts move the window; a double-click zooms (or
-        // minimises, per System Settings). The buttons sit between them, so
-        // a press on one is never a drag.
-        let drag = || {
-            div()
-                .h_full()
-                .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _| {
-                    if event.click_count >= 2 {
-                        window.titlebar_double_click();
-                    } else {
-                        window.start_window_move();
-                    }
-                })
-        };
+impl WindowFrame {
+    /// The strip: back, forward, reload, the trust notices and the profile.
+    /// Its empty parts move the window; a double-click zooms (or minimises,
+    /// per System Settings). The buttons sit between them, so a press on
+    /// one is never a drag. In an overlay, Aeri draws the window buttons
+    /// (the real ones are under the page).
+    pub fn strip(&self, host: Host, cx: &mut Context<Self>) -> gpui::Div {
         let strip = div()
             .flex()
             .flex_none()
@@ -320,11 +325,11 @@ impl Render for WindowFrame {
             .items_center()
             .gap(px(2.))
             .h(px(STRIP_HEIGHT as f32))
-            .child(drag().w(px(left)))
+            .child(self.lights(host, cx))
             .child(self.button("back", "←", self.can_go_back, Nav::Back, cx))
             .child(self.button("forward", "→", self.can_go_forward, Nav::Forward, cx))
             .child(self.button("reload", "↻", true, Nav::Reload, cx))
-            .child(drag().flex_1())
+            .child(drag(host).flex_1())
             .when(self.popup_blocked, |strip| {
                 strip.child(self.notice(
                     "popup-blocked",
@@ -340,11 +345,127 @@ impl Render for WindowFrame {
                     |window, x, y| AppMsg::DownloadsMenu { window, x, y },
                     cx,
                 ))
+            });
+        strip
+            .when(host == Host::Overlay, |strip| {
+                strip.child(self.pin_button(Edge::Top, host, cx))
             })
             .child(self.profile_badge(cx))
-            .child(drag().w(px(PAGE_EDGE)));
-        theme::backdrop(div().size_full().flex().flex_col(), cx)
-            .child(strip)
-            .when(self.sidebar_shown, |frame| frame.child(self.sidebar(cx)))
+            .child(drag(host).w(px(PAGE_EDGE)))
+    }
+
+    /// The traffic lights' place at the strip's left: room for AppKit's in
+    /// the frame, Aeri's own in an overlay; in full screen (no lights) the
+    /// controls start at the edge.
+    fn lights(&self, host: Host, cx: &mut Context<Self>) -> gpui::Div {
+        if self.fullscreen {
+            return drag(host).w(px(PAGE_EDGE));
+        }
+        let lights = drag(host).w(px(CONTROLS_LEFT));
+        if host == Host::Frame {
+            return lights;
+        }
+        let id = self.window_id;
+        let light = |name: &'static str, colour: u32, msg: fn(u64) -> ChromeMsg| {
+            div()
+                .id(name)
+                .size(px(12.))
+                .rounded_full()
+                .bg(rgb(colour))
+                .border_1()
+                .border_color(gpui::rgba(0x0000_0026))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                    this.send(AppMsg::Chrome(msg(id)));
+                }))
+        };
+        // AppKit's own colours: they mean the same in every theme.
+        lights
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .pl(TRAFFIC_LIGHTS.x)
+            .child(light("close", 0xff5f57, |window| ChromeMsg::Close {
+                window,
+            }))
+            .child(light("minimise", 0xfebc2e, |window| ChromeMsg::Minimise {
+                window,
+            }))
+            .child(light("zoom", 0x28c840, |window| ChromeMsg::Zoom { window }))
+    }
+
+    /// Keeps the chrome at `edge` beside the page (in an overlay), or lets
+    /// it slide again (in the frame).
+    pub(crate) fn pin_button(
+        &self,
+        edge: Edge,
+        host: Host,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let t = theme::tokens(cx);
+        let pinned = host == Host::Frame;
+        // Full screen pins nothing; the button would do nothing there.
+        let hidden = self.fullscreen;
+        div()
+            .id(match edge {
+                Edge::Side => "pin-sidebar",
+                Edge::Top => "pin-strip",
+            })
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(24.))
+            .px(px(8.))
+            .rounded(px(6.))
+            .text_size(px(12.))
+            .text_color(theme::c(t.text_secondary))
+            .hover(move |style| style.bg(theme::c(t.hover)))
+            .active(move |style| style.bg(theme::c(t.pressed)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                this.send(AppMsg::Chrome(ChromeMsg::Pin {
+                    edge,
+                    pinned: !pinned,
+                }));
+            }))
+            .when(hidden, |button| button.invisible())
+            .child(if pinned { "Auto-hide" } else { "Pin" })
+    }
+}
+
+/// An empty part of the chrome that moves the window.
+fn drag(host: Host) -> gpui::Div {
+    div().h_full().on_mouse_down(
+        MouseButton::Left,
+        move |event: &MouseDownEvent, window, _| {
+            let double = event.click_count >= 2;
+            match host {
+                Host::Frame if double => window.titlebar_double_click(),
+                Host::Frame => window.start_window_move(),
+                Host::Overlay => {
+                    if let Some(view) = crate::shell::content_view(window) {
+                        crate::mac::drag_parent(view, double);
+                    }
+                }
+            }
+        },
+    )
+}
+
+impl Render for WindowFrame {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.fullscreen != window.is_fullscreen() {
+            // The overlays draw from this view too: let them catch up.
+            self.fullscreen = window.is_fullscreen();
+            cx.notify();
+        }
+        let frame = theme::backdrop(div().size_full().flex().flex_col(), cx);
+        // With nothing pinned the page covers the frame: draw nothing more.
+        frame
+            .when(self.top_pinned, |frame| {
+                frame.child(self.strip(Host::Frame, cx))
+            })
+            .when(self.sidebar_pinned, |frame| {
+                frame.child(self.sidebar(Host::Frame, cx))
+            })
     }
 }

@@ -8,7 +8,7 @@ use aeri_core::ids::{ProfileId, SpaceId, TabId};
 use super::Pick;
 use super::trust::DownloadPick;
 use crate::library::LibraryMsg;
-use crate::mac::Pressure;
+use crate::mac::{Edge, Pressure};
 use crate::resource_view::ResourceMsg;
 
 pub enum AppMsg {
@@ -174,7 +174,30 @@ pub enum AppMsg {
     Resources(ResourceMsg),
     /// macOS switched light/dark or an accessibility display setting.
     SystemAppearanceChanged,
+    Chrome(ChromeMsg),
     Quit,
+}
+
+/// The page-first chrome (Phase 12).
+#[derive(Clone, Copy, Debug)]
+pub enum ChromeMsg {
+    /// Keep the chrome at `edge` beside the page, or let it slide in.
+    Pin {
+        edge: Edge,
+        pinned: bool,
+    },
+    /// Aeri's own window buttons, drawn while the strip slides in.
+    Close {
+        window: u64,
+    },
+    Minimise {
+        window: u64,
+    },
+    Zoom {
+        window: u64,
+    },
+    /// The one-time note on the page-first layout was read.
+    DismissHint,
 }
 
 /// The strip's history buttons.

@@ -9,8 +9,9 @@ use gpui::{
     prelude::*, px, rgb,
 };
 
-use super::{PAGE_EDGE, SIDEBAR_WIDTH, STRIP_HEIGHT, SidebarTab, WindowFrame};
-use crate::shell::{AppMsg, TabCommand};
+use super::{Host, PAGE_EDGE, SIDEBAR_WIDTH, STRIP_HEIGHT, SidebarTab, WindowFrame, drag};
+use crate::mac::Edge;
+use crate::shell::{AppMsg, ChromeMsg, Nav, TabCommand};
 use crate::theme;
 
 /// A sidebar row being dragged to a new position; also its drag preview.
@@ -44,10 +45,18 @@ impl WindowFrame {
     /// one chip per space. A click shows a tab, a middle click or × closes
     /// it, a right click opens its menu. Dragging moves a tab within its
     /// list, between the favourites and the space's tabs, or onto another
-    /// space's chip.
-    pub(super) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// space's chip. Without a pinned strip, the sidebar's top row carries
+    /// the window buttons and history.
+    pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let t = theme::tokens(cx);
+        // Menus open in the frame's coordinates; an overlay under a pinned
+        // strip starts lower.
+        let dy = if host == Host::Overlay && self.top_pinned {
+            STRIP_HEIGHT as f32
+        } else {
+            0.
+        };
         let mut list = div()
             .id("sidebar-tabs")
             .flex()
@@ -88,7 +97,7 @@ impl WindowFrame {
         let tabs: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
         let pinned = tabs.iter().filter(|t| t.pinned).count();
         for (index, tab) in favourites.iter().enumerate() {
-            list = list.child(self.row(index, tab, cx));
+            list = list.child(self.row(index, tab, dy, cx));
         }
         if !favourites.is_empty() {
             list = list.child(divider());
@@ -97,9 +106,22 @@ impl WindowFrame {
             if index == pinned && pinned > 0 {
                 list = list.child(divider());
             }
-            list = list.child(self.row(index, tab, cx));
+            list = list.child(self.row(index, tab, dy, cx));
         }
-        div()
+        let head = (!self.top_pinned).then(|| {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(2.))
+                .h(px(STRIP_HEIGHT as f32))
+                .child(self.lights(host, cx))
+                .child(self.button("back", "←", self.can_go_back, Nav::Back, cx))
+                .child(self.button("forward", "→", self.can_go_forward, Nav::Forward, cx))
+                .child(self.button("reload", "↻", true, Nav::Reload, cx))
+                .child(drag(host).flex_1())
+        });
+        let body = div()
             .id("sidebar")
             .flex()
             .flex_col()
@@ -109,10 +131,58 @@ impl WindowFrame {
             .px(px(PAGE_EDGE + 2.))
             .pb(px(PAGE_EDGE))
             .gap(px(4.))
+            .when(head.is_none() && host == Host::Overlay, |body| {
+                body.pt(px(PAGE_EDGE))
+            })
+            .when(self.hint, |body| body.child(self.hint(cx)))
             .child(self.address_row(cx))
-            .child(self.space_header(cx))
+            .child(self.space_header(dy, cx))
             .child(list)
-            .child(self.space_switcher(cx))
+            .child(self.space_switcher(host, cx));
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .w(px(SIDEBAR_WIDTH as f32))
+            .children(head)
+            .child(body)
+    }
+
+    /// The one-time note on where the chrome went (page-first default).
+    fn hint(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme::tokens(cx);
+        div()
+            .id("layout-hint")
+            .flex()
+            .flex_none()
+            .flex_col()
+            .gap(px(4.))
+            .p(px(10.))
+            .rounded(px(8.))
+            .bg(theme::c(t.accent_tint))
+            .text_size(px(12.))
+            .text_color(theme::c(t.text))
+            .child("The page has the whole window now.")
+            .child(div().text_color(theme::c(t.text_secondary)).child(
+                "Point at the left or top edge, or press ⌘S, to bring the sidebar and bar \
+                 back. Pin keeps them.",
+            ))
+            .child(
+                div()
+                    .id("hint-ok")
+                    .flex_none()
+                    .self_end()
+                    .px(px(8.))
+                    .py(px(2.))
+                    .rounded(px(6.))
+                    .text_color(theme::c(t.accent_text))
+                    .hover(move |style| style.bg(theme::c(t.hover)))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, _| {
+                        this.send(AppMsg::Chrome(ChromeMsg::DismissHint));
+                    }))
+                    .child("Got It"),
+            )
     }
 
     /// The shown tab's address, resting at the top of the sidebar; a click
@@ -161,7 +231,7 @@ impl WindowFrame {
 
     /// The shown space's colour, icon and name; a click opens the space
     /// menu below it.
-    fn space_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn space_header(&self, dy: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let t = theme::tokens(cx);
         let current = self.spaces.iter().find(|s| s.current);
@@ -183,12 +253,12 @@ impl WindowFrame {
             .hover(move |style| style.bg(theme::c(t.hover)))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, _| {
+                cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                    // Hangs just below the pointer, which is on the header.
                     this.send(AppMsg::SpaceMenu {
                         window,
                         x: PAGE_EDGE + 10.,
-                        // Below the address row (30 + 4) and the header (30).
-                        y: STRIP_HEIGHT as f32 + 64.,
+                        y: f32::from(event.position.y) + dy + 18.,
                     });
                 }),
             )
@@ -221,7 +291,7 @@ impl WindowFrame {
 
     /// One chip per space (click to show it, drop a tab to move it there)
     /// and a chip for a new space.
-    fn space_switcher(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn space_switcher(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let t = theme::tokens(cx);
         let chip = |id: gpui::ElementId| {
@@ -289,11 +359,19 @@ impl WindowFrame {
                 }))
                 .child("+"),
         )
+        .child(div().flex_1())
+        .child(self.pin_button(Edge::Side, host, cx))
     }
 
     /// A tab's row. `index` is its place in its own list (favourites, or
     /// the space's tabs); a drop on the row moves the dragged tab there.
-    fn row(&self, index: usize, tab: &SidebarTab, cx: &mut Context<Self>) -> impl IntoElement {
+    fn row(
+        &self,
+        index: usize,
+        tab: &SidebarTab,
+        dy: f32,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let window = self.window_id;
         let t = theme::tokens(cx);
         let id = tab.id;
@@ -358,7 +436,7 @@ impl WindowFrame {
                         window,
                         tab: id,
                         x: f32::from(event.position.x),
-                        y: f32::from(event.position.y),
+                        y: f32::from(event.position.y) + dy,
                     });
                 }),
             )
