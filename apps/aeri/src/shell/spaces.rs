@@ -19,13 +19,15 @@ use super::windows::WindowSeed;
 use super::{NEW_TAB_URL, Shell};
 
 /// A space as the sidebar and menus name it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct SpaceInfo {
     pub(super) id: SpaceId,
     pub(super) name: String,
     pub(super) colour: u32,
     /// A glyph, or empty.
     pub(super) icon: String,
+    /// The space's own theme, over its profile's.
+    pub(super) theme: Option<aeri_core::appearance::Recipe>,
 }
 
 /// A space no window shows.
@@ -95,11 +97,13 @@ impl Shell {
                 None => {}
             }
             open.parked.insert(space.id, Parked { tabs, favourite });
+            let theme = super::themes::read_theme(space.theme.as_deref(), "space");
             open.spaces.push(SpaceInfo {
                 id: space.id,
                 name: space.name,
                 colour: space.colour,
                 icon: space.icon,
+                theme,
             });
         }
         if open.spaces.is_empty() {
@@ -134,6 +138,7 @@ impl Shell {
             name,
             colour,
             icon,
+            theme: None,
         });
         open.parked.insert(id, Parked::default());
         id
@@ -323,6 +328,7 @@ impl Shell {
         tracing::debug!(%profile, from = %old_space, to = %target, "space switched");
         self.touch(profile);
         self.refresh_window(window_id, cx);
+        self.apply_window_themes(cx);
     }
 
     /// ⌘⌥← / ⌘⌥→: the previous or next space no other window shows.

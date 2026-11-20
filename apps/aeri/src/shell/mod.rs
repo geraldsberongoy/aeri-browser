@@ -43,6 +43,7 @@ mod space_settings;
 mod spaces;
 mod tab_menu;
 mod tabs;
+mod themes;
 mod trust;
 mod windows;
 
@@ -66,7 +67,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{App, Menu, MenuItem, WindowHandle, actions};
 
 pub use self::bar::{BarRow, Pick};
-pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand};
+pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand, ThemeEditorMsg};
 use self::profiles::remove_deleted_profiles;
 use self::quit::quit_on_signals;
 use self::resting::Resting;
@@ -147,6 +148,8 @@ struct OpenProfile {
     downloads: Vec<DownloadEntry>,
     /// Sites (`trust::site_of`) whose tabs never rest.
     keep_awake: HashSet<String>,
+    /// The profile's own theme, over the app's.
+    theme: Option<aeri_core::appearance::Recipe>,
 }
 
 struct Shell {
@@ -166,6 +169,7 @@ struct Shell {
     next_window: u64,
     manager: Option<WindowHandle<ProfileManager>>,
     space_editor: Option<WindowHandle<SpaceEditor>>,
+    theme_editor: Option<themes::Editing>,
     /// The library window and the profile it shows.
     library: Option<(WindowHandle<Library>, ProfileId)>,
     /// Resting tabs and the resource view.
@@ -277,6 +281,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         next_window: 1,
         manager: None,
         space_editor: None,
+        theme_editor: None,
         library: None,
         resting,
         chrome,
@@ -455,6 +460,7 @@ impl Shell {
             AppMsg::Resources(msg) => self.resources_msg(msg, cx),
             AppMsg::SystemAppearanceChanged => self.system_appearance_changed(cx),
             AppMsg::Chrome(msg) => self.chrome_msg(msg, cx),
+            AppMsg::ThemeEditor(msg) => self.theme_editor_msg(msg, cx),
             AppMsg::Quit => self.quit(cx),
         }
         self.quitting && self.windows.is_empty()

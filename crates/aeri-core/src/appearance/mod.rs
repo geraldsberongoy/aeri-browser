@@ -3,11 +3,16 @@
 //! their files, and the tokens the chrome paints with.
 
 pub mod color;
+pub mod harmony;
 pub mod recipe;
 pub mod tokens;
 
 pub use color::{Oklch, Rgba};
-pub use recipe::{Background, Base, Density, Recipe, Texture, ThemeError, UiSize};
+pub use harmony::{Harmony, harmony, shuffle};
+pub use recipe::{
+    Background, Base, Density, Headings, Hex, Material, Motion, Recipe, Stop, Texture, ThemeError,
+    UiSize,
+};
 pub use tokens::{Accessibility, AppAppearance, Backdrop, Mode, Resolved, Tokens, resolve};
 
 /// The bundled themes (design §3.6), Aeri first. Each is an ordinary

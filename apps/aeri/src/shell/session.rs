@@ -3,6 +3,7 @@
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use aeri_core::appearance::Recipe;
 use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::profile_db::{Placement, SavedSpace, SavedTab, SavedWindow, Shown, Workspace};
 use aeri_core::workspace::TabList;
@@ -79,6 +80,7 @@ impl Shell {
                 name: info.name.clone(),
                 colour: info.colour,
                 icon: info.icon.clone(),
+                theme: info.theme.as_ref().map(Recipe::to_file),
                 tabs: saved,
                 shown,
             });

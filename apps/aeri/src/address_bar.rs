@@ -254,7 +254,7 @@ impl AddressBar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = extension.id.clone();
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let icon = match &extension.icon {
             Some(path) => img(path.clone()).size(px(16.)).into_any_element(),
             None => div()
@@ -283,7 +283,7 @@ impl AddressBar {
     }
 
     fn star(&self, bookmarked: bool, cx: &mut Context<Self>) -> AnyElement {
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         div()
             .id("bookmark")
             .flex()
@@ -305,7 +305,7 @@ impl AddressBar {
 
     fn row(&self, ix: usize, row: &BarRow, cx: &mut Context<Self>) -> AnyElement {
         let pick = row.pick.clone();
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let muted = |text: &str| {
             div()
                 .flex_none()
@@ -371,7 +371,7 @@ impl Focusable for AddressBar {
 
 impl Render for AddressBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let mut buttons: Vec<AnyElement> = Vec::new();
         if let (Some(bookmarked), false) = (self.bookmarked, self.palette) {
             buttons.push(self.star(bookmarked, cx));

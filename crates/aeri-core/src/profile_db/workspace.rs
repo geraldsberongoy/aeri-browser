@@ -32,6 +32,8 @@ pub struct SavedSpace {
     pub colour: u32,
     /// A glyph, or empty for none.
     pub icon: String,
+    /// The space's own theme (an `.aeritheme` file), if it has one.
+    pub theme: Option<String>,
     /// Pinned tabs first.
     pub tabs: Vec<SavedTab>,
     pub shown: Option<Shown>,
@@ -71,8 +73,9 @@ impl ProfileDb {
                 None => (None, None),
             };
             tx.execute(
-                "INSERT INTO spaces (id, position, name, colour, icon, shown_tab, shown_favourite)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO spaces (id, position, name, colour, icon, shown_tab, shown_favourite,
+                                     theme)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     space.id.0,
                     position as i64,
@@ -81,6 +84,7 @@ impl ProfileDb {
                     space.icon,
                     shown_tab,
                     shown_favourite,
+                    space.theme,
                 ],
             )?;
             for (position, tab) in space.tabs.iter().enumerate() {
@@ -127,7 +131,7 @@ impl ProfileDb {
         let rows = self
             .conn
             .prepare(
-                "SELECT id, name, colour, icon, shown_tab, shown_favourite
+                "SELECT id, name, colour, icon, shown_tab, shown_favourite, theme
                  FROM spaces ORDER BY position",
             )?
             .query_map([], |row| {
@@ -138,6 +142,7 @@ impl ProfileDb {
                     row.get::<_, String>(3)?,
                     row.get::<_, Option<i64>>(4)?,
                     row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -145,7 +150,7 @@ impl ProfileDb {
             "SELECT url, title, pinned FROM space_tabs WHERE space_id = ?1 ORDER BY position",
         )?;
         let mut spaces = Vec::with_capacity(rows.len());
-        for (id, name, colour, icon, shown_tab, shown_favourite) in rows {
+        for (id, name, colour, icon, shown_tab, shown_favourite, theme) in rows {
             let tabs = tabs
                 .query_map([id.0], saved_tab)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -161,6 +166,7 @@ impl ProfileDb {
                 name,
                 colour,
                 icon,
+                theme,
                 tabs,
                 shown,
             });
@@ -226,6 +232,7 @@ mod tests {
             name: format!("Space {id}"),
             colour: 0x5b7cfa,
             icon: "★".into(),
+            theme: (id == 7).then(|| r#"{"version":1}"#.to_owned()),
             tabs,
             shown,
         }

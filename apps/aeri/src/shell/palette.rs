@@ -133,6 +133,7 @@ impl Shell {
                 }),
         );
         rows.extend(self.appearance_rows(&words, cx));
+        rows.extend(self.theme_rows(&words));
         rows.extend(self.layout_rows(&words));
         let ranked = suggest::rank(text, self.candidates(window_id, text), now());
         rows.extend(ranked.suggestions.iter().map(suggestion_row));

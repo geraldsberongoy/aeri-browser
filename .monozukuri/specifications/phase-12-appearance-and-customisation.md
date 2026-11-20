@@ -69,7 +69,8 @@
 | 1 | done |
 | 2 | done (slide motion lands in slice 8) |
 | 3 | done (toolbar slot editor moves to slice 6; floating bar offers Page Centre and Upper Centre, not Attached) |
-| 4–8 | pending |
+| 4 | done (the editor reverts with Cancel; it has no step-by-step undo) |
+| 5–8 | pending |
 
 ## Evidence ledger
 
@@ -96,6 +97,11 @@
 | Dragging the sidebar's edge resizes it and the width persists | Observed | drag 240 to 324: `sidebar resized width=324`; relaunch kept 324 |
 | Domain-only address and Copy Link | Observed | address row showed `127.0.0.1:8766`; Copy put `http://127.0.0.1:8766/target.html` on the clipboard (pbpaste) |
 | Density and larger text change the chrome's rows and type | Observed | Density: Spacious + Larger Text screenshot |
+| Harmonies turn only the hue (complementary 180°, triadic 120°) and keep lightness; Shuffle is repeatable per seed | Tested | `harmony::harmonies_turn_only_the_hue`, `harmony::shuffle_is_repeatable_and_varied` |
+| A space's theme and a profile's theme are stored and survive restart | Tested + Observed | `workspace` round trip carries `theme`; `settings::a_profile_theme_is_kept_until_it_follows_the_app_again`; relaunch kept Home's triadic gradient |
+| Space over profile over app: each window paints with its nearest theme | Observed | Home (own theme) showed its gradient while new Space 2 showed the app theme; a profile preview reached Space 2 only |
+| The editor previews live and Cancel restores the previous look | Observed | Triadic and Tweed strength 6 appeared in the window before Save; profile Solid preview vanished on Cancel |
+| Textures (grain, sand, denim, tweed) draw over the backdrop | Observed | Tweed at strength 6 visible as a weave in a 2× crop of the sidebar |
 
 ## Residual risks
 

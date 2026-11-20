@@ -38,6 +38,8 @@ pub enum Pick {
     Layout(super::chrome::LayoutChoice),
     Density(aeri_core::appearance::Density),
     UiSize(aeri_core::appearance::UiSize),
+    /// Opens the theme editor.
+    EditTheme(super::themes::ThemeTarget),
 }
 
 /// One row under the bar.
@@ -318,6 +320,10 @@ impl Shell {
             Pick::UiSize(size) => {
                 self.hide_bar(window_id, cx);
                 self.adjust_theme(|recipe| recipe.ui_size = size, cx);
+            }
+            Pick::EditTheme(target) => {
+                self.hide_bar(window_id, cx);
+                self.edit_theme(window_id, target, cx);
             }
         }
     }

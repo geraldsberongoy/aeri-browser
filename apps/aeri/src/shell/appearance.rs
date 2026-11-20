@@ -109,20 +109,28 @@ impl Shell {
         self.set_app_theme(recipe, cx);
     }
 
-    fn set_app_theme(&mut self, recipe: Recipe, cx: &mut App) {
+    pub(super) fn set_app_theme(&mut self, recipe: Recipe, cx: &mut App) {
         if let Err(err) = self.db.set_setting(THEME, &recipe.to_file()) {
             tracing::warn!(%err, "could not save the theme");
         }
         tracing::info!(theme = recipe.name, "theme chosen");
-        let (app, base) = cx.update_global::<Theme, _>(|theme, _| {
-            theme.recipe = recipe;
-            theme.refresh();
-            (theme.app, theme.recipe.base)
-        });
-        apply_app_appearance(app, base);
-        cx.refresh_windows();
+        show_app_theme(recipe, cx);
     }
+}
 
+/// Paints every window that follows the app theme with `recipe`, without
+/// keeping it (the editor's preview).
+pub(super) fn show_app_theme(recipe: Recipe, cx: &mut App) {
+    let (app, base) = cx.update_global::<Theme, _>(|theme, _| {
+        theme.recipe = recipe;
+        theme.refresh();
+        (theme.app, theme.recipe.base)
+    });
+    apply_app_appearance(app, base);
+    cx.refresh_windows();
+}
+
+impl Shell {
     /// Palette rows for the appearance choices and bundled themes matching
     /// `words`; the current ones are ticked.
     pub(super) fn appearance_rows(&self, words: &[String], cx: &App) -> Vec<BarRow> {

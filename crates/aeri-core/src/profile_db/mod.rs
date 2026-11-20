@@ -109,6 +109,8 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
     // 7: sites whose tabs never rest.
     "CREATE TABLE keep_awake_sites (site TEXT PRIMARY KEY NOT NULL);",
+    // 8: a space may have a theme of its own.
+    "ALTER TABLE spaces ADD COLUMN theme TEXT;",
 ];
 
 pub struct ProfileDb {

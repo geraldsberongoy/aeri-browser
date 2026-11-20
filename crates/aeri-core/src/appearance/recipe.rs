@@ -169,7 +169,7 @@ pub enum Motion {
 
 /// The static texture drawn over the background (Zen's set); `grain` is
 /// its strength.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Texture {
     #[default]

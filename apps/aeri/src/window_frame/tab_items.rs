@@ -49,8 +49,8 @@ pub(super) struct Metrics {
 }
 
 impl Metrics {
-    pub fn of(cx: &gpui::App) -> Self {
-        let resolved = &cx.global::<theme::Theme>().resolved;
+    pub fn of(window: u64, cx: &gpui::App) -> Self {
+        let resolved = cx.global::<theme::Theme>().resolved_in(window);
         let large = resolved.ui_size == aeri_core::appearance::UiSize::Large;
         let mut metrics = match resolved.density {
             Density::Compact => Self {
@@ -100,7 +100,7 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let window = self.window_id;
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let id = tab.id;
         let favourite = tab.favourite;
         let dragged = DraggedTab {
@@ -156,8 +156,8 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
-        let m = Metrics::of(cx);
+        let t = theme::tokens_in(self.window_id, cx);
+        let m = Metrics::of(self.window_id, cx);
         let id = tab.id;
         let mut status = String::new();
         if tab.favourite {
@@ -240,8 +240,8 @@ impl WindowFrame {
         dy: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let t = theme::tokens(cx);
-        let m = Metrics::of(cx);
+        let t = theme::tokens_in(self.window_id, cx);
+        let m = Metrics::of(self.window_id, cx);
         self.tab_base("cell", index, tab, dy, cx)
             .relative()
             .flex()
@@ -277,8 +277,8 @@ impl WindowFrame {
         tab: &SidebarTab,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let t = theme::tokens(cx);
-        let m = Metrics::of(cx);
+        let t = theme::tokens_in(self.window_id, cx);
+        let m = Metrics::of(self.window_id, cx);
         let compact = tab.pinned || tab.favourite;
         let base = self
             .tab_base("pill", index, tab, 0., cx)

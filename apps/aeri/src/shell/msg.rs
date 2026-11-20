@@ -2,6 +2,7 @@
 //! callbacks, GPUI views and native menus.
 
 use aeri_cef::{Shortcut, Signal};
+use aeri_core::appearance::Recipe;
 use aeri_core::credentials::PasswordProvider;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
 
@@ -175,6 +176,7 @@ pub enum AppMsg {
     /// macOS switched light/dark or an accessibility display setting.
     SystemAppearanceChanged,
     Chrome(ChromeMsg),
+    ThemeEditor(ThemeEditorMsg),
     Quit,
 }
 
@@ -207,6 +209,20 @@ pub enum ChromeMsg {
     CopyLink {
         window: u64,
     },
+}
+
+/// The theme editor window (Phase 12). Every change is previewed live in
+/// the windows the edited theme reaches; nothing is kept until Save.
+#[derive(Clone, Debug)]
+pub enum ThemeEditorMsg {
+    /// The draft changed: show it.
+    Preview(Recipe),
+    /// Keep the draft as the scope's theme.
+    Save(Recipe),
+    /// Drop the scope's own theme: it follows the one above it again.
+    Inherit,
+    /// Close without keeping: the previous look returns.
+    Cancel,
 }
 
 /// The strip's history buttons.

@@ -220,6 +220,11 @@ impl WindowFrame {
         }
     }
 
+    /// The browser window this frame belongs to.
+    pub fn window_id(&self) -> u64 {
+        self.window_id
+    }
+
     /// A plain text button in the strip; a click sends `msg` with the point
     /// clicked, where its menu hangs.
     fn notice(
@@ -230,7 +235,7 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         div()
             .id(id)
             .flex()
@@ -273,7 +278,7 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         div()
             .id(id)
             .flex()
@@ -302,7 +307,7 @@ impl WindowFrame {
     /// menu under it.
     fn profile_badge(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         div()
             .id("profile")
             .flex()
@@ -453,7 +458,7 @@ impl WindowFrame {
         host: Host,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let pinned = host == Host::Frame;
         // Full screen pins nothing; the button would do nothing there.
         let hidden = self.fullscreen;
@@ -488,7 +493,7 @@ impl WindowFrame {
     /// tabs as letters, then the space's tabs, then New Tab.
     fn top_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let mut lane = div()
             .id("top-tabs")
             .flex()
@@ -555,7 +560,7 @@ impl Render for WindowFrame {
             self.window_width = width;
             cx.notify();
         }
-        let frame = theme::backdrop(div().size_full().flex().flex_col(), cx)
+        let frame = theme::backdrop_in(div().size_full().flex().flex_col(), self.window_id, cx)
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 this.resize_to(event, cx);
             }))

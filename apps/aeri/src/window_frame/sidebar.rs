@@ -26,8 +26,8 @@ impl WindowFrame {
     /// drags to resize.
     pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
-        let m = Metrics::of(cx);
+        let t = theme::tokens_in(self.window_id, cx);
+        let m = Metrics::of(self.window_id, cx);
         let width = self.sidebar_width();
         // Menus open in the frame's coordinates; an overlay under a pinned
         // strip starts lower.
@@ -166,8 +166,8 @@ impl WindowFrame {
     /// as icons. Resting on it opens the full sidebar over the page.
     pub(crate) fn rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
-        let m = Metrics::of(cx);
+        let t = theme::tokens_in(self.window_id, cx);
+        let m = Metrics::of(self.window_id, cx);
         let favourites: Vec<&SidebarTab> = self.tabs.iter().filter(|t| t.favourite).collect();
         let tabs: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
         let mut rail = div()
@@ -231,7 +231,7 @@ impl WindowFrame {
 
     /// The one-time note on where the chrome went (page-first default).
     fn hint(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         div()
             .id("layout-hint")
             .flex()
@@ -270,7 +270,7 @@ impl WindowFrame {
     /// text field.
     fn address_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let empty = self.address.is_empty();
         div()
             .id("address")
@@ -332,7 +332,7 @@ impl WindowFrame {
     /// menu below it.
     fn space_header(&self, dy: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let current = self.spaces.iter().find(|s| s.current);
         let (name, colour, icon) = current.map_or((String::new(), 0x5b7cfa, String::new()), |s| {
             (s.name.clone(), s.colour, s.icon.clone())
@@ -392,7 +392,7 @@ impl WindowFrame {
     /// and a chip for a new space.
     fn space_switcher(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
-        let t = theme::tokens(cx);
+        let t = theme::tokens_in(self.window_id, cx);
         let chip = |id: gpui::ElementId| {
             div()
                 .id(id)

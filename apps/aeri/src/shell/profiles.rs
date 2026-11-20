@@ -86,6 +86,10 @@ impl Shell {
                     .unwrap_or_default()
                     .into_iter()
                     .collect();
+                let theme = db.as_ref().and_then(|db| {
+                    let file = db.theme().ok().flatten();
+                    super::themes::read_theme(file.as_deref(), "profile")
+                });
                 self.open.insert(
                     profile,
                     OpenProfile {
@@ -102,6 +106,7 @@ impl Shell {
                         favourite_home: HashMap::new(),
                         downloads: Vec::new(),
                         keep_awake,
+                        theme,
                     },
                 );
             }

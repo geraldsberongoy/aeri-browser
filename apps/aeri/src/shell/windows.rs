@@ -324,6 +324,7 @@ impl Shell {
             shell.present(id);
         });
         self.apply_layout(id, cx);
+        self.apply_window_themes(cx);
         self.refresh_window(id, cx);
         if starts_blank {
             self.show_bar(id, cx);
