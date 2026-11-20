@@ -60,7 +60,13 @@ window, moves by menu and drag, ⌘N, `profile.db` migration 2; isolation
 `aeri-core::suggest`, bookmarks as a folder tree in `profile.db` (migration
 3), a library window, the ⇧⌘P palette in the floating bar, the resting
 address in the sidebar; isolation 13/13 and live checks. Evidence:
-`.monozukuri/specifications/phase-8-address-bar-library-palette.md`. Next:
+`.monozukuri/specifications/phase-8-address-bar-library-palette.md`. Before
+Phase 9, oversized files were split by concern with no behaviour change:
+`shell/` into one module per concern (windows, tabs, tab menu, spaces,
+space settings, favourites, bar, palette, library, profiles, shortcuts,
+session, quit), `profile_db/` (workspace, closed, history, bookmarks),
+`mac/frame.rs`, `window_frame/sidebar.rs`, `text_input/element.rs` and the
+isolation harness's `devtools`/`site`; no file is over ~630 lines. Next:
 Phase 9 (trust).
 
 ## Stack in one line

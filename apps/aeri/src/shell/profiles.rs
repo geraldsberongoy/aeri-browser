@@ -1,0 +1,385 @@
+//! Profiles (ADR 0004): opening one with its windows, the profile menu and
+//! manager, creating and deleting profiles, and the blocker offer.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::time::Instant;
+
+use aeri_cef::ProfileContext;
+use aeri_core::ids::{ProfileId, TabId};
+use aeri_core::profile_db::ProfileDb;
+use aeri_core::store::{ACCENTS, AppDb};
+use aeri_core::workspace::TabList;
+use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+
+use super::tabs::{Place, TabStart};
+use super::{AppMsg, OpenProfile, Plan, Shell, content_view, menus};
+use crate::mac::{self};
+use crate::native_menu::{Align, Entry};
+use crate::profile_manager::{self, ProfileManager};
+
+/// Aeri blocks ads through uBlock Origin Lite (ADR 0008). Its store page
+/// opens once per profile, at the profile's first launch, unless it is
+/// already installed.
+const BLOCKER_ID: &str = "ddkjiahejlhfcafbddmgiahcphecmpfh";
+const BLOCKER_STORE_URL: &str =
+    "https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh";
+
+/// Removes the directories of deleted profiles. Only while CEF is down.
+pub(super) fn remove_deleted_profiles(db: &AppDb, data_dir: &Path) {
+    match db.remove_deleted_data(data_dir) {
+        Ok(pending) => {
+            for (profile, error) in pending {
+                tracing::warn!(%profile, error, "deleted profile's data not removed yet");
+            }
+        }
+        Err(err) => tracing::warn!(%err, "could not remove deleted profiles' data"),
+    }
+}
+
+impl Shell {
+    /// Opens a window of `profile` (its session, or an address), waking the
+    /// profile first if it is dormant (its context initializes
+    /// asynchronously).
+    pub(super) fn open_profile_window(&mut self, profile: ProfileId, plan: Plan, cx: &mut App) {
+        if !self.engine_ready {
+            self.launch.push((profile, plan));
+            return;
+        }
+        if let Some(open) = self.open.get_mut(&profile) {
+            if open.ready {
+                self.open_planned(profile, plan, cx);
+            } else {
+                open.plans.push(plan);
+            }
+            return;
+        }
+        let tx = self.tx.clone();
+        let ready = move || {
+            let _ = tx.unbounded_send(AppMsg::ProfileReady { profile });
+        };
+        match ProfileContext::open(&self.root_cache_path, profile, ready) {
+            Ok(context) => {
+                tracing::info!(%profile, "opening profile");
+                let path = self
+                    .data_dir
+                    .join("Profiles")
+                    .join(profile.to_string())
+                    .join("profile.db");
+                let db = ProfileDb::open(&path)
+                    .inspect_err(|err| {
+                        tracing::error!(%err, %profile, "could not open profile.db; nothing is recorded")
+                    })
+                    .ok();
+                self.open.insert(
+                    profile,
+                    OpenProfile {
+                        context,
+                        db,
+                        ready: false,
+                        plans: vec![plan],
+                        extensions: Vec::new(),
+                        _extensions_watch: None,
+                        opened_at: Instant::now(),
+                        spaces: Vec::new(),
+                        parked: HashMap::new(),
+                        favourites: TabList::default(),
+                        favourite_home: HashMap::new(),
+                    },
+                );
+            }
+            Err(err) => tracing::error!(%err, %profile, "could not open the profile"),
+        }
+    }
+
+    /// Opens a ready profile's window(s) for `plan`.
+    fn open_planned(&mut self, profile: ProfileId, plan: Plan, cx: &mut App) {
+        match plan {
+            Plan::Url(url) => self.open_url_window(profile, url, cx),
+            Plan::Restore => self.restore_windows(profile, cx),
+        }
+    }
+
+    pub(super) fn profile_ready(&mut self, profile: ProfileId, cx: &mut App) {
+        let tx = self.tx.clone();
+        let Some(open) = self.open.get_mut(&profile) else {
+            return;
+        };
+        open.ready = true;
+        open._extensions_watch = open.context.watch_extensions(move || {
+            let _ = tx.unbounded_send(AppMsg::ExtensionsChanged { profile });
+        });
+        open.extensions = open.context.extensions();
+        self.load_workspace(profile);
+        let Some(open) = self.open.get_mut(&profile) else {
+            return;
+        };
+        tracing::info!(
+            %profile,
+            ms = open.opened_at.elapsed().as_millis() as u64,
+            "profile ready"
+        );
+        for plan in std::mem::take(&mut open.plans) {
+            self.open_planned(profile, plan, cx);
+        }
+        self.offer_blocker(profile, cx);
+    }
+
+    pub(super) fn extensions_changed(&mut self, profile: ProfileId, cx: &mut App) {
+        let Some(open) = self.open.get_mut(&profile) else {
+            return;
+        };
+        let extensions = open.context.extensions();
+        if extensions == open.extensions {
+            return;
+        }
+        tracing::info!(%profile, count = extensions.len(), "extensions changed");
+        open.extensions = extensions;
+        for w in self.windows.iter().filter(|w| w.profile == profile) {
+            let extensions = open.extensions.clone();
+            let _ = w
+                .bar
+                .update(cx, |bar, _, cx| bar.set_extensions(extensions, cx));
+        }
+    }
+
+    /// Opens uBlock Origin Lite's store page in a new tab, once per profile,
+    /// if it is not installed yet.
+    fn offer_blocker(&mut self, profile: ProfileId, cx: &mut App) {
+        let installed = self
+            .open
+            .get(&profile)
+            .is_some_and(|open| open.extensions.iter().any(|e| e.id == BLOCKER_ID));
+        if installed {
+            return;
+        }
+        let Some(window_id) = self
+            .windows
+            .iter()
+            .rfind(|w| w.profile == profile)
+            .map(|w| w.id)
+        else {
+            return;
+        };
+        match self.db.take_blocker_offer(profile) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(err) => {
+                tracing::warn!(%err, "could not record the ad-blocker offer");
+                return;
+            }
+        }
+        tracing::info!(%profile, "offering uBlock Origin Lite");
+        let start = TabStart::Load(BLOCKER_STORE_URL.to_owned());
+        self.add_tab(window_id, TabId::next(), start, Place::End, true, cx);
+    }
+
+    pub(super) fn mark_used(&self, profile: ProfileId) {
+        if let Err(err) = self.db.mark_used(profile) {
+            tracing::warn!(%err, %profile, "could not record the profile's use");
+        }
+    }
+
+    /// Switches to `profile`: its newest window comes forward, or a window
+    /// opens (stage 1, flow 8).
+    pub(super) fn show_profile(&mut self, profile: ProfileId, cx: &mut App) {
+        if !self.profiles.iter().any(|p| p.id == profile) {
+            return;
+        }
+        let existing = self
+            .windows
+            .iter()
+            .rfind(|w| w.profile == profile && !w.closing)
+            .map(|w| w.frame.clone());
+        match existing {
+            Some(frame) => {
+                self.mark_used(profile);
+                cx.activate(true);
+                self.later(move |_| frame.bring_forward());
+            }
+            None => self.open_profile_window(profile, Plan::Restore, cx),
+        }
+    }
+
+    /// The native profile menu under the strip's badge. The menu is modal:
+    /// while it is open the shell handles no messages (they queue), the
+    /// same as during any AppKit menu tracking.
+    pub(super) fn profile_menu(&mut self, window_id: u64, x: f32, y: f32) {
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        let mut entries: Vec<Entry> = self
+            .profiles
+            .iter()
+            .map(|profile| Entry::Item {
+                title: profile.name.clone(),
+                checked: profile.id == w.profile,
+            })
+            .collect();
+        let ids: Vec<ProfileId> = self.profiles.iter().map(|p| p.id).collect();
+        entries.push(Entry::Separator);
+        for title in ["New Profile…", "Manage Profiles…"] {
+            entries.push(Entry::Item {
+                title: title.to_owned(),
+                checked: false,
+            });
+        }
+        let tx = self.tx.clone();
+        let frame = w.frame.clone();
+        self.later(move |_| {
+            let (x, y) = (f64::from(x), f64::from(y));
+            frame.pop_up_menu(x, y, Align::Right, &entries, move |ix| {
+                let msg = match ix.checked_sub(ids.len()) {
+                    None => AppMsg::OpenProfile { profile: ids[ix] },
+                    Some(1) => AppMsg::ShowProfiles { new: true },
+                    Some(_) => AppMsg::ShowProfiles { new: false },
+                };
+                let _ = tx.unbounded_send(msg);
+            });
+        });
+    }
+
+    pub(super) fn show_profile_manager(&mut self, new: bool, cx: &mut App) {
+        if let Some(manager) = &self.manager {
+            let shown = manager.update(cx, |manager, window, cx| {
+                if new {
+                    manager.focus_new(window, cx);
+                }
+                content_view(window)
+            });
+            if let Ok(view) = shown {
+                cx.activate(true);
+                if let Some(view) = view {
+                    self.later(move |_| mac::bring_to_front(view));
+                }
+                return;
+            }
+        }
+        let options = WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some("Profiles".into()),
+                appears_transparent: true,
+                traffic_light_position: None,
+            }),
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(600.), px(560.)),
+                cx,
+            ))),
+            window_min_size: Some(size(px(480.), px(360.))),
+            ..Default::default()
+        };
+        let listed = self.listed();
+        let suggested = self.db.suggest_accent().unwrap_or(ACCENTS[0]);
+        let tx = self.tx.clone();
+        match cx.open_window(options, |window, cx| {
+            cx.new(|cx| {
+                let mut manager = ProfileManager::new(listed, suggested, tx, window, cx);
+                if new {
+                    manager.focus_new(window, cx);
+                }
+                manager
+            })
+        }) {
+            Ok(handle) => self.manager = Some(handle),
+            Err(err) => tracing::error!(%err, "could not open the profile manager"),
+        }
+    }
+
+    fn listed(&self) -> Vec<profile_manager::Listed> {
+        profile_manager::listed(&self.profiles, |id| {
+            self.windows.iter().any(|w| w.profile == id)
+        })
+    }
+
+    /// Re-reads the profile list and shows it everywhere: menus, strips,
+    /// window titles, the manager (stage 1: a rename shows at once).
+    pub(super) fn refresh_profiles(&mut self, cx: &mut App) {
+        match self.db.profiles() {
+            Ok(profiles) => self.profiles = profiles,
+            Err(err) => tracing::warn!(%err, "could not read profiles"),
+        }
+        cx.set_menus(menus(&self.profiles));
+        for w in &self.windows {
+            if let Some(profile) = self.profiles.iter().find(|p| p.id == w.profile) {
+                let profile = profile.clone();
+                let _ = w.frame_window.update(cx, |frame, window, cx| {
+                    window.set_window_title(&profile.name);
+                    frame.set_profile(profile, cx);
+                });
+            }
+        }
+        self.refresh_manager(cx);
+    }
+
+    pub(super) fn refresh_manager(&mut self, cx: &mut App) {
+        let Some(manager) = self.manager else {
+            return;
+        };
+        let listed = self.listed();
+        let suggested = self.db.suggest_accent().unwrap_or(ACCENTS[0]);
+        let updated = manager.update(cx, |manager, window, cx| {
+            manager.set_profiles(listed, suggested, window, cx)
+        });
+        if updated.is_err() {
+            self.manager = None;
+        }
+    }
+
+    /// Creates a profile and opens its first window (stage 1, flow 7).
+    pub(super) fn create_profile(&mut self, name: &str, accent: u32, cx: &mut App) {
+        match self.db.create_profile(name, accent) {
+            Ok(profile) => {
+                tracing::info!(profile = %profile.id, "profile created");
+                self.refresh_profiles(cx);
+                self.open_profile_window(profile.id, Plan::Restore, cx);
+            }
+            Err(err) => tracing::warn!(%err, "could not create the profile"),
+        }
+    }
+
+    /// Deletes a profile the Person confirmed: it leaves the list at once,
+    /// its windows close, and its data is removed once CEF has shut down
+    /// (at quit, or at the next launch).
+    pub(super) fn delete_profile(&mut self, profile: ProfileId, cx: &mut App) {
+        if let Err(err) = self.db.delete_profile(profile) {
+            tracing::warn!(%err, %profile, "could not delete the profile");
+            return;
+        }
+        tracing::info!(%profile, "profile deleted; its data is removed when CEF is down");
+        self.refresh_profiles(cx);
+        let windows: Vec<u64> = self
+            .windows
+            .iter()
+            .filter(|w| w.profile == profile)
+            .map(|w| w.id)
+            .collect();
+        let others = self.windows.iter().any(|w| w.profile != profile);
+        if windows.is_empty() {
+            // Still waking up, or already dormant.
+            let released = self.open.remove(&profile);
+            self.later(move |_| drop(released));
+        }
+        for window in windows {
+            self.close_window(window, cx);
+        }
+        if !others {
+            match self.db.launch_profile() {
+                Ok(next) => self.open_profile_window(next.id, Plan::Restore, cx),
+                Err(err) => tracing::error!(%err, "no profile to open"),
+            }
+        }
+    }
+
+    /// Runs an extension's action on the window's active tab, as Chrome's
+    /// toolbar button would; its popup opens at the page's top right.
+    pub(super) fn extension_action(&mut self, window_id: u64, extension: String, cx: &mut App) {
+        self.hide_bar(window_id, cx);
+        let (Some(devtools), Some(page)) = (self.devtools.clone(), self.shown_cef(window_id))
+        else {
+            tracing::warn!(extension, "extension actions are unavailable");
+            return;
+        };
+        self.later(move |_| page.open_extension_action(&extension, &devtools));
+    }
+}

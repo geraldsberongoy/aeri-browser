@@ -1,24 +1,22 @@
-//! Spaces and favourites (Phase 7). A profile's spaces each hold their own
-//! tabs; a window shows one space at a time, and a space is shown in at most
-//! one window. A space no window shows is parked here with its tabs, their
-//! pages alive but hidden. Favourites are profile-wide tabs above every
-//! space's tabs; each is one page, held by the window that showed it last.
+//! Spaces (Phase 7). A profile's spaces each hold their own tabs; a window
+//! shows one space at a time, and a space is shown in at most one window. A
+//! space no window shows is parked here with its tabs, their pages alive
+//! but hidden. Favourites are in [`favourites`](super::favourites); the
+//! menu and editor that change spaces are in
+//! [`space_settings`](super::space_settings).
 
 use std::rc::Rc;
 
 use aeri_cef::TabObserver;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
-use aeri_core::profile_db::{Origin, Shown, Workspace};
+use aeri_core::profile_db::{Shown, Workspace};
 use aeri_core::store::ACCENTS;
 use aeri_core::workspace::TabList;
-use gpui::{
-    App, AppContext, Bounds, PromptLevel, TitlebarOptions, WindowBounds, WindowOptions, px, size,
-};
+use gpui::App;
 
-use super::windows::{Spot, TabEntry, WindowSeed};
-use super::{AppMsg, NEW_TAB_URL, Shell};
-use crate::native_menu::{Align, Entry};
-use crate::space_editor::SpaceEditor;
+use super::tabs::TabEntry;
+use super::windows::WindowSeed;
+use super::{NEW_TAB_URL, Shell};
 
 /// A space as the sidebar and menus name it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,7 +108,7 @@ impl Shell {
     }
 
     /// Adds an empty, parked space at the end.
-    fn new_space(
+    pub(super) fn new_space(
         &mut self,
         profile: ProfileId,
         name: String,
@@ -142,7 +140,7 @@ impl Shell {
     }
 
     /// A name and colour for the next new space.
-    fn next_space_defaults(&self, profile: ProfileId) -> (String, u32) {
+    pub(super) fn next_space_defaults(&self, profile: ProfileId) -> (String, u32) {
         let spaces = self
             .open
             .get(&profile)
@@ -184,7 +182,7 @@ impl Shell {
 
     /// The first space no window shows, or a new empty one if every space
     /// is shown.
-    fn free_space(&mut self, profile: ProfileId) -> SpaceId {
+    pub(super) fn free_space(&mut self, profile: ProfileId) -> SpaceId {
         match self.first_parked(profile) {
             Some(space) => space,
             None => {
@@ -412,448 +410,5 @@ impl Shell {
         }
         self.touch(profile);
         self.refresh_window(window_id, cx);
-    }
-
-    /// Makes a space tab a favourite (it stays shown if it was), or puts a
-    /// favourite back into this window's space as its last tab.
-    pub(super) fn toggle_favourite(&mut self, window_id: u64, tab: TabId, cx: &mut App) {
-        let Some(profile) = self.window(window_id).map(|w| w.profile) else {
-            return;
-        };
-        let Some(open) = self.open.get_mut(&profile) else {
-            return;
-        };
-        if let Some(item) = open.favourites.remove(tab) {
-            let home = open.favourite_home.remove(&tab);
-            for parked in open.parked.values_mut() {
-                if parked.favourite == Some(tab) {
-                    parked.favourite = None;
-                }
-            }
-            let mut elsewhere = Vec::new();
-            for o in self
-                .windows
-                .iter_mut()
-                .filter(|o| o.profile == profile && o.id != window_id)
-            {
-                if o.favourite == Some(tab) {
-                    o.leave_favourite();
-                    elsewhere.push(o.id);
-                }
-            }
-            let old_frame = home
-                .filter(|&home| home != window_id)
-                .and_then(|home| self.window(home))
-                .map(|o| o.frame.clone());
-            let Some(w) = self.window_mut(window_id) else {
-                return;
-            };
-            let page = item.value.cef.clone();
-            w.tabs.insert(tab, item.value, false, None);
-            let shown_here = w.favourite == Some(tab);
-            if shown_here {
-                w.favourite = None;
-                w.tabs.activate(tab);
-            }
-            let frame = w.frame.clone();
-            self.later(move |shell| {
-                if let Some(page) = page
-                    && home != Some(window_id)
-                {
-                    if let Some(old) = old_frame {
-                        old.remove_tab(tab);
-                    }
-                    page.move_to(frame);
-                }
-                for id in elsewhere.into_iter().chain(shown_here.then_some(window_id)) {
-                    shell.present(id);
-                }
-            });
-        } else {
-            let Some(w) = self.window_mut(window_id) else {
-                return;
-            };
-            let was_shown = w.favourite.is_none() && w.tabs.active() == Some(tab);
-            let Some(item) = w.tabs.remove(tab) else {
-                return;
-            };
-            if was_shown {
-                w.favourite = Some(tab);
-            }
-            let live = item.value.cef.is_some();
-            let empty = w.tabs.is_empty();
-            let Some(open) = self.open.get_mut(&profile) else {
-                return;
-            };
-            open.favourites.insert(tab, item.value, false, None);
-            if live {
-                open.favourite_home.insert(tab, window_id);
-            }
-            if empty && !was_shown {
-                self.add_new_tab(window_id, false, cx);
-            }
-        }
-        self.touch(profile);
-        self.refresh_profile_windows(profile, cx);
-    }
-
-    /// Closes a favourite: it leaves every space, is remembered as closed,
-    /// and windows showing it show their space's tab instead.
-    pub(super) fn close_favourite(&mut self, profile: ProfileId, tab: TabId, cx: &mut App) {
-        let Some((item, _)) = self.take_tab(Spot::Favourite(profile), tab) else {
-            return;
-        };
-        if let Some(open) = self.open.get_mut(&profile) {
-            open.favourite_home.remove(&tab);
-            for parked in open.parked.values_mut() {
-                if parked.favourite == Some(tab) {
-                    parked.favourite = None;
-                }
-            }
-        }
-        let showing: Vec<u64> = self
-            .windows
-            .iter_mut()
-            .filter(|w| w.profile == profile && w.favourite == Some(tab))
-            .map(|w| {
-                w.leave_favourite();
-                w.id
-            })
-            .collect();
-        for &id in &showing {
-            let empty = self.window(id).is_some_and(|w| w.tabs.is_empty());
-            if empty {
-                self.add_new_tab(id, true, cx);
-            }
-        }
-        self.later(move |shell| {
-            if let Some(page) = item.value.cef {
-                page.close();
-            }
-            for id in showing {
-                shell.present(id);
-            }
-        });
-        self.refresh_profile_windows(profile, cx);
-    }
-
-    /// A window's frame became key: if it shows a favourite whose page
-    /// another window holds, the page comes here (stage 1: the live page
-    /// is in the frontmost window).
-    pub(super) fn window_key(&mut self, window_id: u64, _cx: &mut App) {
-        let Some(w) = self.window(window_id) else {
-            return;
-        };
-        let Some(favourite) = w.favourite else {
-            return;
-        };
-        let home = self
-            .open
-            .get(&w.profile)
-            .and_then(|open| open.favourite_home.get(&favourite).copied());
-        tracing::debug!(window = window_id, %favourite, ?home, "key window shows a favourite");
-        // No home: its window closed and put the page aside.
-        if home != Some(window_id) {
-            self.later(move |shell| {
-                shell.present(window_id);
-            });
-        }
-    }
-
-    /// The native menu under the sidebar's space header: every space, then
-    /// space commands.
-    pub(super) fn space_menu(&mut self, window_id: u64, x: f32, y: f32, _cx: &mut App) {
-        let Some(w) = self.window(window_id) else {
-            return;
-        };
-        let Some(open) = self.open.get(&w.profile) else {
-            return;
-        };
-        let mut entries = Vec::new();
-        let mut picks = Vec::new();
-        for space in &open.spaces {
-            let title = match space.icon.as_str() {
-                "" => space.name.clone(),
-                icon => format!("{icon}  {}", space.name),
-            };
-            entries.push(Entry::Item {
-                title,
-                checked: space.id == w.space,
-            });
-            picks.push(Some(AppMsg::SwitchSpace {
-                window: window_id,
-                space: space.id,
-            }));
-        }
-        entries.push(Entry::Separator);
-        picks.push(None);
-        let mut command = |title: &str, msg: AppMsg| {
-            entries.push(Entry::Item {
-                title: title.to_owned(),
-                checked: false,
-            });
-            picks.push(Some(msg));
-        };
-        command(
-            "New Space…",
-            AppMsg::EditSpace {
-                window: window_id,
-                space: None,
-            },
-        );
-        command(
-            "Edit Space…",
-            AppMsg::EditSpace {
-                window: window_id,
-                space: Some(w.space),
-            },
-        );
-        if open.spaces.len() > 1 {
-            command(
-                "Delete Space…",
-                AppMsg::DeleteSpace {
-                    window: window_id,
-                    space: w.space,
-                    confirmed: false,
-                },
-            );
-        }
-        let tx = self.tx.clone();
-        let frame = w.frame.clone();
-        let picks = std::cell::RefCell::new(picks);
-        self.later(move |_| {
-            let (x, y) = (f64::from(x), f64::from(y));
-            frame.pop_up_menu(x, y, Align::Left, &entries, move |ix| {
-                if let Some(msg) = picks.borrow_mut().get_mut(ix).and_then(Option::take) {
-                    let _ = tx.unbounded_send(msg);
-                }
-            });
-        });
-    }
-
-    /// Opens the space editor on a space of the window's profile, or for a
-    /// new space the window then shows.
-    pub(super) fn show_space_editor(
-        &mut self,
-        window_id: u64,
-        space: Option<SpaceId>,
-        cx: &mut App,
-    ) {
-        let Some(profile) = self.window(window_id).map(|w| w.profile) else {
-            return;
-        };
-        if let Some(editor) = self.space_editor.take() {
-            let _ = editor.update(cx, |_, window, _| window.remove_window());
-        }
-        let existing = space.and_then(|id| {
-            self.open
-                .get(&profile)?
-                .spaces
-                .iter()
-                .find(|s| s.id == id)
-                .cloned()
-        });
-        let (name, colour, icon) = match &existing {
-            Some(info) => (info.name.clone(), info.colour, info.icon.clone()),
-            None => {
-                let (name, colour) = self.next_space_defaults(profile);
-                (name, colour, String::new())
-            }
-        };
-        let options = WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some(
-                    if existing.is_some() {
-                        "Edit Space"
-                    } else {
-                        "New Space"
-                    }
-                    .into(),
-                ),
-                appears_transparent: true,
-                traffic_light_position: None,
-            }),
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(400.), px(300.)),
-                cx,
-            ))),
-            is_resizable: false,
-            ..Default::default()
-        };
-        let tx = self.tx.clone();
-        let target = existing.map(|info| info.id);
-        match cx.open_window(options, |window, cx| {
-            cx.new(|cx| {
-                SpaceEditor::new(
-                    profile, target, window_id, name, colour, icon, tx, window, cx,
-                )
-            })
-        }) {
-            Ok(handle) => {
-                cx.activate(true);
-                self.space_editor = Some(handle);
-            }
-            Err(err) => tracing::error!(%err, "could not open the space editor"),
-        }
-    }
-
-    /// From the editor: names, colours and iconifies a space, or makes a
-    /// new one and shows it in `window`.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn save_space(
-        &mut self,
-        profile: ProfileId,
-        space: Option<SpaceId>,
-        name: String,
-        colour: u32,
-        icon: String,
-        window: Option<u64>,
-        cx: &mut App,
-    ) {
-        let name = name.trim().to_owned();
-        if name.is_empty() || !self.open.contains_key(&profile) {
-            return;
-        }
-        match space {
-            Some(id) => {
-                if let Some(info) = self
-                    .open
-                    .get_mut(&profile)
-                    .and_then(|open| open.spaces.iter_mut().find(|s| s.id == id))
-                {
-                    info.name = name;
-                    info.colour = colour;
-                    info.icon = icon;
-                }
-            }
-            None => {
-                let id = self.new_space(profile, name, colour, icon);
-                tracing::info!(%profile, space = %id, "space created");
-                if let Some(window) = window {
-                    self.switch_space(window, id, cx);
-                }
-            }
-        }
-        self.touch(profile);
-        self.refresh_profile_windows(profile, cx);
-    }
-
-    /// Deletes a space (never the profile's only one). One with tabs asks
-    /// first; its tabs become closed-tab records. A window showing it moves
-    /// to another space.
-    pub(super) fn delete_space(
-        &mut self,
-        window_id: u64,
-        space: SpaceId,
-        confirmed: bool,
-        cx: &mut App,
-    ) {
-        let Some(w) = self.window(window_id) else {
-            return;
-        };
-        let profile = w.profile;
-        let Some(open) = self.open.get(&profile) else {
-            return;
-        };
-        if open.spaces.len() <= 1 {
-            return;
-        }
-        let Some(info) = open.spaces.iter().find(|s| s.id == space).cloned() else {
-            return;
-        };
-        let showing = self
-            .windows
-            .iter()
-            .find(|o| o.profile == profile && o.space == space && !o.closing)
-            .map(|o| o.id);
-        let tab_count = match showing.and_then(|id| self.window(id)) {
-            Some(o) => o
-                .tabs
-                .iter()
-                .filter(|item| item.value.url() != NEW_TAB_URL)
-                .count(),
-            None => open.parked.get(&space).map_or(0, |p| {
-                p.tabs
-                    .iter()
-                    .filter(|item| item.value.url() != NEW_TAB_URL)
-                    .count()
-            }),
-        };
-        if !confirmed && tab_count > 0 {
-            let tx = self.tx.clone();
-            let detail = match tab_count {
-                1 => "Its tab closes. ⌘⇧T reopens it.".to_owned(),
-                n => format!("Its {n} tabs close. ⌘⇧T reopens them one by one."),
-            };
-            let _ = w.frame_window.update(cx, |_, window, cx| {
-                let answer = window.prompt(
-                    PromptLevel::Warning,
-                    &format!("Delete the space “{}”?", info.name),
-                    Some(&detail),
-                    &["Delete Space", "Cancel"],
-                    cx,
-                );
-                cx.spawn(async move |_, _| {
-                    if answer.await == Ok(0) {
-                        let _ = tx.unbounded_send(AppMsg::DeleteSpace {
-                            window: window_id,
-                            space,
-                            confirmed: true,
-                        });
-                    }
-                })
-                .detach();
-            });
-            return;
-        }
-        // Out of the list first, so a replacement space takes its name.
-        if let Some(open) = self.open.get_mut(&profile) {
-            open.spaces.retain(|s| s.id != space);
-        }
-        if let Some(showing) = showing {
-            let target = self.free_space(profile);
-            self.switch_space(showing, target, cx);
-        }
-        let Some(open) = self.open.get_mut(&profile) else {
-            return;
-        };
-        let Some(mut parked) = open.parked.remove(&space) else {
-            return;
-        };
-        let mut pages = Vec::new();
-        if let Some(db) = open.db.as_ref() {
-            // The space is gone: its tabs, and any closed earlier, reopen
-            // into the current space (decision 9), never into a new space
-            // that is later given this id.
-            if let Err(err) = db.forget_space(space) {
-                tracing::warn!(%err, "could not forget the space's closed tabs");
-            }
-            for (position, item) in parked.tabs.iter().enumerate() {
-                let url = item.value.url();
-                if url.is_empty() || url == NEW_TAB_URL {
-                    continue;
-                }
-                let closed = aeri_core::profile_db::ClosedTab {
-                    tab: item.value.saved(item.pinned),
-                    origin: Origin::Unknown,
-                    position,
-                };
-                if let Err(err) = db.push_closed(&closed) {
-                    tracing::warn!(%err, "could not remember a closed tab");
-                }
-            }
-        }
-        for item in parked.tabs.iter_mut() {
-            pages.extend(item.value.cef.take());
-        }
-        tracing::info!(%profile, %space, "space deleted");
-        self.later(move |_| {
-            for page in pages {
-                page.close();
-            }
-        });
-        self.touch(profile);
-        self.refresh_profile_windows(profile, cx);
     }
 }

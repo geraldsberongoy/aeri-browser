@@ -61,7 +61,7 @@ S1 changed the layering; see
 - **One tab, one CEF window.** A Chrome-style window hosts exactly one
   browser view for its lifetime (Observed). `aeri-cef::TabWindow` creates
   the window and hands its content `NSView` to a `TabObserver`.
-- **`apps/aeri/src/mac.rs` (`Frame`)** owns the AppKit side:
+- **`apps/aeri/src/mac/frame.rs` (`Frame`)** owns the AppKit side:
   - `addChildWindow` for tabs and the address bar;
   - refitting children on `NSWindowDidResize` and the full-screen
     notifications;
