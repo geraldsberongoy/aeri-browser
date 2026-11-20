@@ -406,6 +406,17 @@ impl ProfileDb {
         Ok(Some(closed))
     }
 
+    /// A space was deleted: its closed tabs no longer name it, so they
+    /// reopen into the current space, never into a later space that is
+    /// given the same id.
+    pub fn forget_space(&self, space: SpaceId) -> Result<()> {
+        self.conn.execute(
+            "UPDATE closed_tabs SET space_id = NULL WHERE space_id = ?1",
+            [space.0],
+        )?;
+        Ok(())
+    }
+
     /// Records a visit at `at` (Unix seconds). An empty title keeps the one
     /// already known.
     pub fn record_visit(&self, url: &str, title: &str, at: i64) -> Result<()> {
@@ -631,6 +642,27 @@ mod tests {
             remaining += 1;
         }
         assert_eq!(remaining, CLOSED_TABS_KEPT);
+    }
+
+    #[test]
+    fn closed_tabs_of_a_deleted_space_lose_their_origin() {
+        let db = ProfileDb::open_in_memory().unwrap();
+        for (n, space) in [1, 2, 1].into_iter().enumerate() {
+            db.push_closed(&ClosedTab {
+                tab: tab(&format!("https://{n}.test/"), false),
+                origin: Origin::Space(SpaceId(space)),
+                position: n,
+            })
+            .unwrap();
+        }
+        db.forget_space(SpaceId(1)).unwrap();
+        let origins: Vec<Origin> = std::iter::from_fn(|| db.pop_closed().unwrap())
+            .map(|closed| closed.origin)
+            .collect();
+        assert_eq!(
+            origins,
+            [Origin::Unknown, Origin::Space(SpaceId(2)), Origin::Unknown]
+        );
     }
 
     #[test]

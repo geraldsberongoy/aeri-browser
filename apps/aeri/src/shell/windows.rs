@@ -244,7 +244,7 @@ impl Shell {
     }
 
     /// The shown tab's model, wherever it lives.
-    fn shown_model(&self, w: &AeriWindow) -> Option<Tab> {
+    pub(super) fn shown_model(&self, w: &AeriWindow) -> Option<Tab> {
         let shown = w.shown()?;
         let entry = match w.favourite {
             Some(_) => &self.open.get(&w.profile)?.favourites.get(shown)?.value,
@@ -357,17 +357,7 @@ impl Shell {
             .ok()
             .flatten();
 
-        // An empty space shows a new tab.
-        if tabs.is_empty() && favourite.is_none() {
-            let (tab, entry) = TabEntry::unseen(NEW_TAB_URL, "");
-            tabs.insert(tab, entry, false, None);
-        }
-        if favourite.is_none()
-            && tabs.active().is_none()
-            && let Some(first) = tabs.nth(0)
-        {
-            tabs.activate(first);
-        }
+        super::spaces::ready_to_show(&mut tabs, favourite);
         let frame = Frame::new(id, self.tx.clone());
         self.windows.push(AeriWindow {
             id,
@@ -493,6 +483,12 @@ impl Shell {
             }
             None => self.shown_cef(window_id).is_some(),
         }
+    }
+
+    /// Adds a blank tab at the end of a window's space.
+    pub(super) fn add_new_tab(&mut self, window_id: u64, foreground: bool, cx: &mut App) {
+        let start = TabStart::Load(NEW_TAB_URL.to_owned());
+        self.add_tab(window_id, TabId::next(), start, Place::End, foreground, cx);
     }
 
     /// Adds a tab to a window's space; its page follows outside the update.
@@ -903,8 +899,7 @@ impl Shell {
         match shortcut {
             Shortcut::FocusAddressBar => self.show_bar(window_id, cx),
             Shortcut::NewTab => {
-                let start = TabStart::Load(NEW_TAB_URL.to_owned());
-                self.add_tab(window_id, TabId::next(), start, Place::End, true, cx);
+                self.add_new_tab(window_id, true, cx);
                 self.show_bar(window_id, cx);
             }
             Shortcut::NewWindow => {
@@ -1183,8 +1178,7 @@ impl Shell {
             return;
         }
         if w.tabs.len() == 1 && w.favourite.is_none() {
-            let start = TabStart::Load(NEW_TAB_URL.to_owned());
-            self.add_tab(window_id, TabId::next(), start, Place::End, true, cx);
+            self.add_new_tab(window_id, true, cx);
             self.show_bar(window_id, cx);
         }
         let showing_favourite = self

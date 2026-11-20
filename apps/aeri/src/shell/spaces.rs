@@ -41,6 +41,23 @@ pub(super) struct Parked {
 /// Glyphs a space can carry. Empty is none.
 pub const SPACE_ICONS: [&str; 9] = ["", "★", "●", "◆", "▲", "♥", "✦", "☀", "☾"];
 
+/// Before a window shows a space: an empty space gets a new tab, and a
+/// space showing no favourite shows its last shown tab, else its first.
+pub(super) fn ready_to_show(tabs: &mut TabList<TabEntry>, favourite: Option<TabId>) {
+    if favourite.is_some() {
+        return;
+    }
+    if tabs.is_empty() {
+        let (tab, entry) = TabEntry::unseen(NEW_TAB_URL, "");
+        tabs.insert(tab, entry, false, None);
+    }
+    if tabs.active().is_none()
+        && let Some(first) = tabs.nth(0)
+    {
+        tabs.activate(first);
+    }
+}
+
 impl Shell {
     /// Reads the profile's spaces and favourites from `profile.db`, all
     /// parked and unseen until a window shows them. A profile without a
@@ -267,23 +284,13 @@ impl Shell {
         else {
             return;
         };
-        if parked.tabs.is_empty() && parked.favourite.is_none() {
-            let (tab, entry) = TabEntry::unseen(NEW_TAB_URL, "");
-            parked.tabs.insert(tab, entry, false, None);
-        }
-        if parked.favourite.is_none()
-            && parked.tabs.active().is_none()
-            && let Some(first) = parked.tabs.nth(0)
-        {
-            parked.tabs.activate(first);
-        }
+        ready_to_show(&mut parked.tabs, parked.favourite);
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
         let old_tabs = std::mem::replace(&mut w.tabs, parked.tabs);
         let old_favourite = std::mem::replace(&mut w.favourite, parked.favourite);
         let old_space = std::mem::replace(&mut w.space, target);
-        let bar_shown = w.bar_shown;
         let frame = w.frame.clone();
         let live: Vec<TabId> = old_tabs
             .iter()
@@ -291,18 +298,29 @@ impl Shell {
             .map(|item| item.id)
             .collect();
         self.park(profile, old_space, old_tabs, old_favourite);
+        // A blank tab asks for an address, as a new tab does; a page takes
+        // the keyboard back from the bar.
+        let blank = self
+            .window(window_id)
+            .and_then(|w| self.shown_model(w))
+            .is_some_and(|tab| tab.url == NEW_TAB_URL);
         self.later(move |shell| {
             for tab in live {
                 frame.remove_tab(tab);
             }
             shell.adopt_pages(window_id);
             if shell.present(window_id)
-                && !bar_shown
+                && !blank
                 && let Some(page) = shell.shown_cef(window_id)
             {
                 page.focus_page();
             }
         });
+        if blank {
+            self.show_bar(window_id, cx);
+        } else {
+            self.hide_bar(window_id, cx);
+        }
         tracing::debug!(%profile, from = %old_space, to = %target, "space switched");
         self.touch(profile);
         self.refresh_window(window_id, cx);
@@ -385,8 +403,7 @@ impl Shell {
             }
         });
         if empty {
-            let start = super::TabStart::Load(NEW_TAB_URL.to_owned());
-            self.add_tab(window_id, TabId::next(), start, super::Place::End, true, cx);
+            self.add_new_tab(window_id, true, cx);
         } else if let Some(next) = next {
             self.switch_to(window_id, next, cx);
         }
@@ -473,15 +490,7 @@ impl Shell {
                 open.favourite_home.insert(tab, window_id);
             }
             if empty && !was_shown {
-                let start = super::TabStart::Load(NEW_TAB_URL.to_owned());
-                self.add_tab(
-                    window_id,
-                    TabId::next(),
-                    start,
-                    super::Place::End,
-                    false,
-                    cx,
-                );
+                self.add_new_tab(window_id, false, cx);
             }
         }
         self.touch(profile);
@@ -514,8 +523,7 @@ impl Shell {
         for &id in &showing {
             let empty = self.window(id).is_some_and(|w| w.tabs.is_empty());
             if empty {
-                let start = super::TabStart::Load(NEW_TAB_URL.to_owned());
-                self.add_tab(id, TabId::next(), start, super::Place::End, true, cx);
+                self.add_new_tab(id, true, cx);
             }
         }
         self.later(move |shell| {
@@ -815,6 +823,12 @@ impl Shell {
         };
         let mut pages = Vec::new();
         if let Some(db) = open.db.as_ref() {
+            // The space is gone: its tabs, and any closed earlier, reopen
+            // into the current space (decision 9), never into a new space
+            // that is later given this id.
+            if let Err(err) = db.forget_space(space) {
+                tracing::warn!(%err, "could not forget the space's closed tabs");
+            }
             for (position, item) in parked.tabs.iter().enumerate() {
                 let url = item.value.url();
                 if url.is_empty() || url == NEW_TAB_URL {
@@ -822,7 +836,7 @@ impl Shell {
                 }
                 let closed = aeri_core::profile_db::ClosedTab {
                     tab: item.value.saved(item.pinned),
-                    origin: Origin::Space(space),
+                    origin: Origin::Unknown,
                     position,
                 };
                 if let Err(err) = db.push_closed(&closed) {
