@@ -162,6 +162,13 @@ pub enum AppMsg {
         confirmed: bool,
     },
     SpaceEditorClosed,
+    /// The tab editor: the tab's own name and icon; `None` for the page's.
+    SetTabLook {
+        tab: TabId,
+        name: Option<String>,
+        icon: Option<String>,
+    },
+    TabEditorClosed,
     /// A window's frame became key.
     WindowKey {
         window: u64,
@@ -282,4 +289,6 @@ pub enum TabCommand {
     Rest,
     /// Keep (or stop keeping) the tab's site awake: its tabs never rest.
     KeepAwake(bool),
+    /// The Person's own name and icon for the tab.
+    Rename,
 }

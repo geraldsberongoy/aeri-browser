@@ -72,7 +72,8 @@
 | 4 | done (the editor reverts with Cancel; it has no step-by-step undo) |
 | 5 | done (export written but not driven live: the save panel run was stopped when keystrokes reached another app) |
 | 6 | done (toolbar slots stay fixed: the strip's few buttons did not earn an editor) |
-| 7–8 | pending |
+| 7 | done (the space editor's emoji field was not driven live; the window was covered by another app) |
+| 8 | pending |
 
 ## Evidence ledger
 
@@ -112,6 +113,8 @@
 | Settings (⌘,) shows appearance, themes, layout and keyboard | Observed | ⌘, opened the window; Appearance pane ticks Follow Theme and Standard density |
 | Rebind, conflict, swap, reset, persistence | Observed | New Tab to ⌘K (`keys changed`), then ⌘W showed "⌘W already runs Close Tab." and Swap stored `{"close-tab":"cmd-k","new-tab":"cmd-w"}` in app.db; Reset All stored `{}` |
 | A rebound key works inside a page | Observed | after New Tab = ⌘K, ⌘K in the page opened an `about:blank` tab (CDP target list) |
+| A tab's own name and icon survive saving, reopening a closed tab and migration | Tested | `profile_db` round trips with named, iconed pinned tabs (workspace and closed tabs); migration 9 |
+| Rename Tab… names a tab and gives it an icon; the sidebar shows both; profile.db keeps them | Observed | tab menu → Rename Tab…, "Docs" + ♥: `tab look changed named=true icon=true`; sidebar row "♥ Docs"; `space_tabs` row `Target|Docs|♥` |
 
 ## Residual risks
 

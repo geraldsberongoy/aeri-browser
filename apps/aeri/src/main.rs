@@ -14,6 +14,7 @@ mod resource_view;
 mod settings_window;
 mod shell;
 mod space_editor;
+mod tab_editor;
 mod text_input;
 mod theme;
 mod theme_editor;

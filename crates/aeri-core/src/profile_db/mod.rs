@@ -111,6 +111,13 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE keep_awake_sites (site TEXT PRIMARY KEY NOT NULL);",
     // 8: a space may have a theme of its own.
     "ALTER TABLE spaces ADD COLUMN theme TEXT;",
+    // 9: tabs may have the Person's own name and icon.
+    "ALTER TABLE space_tabs ADD COLUMN name TEXT;
+     ALTER TABLE space_tabs ADD COLUMN icon TEXT;
+     ALTER TABLE favourites ADD COLUMN name TEXT;
+     ALTER TABLE favourites ADD COLUMN icon TEXT;
+     ALTER TABLE closed_tabs ADD COLUMN name TEXT;
+     ALTER TABLE closed_tabs ADD COLUMN icon TEXT;",
 ];
 
 pub struct ProfileDb {
@@ -146,11 +153,15 @@ impl ProfileDb {
 mod test_support {
     use super::SavedTab;
 
+    /// Pinned tabs also carry the Person's name and icon, so round trips
+    /// cover them.
     pub(super) fn tab(url: &str, pinned: bool) -> SavedTab {
         SavedTab {
             url: url.into(),
             title: format!("{url} title"),
             pinned,
+            name: pinned.then(|| format!("{url} name")),
+            icon: pinned.then(|| "★".to_owned()),
         }
     }
 }

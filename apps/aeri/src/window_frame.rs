@@ -41,6 +41,8 @@ const PAGE_EDGE: f32 = 6.;
 pub struct SidebarTab {
     pub id: TabId,
     pub label: String,
+    /// The Person's emoji or symbol for the tab.
+    pub icon: Option<String>,
     pub pinned: bool,
     /// One of the profile's favourites rather than the space's own.
     pub favourite: bool,

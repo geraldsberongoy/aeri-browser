@@ -79,12 +79,15 @@ impl Metrics {
     }
 }
 
-/// A one-letter stand-in for a page's icon.
-pub(super) fn monogram(label: &str) -> String {
-    label
-        .chars()
-        .find(|c| c.is_alphanumeric())
-        .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect())
+/// The tab's mark where only one fits: the Person's icon, else the first
+/// letter of its title.
+pub(super) fn mark(tab: &SidebarTab) -> String {
+    tab.icon.clone().unwrap_or_else(|| {
+        tab.label
+            .chars()
+            .find(|c| c.is_alphanumeric())
+            .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect())
+    })
 }
 
 impl WindowFrame {
@@ -189,6 +192,9 @@ impl WindowFrame {
                 row.text_color(theme::c(t.text_secondary))
                     .hover(move |style| style.bg(theme::c(t.hover)))
             })
+            .when_some(tab.icon.clone(), |row, icon| {
+                row.child(div().flex_none().child(SharedString::from(icon)))
+            })
             .child(
                 div()
                     .flex_1()
@@ -255,7 +261,7 @@ impl WindowFrame {
             .bg(theme::c(if tab.active { t.selected } else { t.field }))
             .text_color(theme::c(if tab.active { t.text } else { t.text_secondary }))
             .hover(move |style| style.bg(theme::c(t.hover)))
-            .child(SharedString::from(monogram(&tab.label)))
+            .child(SharedString::from(mark(tab)))
             .when(tab.audible || tab.loading, |cell| {
                 cell.child(
                     div()
@@ -297,18 +303,23 @@ impl WindowFrame {
                     .hover(move |style| style.bg(theme::c(t.hover)))
             });
         if compact {
-            base.flex_none()
-                .child(SharedString::from(monogram(&tab.label)))
+            base.flex_none().child(SharedString::from(mark(tab)))
         } else {
             // A fixed share of the lane, the title ellipsised inside it.
-            base.flex_none().w(px(160.)).child(
-                div()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(tab.label.clone())),
-            )
+            base.flex_none()
+                .w(px(160.))
+                .gap(px(5.))
+                .when_some(tab.icon.clone(), |pill, icon| {
+                    pill.child(div().flex_none().child(SharedString::from(icon)))
+                })
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .child(SharedString::from(tab.label.clone())),
+                )
         }
     }
 }

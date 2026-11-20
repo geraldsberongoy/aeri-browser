@@ -444,6 +444,7 @@ impl Shell {
         let row = |item: &Item<TabEntry>, favourite: bool| SidebarTab {
             id: item.id,
             label: item.value.label(),
+            icon: item.value.icon.clone(),
             pinned: item.pinned,
             favourite,
             active: Some(item.id) == shown,

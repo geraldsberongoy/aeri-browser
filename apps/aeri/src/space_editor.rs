@@ -15,6 +15,7 @@ use crate::shell::{AppMsg, SPACE_ICONS};
 use crate::text_input::{InputEvent, TextInput};
 use crate::theme;
 use aeri_core::appearance::Tokens;
+use unicode_segmentation::UnicodeSegmentation;
 
 pub struct SpaceEditor {
     tx: UnboundedSender<AppMsg>,
@@ -24,6 +25,7 @@ pub struct SpaceEditor {
     /// The window a new space opens in.
     window_id: u64,
     name: Entity<TextInput>,
+    emoji: Entity<TextInput>,
     colour: u32,
     icon: String,
 }
@@ -62,6 +64,29 @@ impl SpaceEditor {
             },
         )
         .detach();
+        let emoji = cx.new(|cx| {
+            let mut input = TextInput::new("Or type an emoji", cx);
+            if !icon.is_empty() && !SPACE_ICONS.contains(&icon.as_str()) {
+                input.set_text(icon.clone(), cx);
+            }
+            input
+        });
+        cx.subscribe_in(
+            &emoji,
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Edited(text) => {
+                    if let Some(first) = text.trim().graphemes(true).next() {
+                        this.icon = first.to_owned();
+                        cx.notify();
+                    }
+                }
+                InputEvent::Submitted(_) => this.save(window, cx),
+                InputEvent::Cancelled => this.close(window),
+                _ => {}
+            },
+        )
+        .detach();
         window.focus(&input.focus_handle(cx), cx);
         Self {
             tx,
@@ -69,6 +94,7 @@ impl SpaceEditor {
             space,
             window_id,
             name: input,
+            emoji,
             colour,
             icon,
         }
@@ -163,6 +189,7 @@ impl Render for SpaceEditor {
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.icon = icon.to_owned();
+                        this.emoji.update(cx, |input, cx| input.set_text("", cx));
                         cx.notify();
                     }))
                     .child(SharedString::from(if icon.is_empty() {
@@ -207,6 +234,21 @@ impl Render for SpaceEditor {
             .child(colours)
             .child(label("Icon"))
             .child(icons)
+            .child(
+                div()
+                    .w(px(140.))
+                    .h(px(28.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(7.))
+                    .bg(theme::c(t.field))
+                    .border_1()
+                    .border_color(theme::c(t.separator))
+                    .text_size(px(14.))
+                    .line_height(px(20.))
+                    .child(self.emoji.clone()),
+            )
             .child(div().flex_1())
             .child(
                 div()

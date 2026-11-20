@@ -36,8 +36,8 @@ impl ProfileDb {
         };
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "INSERT INTO closed_tabs (url, title, pinned, position, space_id, favourite)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO closed_tabs (url, title, pinned, position, space_id, favourite, name, icon)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 closed.tab.url,
                 closed.tab.title,
@@ -45,6 +45,8 @@ impl ProfileDb {
                 closed.position as i64,
                 space,
                 favourite,
+                closed.tab.name,
+                closed.tab.icon,
             ],
         )?;
         tx.execute(
@@ -61,7 +63,7 @@ impl ProfileDb {
         let tx = self.conn.unchecked_transaction()?;
         let newest = tx
             .query_row(
-                "SELECT id, url, title, pinned, position, space_id, favourite
+                "SELECT id, url, title, pinned, position, space_id, favourite, name, icon
                  FROM closed_tabs ORDER BY id DESC LIMIT 1",
                 [],
                 |row| {
@@ -77,6 +79,8 @@ impl ProfileDb {
                                 url: row.get(1)?,
                                 title: row.get(2)?,
                                 pinned: row.get(3)?,
+                                name: row.get(7)?,
+                                icon: row.get(8)?,
                             },
                             origin,
                             position: row.get::<_, i64>(4)?.max(0) as usize,

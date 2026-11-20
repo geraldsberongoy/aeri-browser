@@ -41,6 +41,10 @@ pub(super) struct TabEntry {
     /// When a window last showed it (Phase 11: tabs unseen long enough
     /// rest).
     pub(super) last_seen: Instant,
+    /// The Person's own name for the tab, over the page's title.
+    pub(super) name: Option<String>,
+    /// The Person's emoji or symbol for the tab.
+    pub(super) icon: Option<String>,
 }
 
 impl TabEntry {
@@ -55,7 +59,17 @@ impl TabEntry {
             unseen: Some(url.to_owned()),
             blocked_popup: None,
             last_seen: Instant::now(),
+            name: None,
+            icon: None,
         };
+        (id, entry)
+    }
+
+    /// A saved tab, unseen until shown, with the Person's name and icon.
+    pub(super) fn restored(saved: &SavedTab) -> (TabId, Self) {
+        let (id, mut entry) = Self::unseen(&saved.url, &saved.title);
+        entry.name = saved.name.clone();
+        entry.icon = saved.icon.clone();
         (id, entry)
     }
 
@@ -65,8 +79,10 @@ impl TabEntry {
     }
 
     pub(super) fn label(&self) -> String {
+        if let Some(name) = &self.name {
+            name.clone()
         // Chromium titles a blank page "about:blank".
-        if self.url() == NEW_TAB_URL {
+        } else if self.url() == NEW_TAB_URL {
             "New Tab".to_owned()
         } else if self.model.title.is_empty() {
             self.url().to_owned()
@@ -80,6 +96,8 @@ impl TabEntry {
             url: self.url().to_owned(),
             title: self.model.title.clone(),
             pinned,
+            name: self.name.clone(),
+            icon: self.icon.clone(),
         }
     }
 
@@ -146,6 +164,8 @@ impl Shell {
             unseen,
             blocked_popup: None,
             last_seen: Instant::now(),
+            name: None,
+            icon: None,
         };
         match place {
             Place::After(opener) => w.tabs.insert(tab, entry, false, Some(opener)),
@@ -526,7 +546,7 @@ impl Shell {
         let start = TabStart::Load(closed.tab.url.clone());
         match closed.origin {
             Origin::Favourites => {
-                let (tab, entry) = TabEntry::unseen(&closed.tab.url, &closed.tab.title);
+                let (tab, entry) = TabEntry::restored(&closed.tab);
                 if let Some(open) = self.open.get_mut(&profile) {
                     open.favourites
                         .insert_at(tab, entry, false, closed.position);
@@ -552,9 +572,15 @@ impl Shell {
                         window_id
                     }
                 };
-                self.add_tab(target, TabId::next(), start, place, true, cx);
+                let tab = TabId::next();
+                self.add_tab(target, tab, start, place, true, cx);
+                self.give_look(tab, closed.tab.name, closed.tab.icon);
             }
-            _ => self.add_tab(window_id, TabId::next(), start, place, true, cx),
+            _ => {
+                let tab = TabId::next();
+                self.add_tab(window_id, tab, start, place, true, cx);
+                self.give_look(tab, closed.tab.name, closed.tab.icon);
+            }
         }
     }
 

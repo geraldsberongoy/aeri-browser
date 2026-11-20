@@ -54,11 +54,15 @@ pub struct SavedWindow {
     pub space: SpaceId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SavedTab {
     pub url: String,
     pub title: String,
     pub pinned: bool,
+    /// The Person's own name for the tab, over the page's title.
+    pub name: Option<String>,
+    /// The Person's emoji or symbol for the tab.
+    pub icon: Option<String>,
 }
 
 impl ProfileDb {
@@ -89,16 +93,25 @@ impl ProfileDb {
             )?;
             for (position, tab) in space.tabs.iter().enumerate() {
                 tx.execute(
-                    "INSERT INTO space_tabs (space_id, position, url, title, pinned)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![space.id.0, position as i64, tab.url, tab.title, tab.pinned],
+                    "INSERT INTO space_tabs (space_id, position, url, title, pinned, name, icon)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        space.id.0,
+                        position as i64,
+                        tab.url,
+                        tab.title,
+                        tab.pinned,
+                        tab.name,
+                        tab.icon,
+                    ],
                 )?;
             }
         }
         for (position, tab) in workspace.favourites.iter().enumerate() {
             tx.execute(
-                "INSERT INTO favourites (position, url, title) VALUES (?1, ?2, ?3)",
-                params![position as i64, tab.url, tab.title],
+                "INSERT INTO favourites (position, url, title, name, icon)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![position as i64, tab.url, tab.title, tab.name, tab.icon],
             )?;
         }
         for (position, window) in workspace.windows.iter().enumerate() {
@@ -125,7 +138,7 @@ impl ProfileDb {
     pub fn workspace(&self) -> Result<Workspace> {
         let favourites = self
             .conn
-            .prepare("SELECT url, title, 0 FROM favourites ORDER BY position")?
+            .prepare("SELECT url, title, 0, name, icon FROM favourites ORDER BY position")?
             .query_map([], saved_tab)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let rows = self
@@ -147,7 +160,8 @@ impl ProfileDb {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut tabs = self.conn.prepare(
-            "SELECT url, title, pinned FROM space_tabs WHERE space_id = ?1 ORDER BY position",
+            "SELECT url, title, pinned, name, icon FROM space_tabs
+             WHERE space_id = ?1 ORDER BY position",
         )?;
         let mut spaces = Vec::with_capacity(rows.len());
         for (id, name, colour, icon, shown_tab, shown_favourite, theme) in rows {
@@ -209,11 +223,14 @@ impl ProfileDb {
     }
 }
 
-fn saved_tab(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedTab> {
+/// Reads `url, title, pinned, name, icon`.
+pub(super) fn saved_tab(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedTab> {
     Ok(SavedTab {
         url: row.get(0)?,
         title: row.get(1)?,
         pinned: row.get(2)?,
+        name: row.get(3)?,
+        icon: row.get(4)?,
     })
 }
 
@@ -324,12 +341,14 @@ mod tests {
                 SavedTab {
                     url: "https://a.test/".into(),
                     title: "A".into(),
-                    pinned: true
+                    pinned: true,
+                    ..SavedTab::default()
                 },
                 SavedTab {
                     url: "https://b.test/".into(),
                     title: "B".into(),
-                    pinned: false
+                    pinned: false,
+                    ..SavedTab::default()
                 },
             ]
         );

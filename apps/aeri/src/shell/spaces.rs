@@ -76,7 +76,7 @@ impl Shell {
         };
         let mut favourite_ids = Vec::new();
         for saved in &workspace.favourites {
-            let (id, entry) = TabEntry::unseen(&saved.url, &saved.title);
+            let (id, entry) = TabEntry::restored(saved);
             open.favourites.insert(id, entry, false, None);
             favourite_ids.push(id);
         }
@@ -84,7 +84,7 @@ impl Shell {
             let mut tabs = TabList::default();
             let mut ids = Vec::new();
             for saved in &space.tabs {
-                let (id, entry) = TabEntry::unseen(&saved.url, &saved.title);
+                let (id, entry) = TabEntry::restored(saved);
                 tabs.insert(id, entry, saved.pinned, None);
                 ids.push(id);
             }

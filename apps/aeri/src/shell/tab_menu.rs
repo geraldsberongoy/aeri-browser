@@ -88,6 +88,7 @@ impl Shell {
             TabCommand::Rest => {
                 self.rest_tab(tab, cx);
             }
+            TabCommand::Rename => self.show_tab_editor(tab, cx),
             TabCommand::KeepAwake(awake) => {
                 let url = self.spot(tab).and_then(|spot| {
                     let list = self.list_mut(spot)?;
@@ -163,6 +164,7 @@ impl Shell {
             add(pin, command(TabCommand::TogglePin));
             add("Add to Favourites", command(TabCommand::ToggleFavourite));
         }
+        add("Rename Tab…", command(TabCommand::Rename));
         add("Duplicate Tab", command(TabCommand::Duplicate));
         if item.value.cef.is_some() && w.shown() != Some(tab) {
             add("Rest Tab", command(TabCommand::Rest));

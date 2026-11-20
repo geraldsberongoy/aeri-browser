@@ -42,6 +42,7 @@ mod settings;
 mod shortcuts;
 mod space_settings;
 mod spaces;
+mod tab_look;
 mod tab_menu;
 mod tabs;
 mod theme_files;
@@ -172,6 +173,7 @@ struct Shell {
     manager: Option<WindowHandle<ProfileManager>>,
     space_editor: Option<WindowHandle<SpaceEditor>>,
     theme_editor: Option<themes::Editing>,
+    tab_editor: Option<WindowHandle<crate::tab_editor::TabEditor>>,
     /// Windows drawn see-through over the desktop's blur (the macOS
     /// material).
     see_through: HashSet<u64>,
@@ -294,6 +296,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         manager: None,
         space_editor: None,
         theme_editor: None,
+        tab_editor: None,
         see_through: HashSet::new(),
         user_themes: Vec::new(),
         library: None,
@@ -467,6 +470,8 @@ impl Shell {
                 confirmed,
             } => self.delete_space(window, space, confirmed, cx),
             AppMsg::SpaceEditorClosed => self.space_editor = None,
+            AppMsg::SetTabLook { tab, name, icon } => self.set_tab_look(tab, name, icon, cx),
+            AppMsg::TabEditorClosed => self.tab_editor = None,
             AppMsg::WindowKey { window } => self.window_key(window, cx),
             AppMsg::Reopen => {
                 if self.windows.is_empty() && !self.quitting {
