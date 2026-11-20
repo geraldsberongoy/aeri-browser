@@ -105,6 +105,14 @@ impl ProfileDb {
             .execute("DELETE FROM history WHERE url = ?1", [url])?;
         Ok(())
     }
+
+    /// Forgets every address visited at or after `since` (Unix seconds; 0
+    /// for all time), older visits to it included. Returns how many.
+    pub fn clear_history_since(&self, since: i64) -> Result<usize> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM history WHERE last_visit_at >= ?1", [since])?)
+    }
 }
 
 fn history_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
@@ -174,6 +182,25 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn clearing_a_range_forgets_addresses_visited_in_it() {
+        let db = ProfileDb::open_in_memory().unwrap();
+        db.record_visit("https://old.test/", "Old", 100).unwrap();
+        db.record_visit("https://both.test/", "Both", 100).unwrap();
+        db.record_visit("https://both.test/", "Both", 500).unwrap();
+        db.record_visit("https://new.test/", "New", 600).unwrap();
+        assert_eq!(db.clear_history_since(500).unwrap(), 2);
+        let urls: Vec<String> = db
+            .recent_history(10)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.url)
+            .collect();
+        assert_eq!(urls, ["https://old.test/"]);
+        assert_eq!(db.clear_history_since(0).unwrap(), 1);
+        assert!(db.recent_history(10).unwrap().is_empty());
     }
 
     #[test]

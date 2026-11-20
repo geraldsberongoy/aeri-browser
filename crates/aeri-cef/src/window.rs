@@ -119,7 +119,7 @@ impl TabWindow {
         sink: SignalSink,
         observer: Rc<dyn TabObserver>,
     ) -> Result<Self, Error> {
-        let mut client = tab_client(tab, sink.clone());
+        let mut client = tab_client(tab, sink.clone(), context.popup_sites.clone());
         let mut view_delegate = AeriBrowserViewDelegate::new();
         let mut request_context = context.context.clone();
         let view = browser_view_create(

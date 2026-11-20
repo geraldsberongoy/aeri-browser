@@ -1,6 +1,6 @@
 //! App-level AppKit helpers: the window of a GPUI view, native menus,
-//! quit interception and overlay scrollers. The per-window layering lives in
-//! [`frame`].
+//! quit interception, overlay scrollers, Finder and the system browser.
+//! The per-window layering lives in [`frame`].
 //!
 //! Everything here runs on the main thread and touches only AppKit, so it is
 //! safe from CEF callbacks. It must not run inside a GPUI update: moving or
@@ -10,11 +10,13 @@ mod frame;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
+use std::path::Path;
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, NSObjectProtocol};
 use objc2::sel;
-use objc2_app_kit::{NSView, NSWindow};
+use objc2_app_kit::{NSView, NSWindow, NSWorkspace, NSWorkspaceOpenConfiguration};
+use objc2_foundation::{NSArray, NSBundle, NSString, NSURL};
 
 use crate::native_menu;
 
@@ -54,6 +56,40 @@ pub fn pop_up_menu_in(
     // SAFETY: a live content NSView from GPUI, on the main thread.
     let view = unsafe { &*(view as *const NSView) };
     native_menu::pop_up(view, x, y, native_menu::Align::Left, entries, on_pick);
+}
+
+/// Shows a file selected in a Finder window.
+pub fn reveal_in_finder(path: &Path) {
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    NSWorkspace::sharedWorkspace()
+        .activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&[url]));
+}
+
+/// Opens `url` in the system's default browser, or in Safari if that is
+/// Aeri itself (a page that refuses Aeri, e.g. for DRM).
+pub fn open_in_default_browser(url: &str) {
+    let Some(target) = NSURL::URLWithString(&NSString::from_str(url)) else {
+        return;
+    };
+    let workspace = NSWorkspace::sharedWorkspace();
+    let ours = NSBundle::mainBundle().bundleURL();
+    let browser = workspace
+        .URLForApplicationToOpenURL(&target)
+        .filter(|app| !app.isEqual(Some(&ours)))
+        .or_else(|| {
+            workspace.URLForApplicationWithBundleIdentifier(&NSString::from_str("com.apple.Safari"))
+        });
+    let Some(browser) = browser else {
+        tracing::warn!("no browser to hand the page to");
+        return;
+    };
+    tracing::info!(url, browser = %browser.path().map(|p| p.to_string()).unwrap_or_default(), "page handed to the system browser");
+    workspace.openURLs_withApplicationAtURL_configuration_completionHandler(
+        &NSArray::from_retained_slice(&[target]),
+        &browser,
+        &NSWorkspaceOpenConfiguration::configuration(),
+        None,
+    );
 }
 
 thread_local! {

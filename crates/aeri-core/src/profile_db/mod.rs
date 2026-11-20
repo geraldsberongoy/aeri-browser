@@ -1,11 +1,13 @@
 //! `Profiles/<id>/profile.db`: one profile's own records (ADR 0004): its
 //! workspace (spaces and their tabs, favourites, and which space each window
-//! shows), recently closed tabs, history and bookmarks. Nothing here is ever
-//! readable from another profile: each profile has its own file.
+//! shows), recently closed tabs, history, bookmarks and the sites always
+//! allowed popups. Nothing here is ever readable from another profile: each
+//! profile has its own file.
 
 mod bookmarks;
 mod closed;
 mod history;
+mod sites;
 mod workspace;
 
 use std::path::Path;
@@ -97,6 +99,8 @@ const MIGRATIONS: &[&str] = &[
      );
      CREATE INDEX bookmarks_by_parent ON bookmarks (parent_id, position);
      CREATE INDEX bookmarks_by_url ON bookmarks (url);",
+    // 4: sites always allowed to open popups without a gesture.
+    "CREATE TABLE popup_sites (site TEXT PRIMARY KEY NOT NULL);",
 ];
 
 pub struct ProfileDb {

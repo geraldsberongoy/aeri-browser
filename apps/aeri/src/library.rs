@@ -8,7 +8,7 @@ use aeri_core::ids::BookmarkId;
 use aeri_core::profile_db::{Bookmark, HistoryEntry};
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, FontWeight, MouseButton,
+    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, MouseButton,
     MouseDownEvent, SharedString, Stateful, Window, div, prelude::*, px, rgb, rgba,
 };
 
@@ -50,6 +50,17 @@ pub enum LibraryMsg {
     },
     Delete(BookmarkId),
     RemoveHistory(String),
+    /// The History section's "Clear History…" button, clicked at (`x`, `y`).
+    ClearMenu {
+        x: f32,
+        y: f32,
+    },
+    /// Forget history visited at or after `since` (Unix seconds; 0: all).
+    ClearHistory {
+        since: i64,
+    },
+    /// Chrome's page for cookies, cache and site data.
+    ClearBrowsingData,
     NewFolder,
     Closed,
 }
@@ -282,6 +293,18 @@ impl Library {
     }
 }
 
+fn header_button(id: &'static str, label: &'static str) -> Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .px(px(12.))
+        .py(px(4.))
+        .rounded(px(7.))
+        .text_size(px(13.))
+        .bg(rgba(0xffffff12))
+        .hover(|s| s.bg(rgba(0xffffff1f)))
+        .child(label)
+}
+
 fn row(id: impl Into<gpui::ElementId>) -> Stateful<gpui::Div> {
     div()
         .id(id)
@@ -359,17 +382,19 @@ impl Render for Library {
             .child(div().flex_1())
             .when(self.section == Section::Bookmarks, |header| {
                 header.child(
-                    div()
-                        .id("new-folder")
-                        .px(px(12.))
-                        .py(px(4.))
-                        .rounded(px(7.))
-                        .text_size(px(13.))
-                        .bg(rgba(0xffffff12))
-                        .hover(|s| s.bg(rgba(0xffffff1f)))
-                        .on_click(cx.listener(|this, _, _, _| this.send(LibraryMsg::NewFolder)))
-                        .child("New Folder"),
+                    header_button("new-folder", "New Folder")
+                        .on_click(cx.listener(|this, _, _, _| this.send(LibraryMsg::NewFolder))),
                 )
+            })
+            .when(self.section == Section::History, |header| {
+                header.child(header_button("clear-history", "Clear History…").on_click(
+                    cx.listener(|this, event: &ClickEvent, _, _| {
+                        this.send(LibraryMsg::ClearMenu {
+                            x: f32::from(event.position().x),
+                            y: f32::from(event.position().y),
+                        })
+                    }),
+                ))
             });
         div()
             .size_full()

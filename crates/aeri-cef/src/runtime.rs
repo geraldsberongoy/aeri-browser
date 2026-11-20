@@ -37,6 +37,8 @@ pub struct RuntimeConfig {
     pub log_file: Option<PathBuf>,
     /// Development only: exposes the DevTools protocol on this port.
     pub remote_debugging_port: Option<u16>,
+    /// Where downloads are saved (Phase 9).
+    pub download_dir: PathBuf,
 }
 
 const KEYCHAIN_SERVICE: &str = "Aeri Safe Storage";
@@ -125,6 +127,7 @@ impl Runtime {
         }
         *self.ready.lock().expect("ready slot") = Some(Box::new(on_ready));
         *self.sink.lock().expect("sink slot") = Some(sink);
+        crate::downloads::set_download_dir(config.download_dir.clone());
 
         #[cfg(target_os = "macos")]
         {

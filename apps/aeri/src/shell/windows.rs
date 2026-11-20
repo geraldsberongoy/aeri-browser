@@ -447,10 +447,12 @@ impl Shell {
             .as_ref()
             .map(|tab| display_address(&tab.url))
             .unwrap_or_default();
+        let (popup_blocked, downloads) = self.strip_notices(window_id);
         let _ = w.frame_window.update(cx, |frame, _, cx| {
             frame.set_tabs(tabs, cx);
             frame.set_spaces(spaces, cx);
             frame.set_address(address, cx);
+            frame.set_notices(popup_blocked, downloads, cx);
             if let Some(tab) = &model {
                 frame.show_history(tab.can_go_back, tab.can_go_forward, cx);
             }

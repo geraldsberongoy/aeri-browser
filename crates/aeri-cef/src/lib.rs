@@ -7,6 +7,7 @@
 
 mod client;
 mod devtools;
+mod downloads;
 mod extensions;
 mod orphan;
 mod profile;
@@ -17,12 +18,14 @@ mod window;
 #[cfg(target_os = "macos")]
 mod mac;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use aeri_core::engine::Event;
 use aeri_core::ids::{ProfileId, TabId};
 
 pub use devtools::DevTools;
+pub use downloads::cancel_download;
 pub use extensions::Extension;
 pub use profile::{ExtensionsWatch, ProfileContext};
 pub use runtime::{Runtime, RuntimeConfig, load};
@@ -86,6 +89,36 @@ pub enum Signal {
         profile: ProfileId,
         url: String,
     },
+    /// A page tried to open `url` without the Person's gesture, and its site
+    /// is not always allowed: Aeri refused it (Phase 9).
+    PopupBlocked {
+        opener: TabId,
+        url: String,
+    },
+    Download(Download),
+}
+
+/// A download's progress (Phase 9).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Download {
+    /// The tab whose page started it.
+    pub tab: TabId,
+    /// Chrome's id for it, unique while Aeri runs.
+    pub id: u32,
+    pub path: PathBuf,
+    pub received: i64,
+    /// Not positive when the size is unknown.
+    pub total: i64,
+    pub state: DownloadState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DownloadState {
+    InProgress,
+    Complete,
+    Cancelled,
+    /// Chrome's reason.
+    Failed(String),
 }
 
 /// Where signals go. Called on the main thread from inside CEF callbacks, so

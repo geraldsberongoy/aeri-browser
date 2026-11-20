@@ -7,6 +7,7 @@ use gpui::App;
 
 use super::bar::{BarRow, Pick, suggestion_row, typed_row};
 use super::session::now;
+use super::trust::{CLEAR_DATA_PAGE, DOWNLOADS_PAGE};
 use super::{Shell, TabCommand};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +22,10 @@ pub enum PaletteCommand {
     ToggleBookmark,
     ShowBookmarks,
     ShowHistory,
+    ShowDownloads,
+    ClearBrowsingData,
+    SiteSettings,
+    OpenInDefaultBrowser,
     ToggleSidebar,
     ToggleFullScreen,
     NewSpace,
@@ -45,6 +50,10 @@ const COMMANDS: &[(PaletteCommand, &str)] = &[
     (PaletteCommand::ToggleBookmark, "⌘D"),
     (PaletteCommand::ShowBookmarks, "⌥⌘B"),
     (PaletteCommand::ShowHistory, "⌘Y"),
+    (PaletteCommand::ShowDownloads, ""),
+    (PaletteCommand::ClearBrowsingData, ""),
+    (PaletteCommand::SiteSettings, ""),
+    (PaletteCommand::OpenInDefaultBrowser, ""),
     (PaletteCommand::ToggleSidebar, "⌘S"),
     (PaletteCommand::ToggleFullScreen, "⌃⌘F"),
     (PaletteCommand::NewSpace, ""),
@@ -156,6 +165,10 @@ impl Shell {
             }
             PaletteCommand::ShowBookmarks => "Show Bookmarks",
             PaletteCommand::ShowHistory => "Show History",
+            PaletteCommand::ShowDownloads => "Show Downloads",
+            PaletteCommand::ClearBrowsingData => "Clear Browsing Data…",
+            PaletteCommand::SiteSettings => "Site Settings…",
+            PaletteCommand::OpenInDefaultBrowser => "Open in Default Browser",
             PaletteCommand::ToggleSidebar => "Show or Hide Sidebar",
             PaletteCommand::ToggleFullScreen => "Enter or Exit Full Screen",
             PaletteCommand::NewSpace => "New Space…",
@@ -198,6 +211,8 @@ impl Shell {
             PaletteCommand::DuplicateTab => Some(TabCommand::Duplicate),
             PaletteCommand::TogglePin => Some(TabCommand::TogglePin),
             PaletteCommand::ToggleFavourite => Some(TabCommand::ToggleFavourite),
+            PaletteCommand::SiteSettings => Some(TabCommand::SiteSettings),
+            PaletteCommand::OpenInDefaultBrowser => Some(TabCommand::OpenInDefaultBrowser),
             _ => None,
         };
         if let Some(tab_command) = tab_command {
@@ -212,6 +227,8 @@ impl Shell {
             PaletteCommand::DeleteSpace => self.delete_space(window_id, space, false, cx),
             PaletteCommand::NewProfile => self.show_profile_manager(true, cx),
             PaletteCommand::ManageProfiles => self.show_profile_manager(false, cx),
+            PaletteCommand::ShowDownloads => self.open_page(window_id, DOWNLOADS_PAGE, cx),
+            PaletteCommand::ClearBrowsingData => self.open_page(window_id, CLEAR_DATA_PAGE, cx),
             _ => {}
         }
     }

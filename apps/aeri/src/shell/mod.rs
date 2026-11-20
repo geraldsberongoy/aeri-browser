@@ -35,6 +35,7 @@ mod space_settings;
 mod spaces;
 mod tab_menu;
 mod tabs;
+mod trust;
 mod windows;
 
 use std::cell::RefCell;
@@ -62,6 +63,7 @@ use self::quit::quit_on_signals;
 pub use self::spaces::SPACE_ICONS;
 use self::spaces::{Parked, SpaceInfo};
 use self::tabs::TabEntry;
+use self::trust::{DownloadEntry, DownloadPick};
 use self::windows::AeriWindow;
 use crate::address_bar;
 use crate::library::{Library, LibraryMsg};
@@ -139,6 +141,22 @@ pub enum AppMsg {
         window: u64,
         x: f32,
         y: f32,
+    },
+    /// The strip's "Popup blocked" notice was clicked at (`x`, `y`).
+    PopupMenu {
+        window: u64,
+        x: f32,
+        y: f32,
+    },
+    /// The strip's downloads button was clicked at (`x`, `y`).
+    DownloadsMenu {
+        window: u64,
+        x: f32,
+        y: f32,
+    },
+    DownloadPick {
+        window: u64,
+        pick: DownloadPick,
     },
     /// Switch to a profile: bring its window forward or open one.
     OpenProfile {
@@ -226,6 +244,13 @@ pub enum TabCommand {
     ToggleFavourite,
     /// Bookmark the tab's page, or remove its bookmarks.
     ToggleBookmark,
+    /// Open the popup Aeri refused the tab's page, as a tab.
+    OpenBlockedPopup,
+    /// Always allow (or stop allowing) popups from the tab's site.
+    AllowPopups(bool),
+    /// Chrome's settings page for the tab's site (its permissions).
+    SiteSettings,
+    OpenInDefaultBrowser,
     MoveToSpace(SpaceId),
     /// Drag and drop: move to this position among the favourites or the
     /// space's tabs, (un)favouriting it if it came from the other list.
@@ -244,6 +269,8 @@ pub struct Config {
     /// restoring each profile's session.
     pub start_url: Option<String>,
     pub remote_debugging_port: Option<u16>,
+    /// Where downloads are saved.
+    pub download_dir: PathBuf,
 }
 
 actions!(aeri, [NewProfile, ManageProfiles]);
@@ -287,6 +314,8 @@ struct OpenProfile {
     favourites: TabList<TabEntry>,
     /// The window whose frame holds each live favourite's page.
     favourite_home: HashMap<TabId, u64>,
+    /// This session's downloads, oldest first.
+    downloads: Vec<DownloadEntry>,
 }
 
 struct Shell {
@@ -359,6 +388,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         root_cache_path: root_cache_path.clone(),
         log_file: Some(config.data_dir.join("chromium.log")),
         remote_debugging_port: config.remote_debugging_port,
+        download_dir: config.download_dir.clone(),
     };
     let ready = tx.clone();
     let signals = tx.clone();
@@ -503,6 +533,10 @@ impl Shell {
                 url,
                 foreground,
             }) => self.open_link(opener, url, foreground, cx),
+            AppMsg::Signal(Signal::PopupBlocked { opener, url }) => {
+                self.popup_blocked(opener, url, cx)
+            }
+            AppMsg::Signal(Signal::Download(download)) => self.download_updated(download, cx),
             AppMsg::TabClosed { window, tab } => self.tab_closed(window, tab, cx),
             AppMsg::CloseWindow { window } => self.close_window(window, cx),
             AppMsg::BarQuery { window, text } => self.bar_query(window, text, cx),
@@ -523,6 +557,9 @@ impl Shell {
                 self.extension_action(window, extension, cx)
             }
             AppMsg::ProfileMenu { window, x, y } => self.profile_menu(window, x, y),
+            AppMsg::PopupMenu { window, x, y } => self.popup_menu(window, x, y),
+            AppMsg::DownloadsMenu { window, x, y } => self.downloads_menu(window, x, y),
+            AppMsg::DownloadPick { window, pick } => self.download_pick(window, pick, cx),
             AppMsg::OpenProfile { profile } => self.show_profile(profile, cx),
             AppMsg::CreateProfile { name, accent } => self.create_profile(&name, accent, cx),
             AppMsg::RenameProfile { profile, name } => {

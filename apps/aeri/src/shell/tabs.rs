@@ -34,6 +34,9 @@ pub(super) struct TabEntry {
     /// A background or restored tab's address, loaded when the tab is first
     /// shown; until then it has no CEF window and no renderer (S7).
     pub(super) unseen: Option<String>,
+    /// The last popup Aeri refused this tab's page (Phase 9), until the page
+    /// navigates or the Person deals with it.
+    pub(super) blocked_popup: Option<String>,
 }
 
 impl TabEntry {
@@ -46,6 +49,7 @@ impl TabEntry {
             model,
             cef: None,
             unseen: Some(url.to_owned()),
+            blocked_popup: None,
         };
         (id, entry)
     }
@@ -133,6 +137,7 @@ impl Shell {
             model: Tab::new(tab, url),
             cef: None,
             unseen,
+            blocked_popup: None,
         };
         match place {
             Place::After(opener) => w.tabs.insert(tab, entry, false, Some(opener)),
@@ -286,9 +291,13 @@ impl Shell {
         let Some(item) = self.list_mut(spot).and_then(|list| list.get_mut(tab_id)) else {
             return;
         };
+        let mut changed = false;
+        if matches!(event, Event::AddressChanged { .. }) {
+            changed |= item.value.blocked_popup.take().is_some();
+        }
         let model = &mut item.value.model;
         let activity = model.activity;
-        let changed = model.apply(&event);
+        changed |= model.apply(&event);
         if model.activity != activity {
             tracing::info!(%tab_id, activity = ?model.activity, "tab activity");
         }

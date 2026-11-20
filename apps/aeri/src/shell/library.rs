@@ -1,5 +1,5 @@
 //! Bookmarks and the library window (Phase 8): ⌘D, bookmark folders, and
-//! the profile's history.
+//! the profile's history, which it can clear by time range (Phase 9).
 
 use std::cell::RefCell;
 
@@ -9,6 +9,8 @@ use aeri_core::profile_db::{Bookmark, records_history};
 use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
 use super::palette::{matches, words};
+use super::session::now;
+use super::trust::CLEAR_DATA_PAGE;
 use super::{AppMsg, SEARCH_TEMPLATE, Shell, content_view};
 use crate::library::{Library, LibraryItem, LibraryMsg, Section};
 use crate::mac;
@@ -179,17 +181,25 @@ impl Shell {
             LibraryMsg::Query => {}
             LibraryMsg::Open(url) => {
                 if let Some(destination) = omnibox::classify(&url, SEARCH_TEMPLATE) {
-                    self.open_url(profile, destination.url().to_string(), cx);
-                    if let Some(frame) = self
-                        .windows
-                        .iter()
-                        .rfind(|w| w.profile == profile && !w.closing)
-                        .map(|w| w.frame.clone())
-                    {
-                        self.later(move |_| frame.bring_forward());
-                    }
+                    self.open_for_library(profile, destination.url().to_string(), cx);
                 }
                 return;
+            }
+            LibraryMsg::ClearBrowsingData => {
+                self.open_for_library(profile, CLEAR_DATA_PAGE.to_owned(), cx);
+                return;
+            }
+            LibraryMsg::ClearMenu { x, y } => {
+                self.clear_history_menu(x, y, cx);
+                return;
+            }
+            LibraryMsg::ClearHistory { since } => {
+                if let Some(db) = db {
+                    match db.clear_history_since(since) {
+                        Ok(count) => tracing::info!(%profile, since, count, "history cleared"),
+                        Err(err) => tracing::warn!(%err, "could not clear history"),
+                    }
+                }
             }
             LibraryMsg::Menu { item, x, y } => {
                 self.library_menu(item, x, y, cx);
@@ -244,6 +254,69 @@ impl Shell {
             }
         }
         self.refresh_library(cx);
+    }
+
+    /// Opens `url` in a new tab of the library's profile and brings that
+    /// window forward.
+    fn open_for_library(&mut self, profile: ProfileId, url: String, cx: &mut App) {
+        self.open_url(profile, url, cx);
+        if let Some(frame) = self
+            .windows
+            .iter()
+            .rfind(|w| w.profile == profile && !w.closing)
+            .map(|w| w.frame.clone())
+        {
+            self.later(move |_| frame.bring_forward());
+        }
+    }
+
+    /// "Clear History…": the time ranges, then Chrome's page for the rest.
+    fn clear_history_menu(&mut self, x: f32, y: f32, cx: &mut App) {
+        let Some((handle, _)) = self.library else {
+            return;
+        };
+        let Some(view) = handle
+            .update(cx, |_, window, _| content_view(window))
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+        let now = now();
+        let ranges = [
+            ("Last Hour", now - 3_600),
+            ("Last 24 Hours", now - 86_400),
+            ("Last 7 Days", now - 7 * 86_400),
+            ("Last 4 Weeks", now - 28 * 86_400),
+            ("All Time", 0),
+        ];
+        let mut entries: Vec<Entry> = ranges
+            .iter()
+            .map(|(title, _)| Entry::Item {
+                title: (*title).to_owned(),
+                checked: false,
+            })
+            .collect();
+        let mut picks: Vec<Option<LibraryMsg>> = ranges
+            .iter()
+            .map(|&(_, since)| Some(LibraryMsg::ClearHistory { since }))
+            .collect();
+        entries.push(Entry::Separator);
+        picks.push(None);
+        entries.push(Entry::Item {
+            title: "Cookies, Cache and Site Data…".to_owned(),
+            checked: false,
+        });
+        picks.push(Some(LibraryMsg::ClearBrowsingData));
+        let tx = self.tx.clone();
+        let picks = RefCell::new(picks);
+        self.later(move |_| {
+            mac::pop_up_menu_in(view, f64::from(x), f64::from(y), &entries, move |ix| {
+                if let Some(msg) = picks.borrow_mut().get_mut(ix).and_then(Option::take) {
+                    let _ = tx.unbounded_send(AppMsg::Library(msg));
+                }
+            });
+        });
     }
 
     /// A row's native menu in the library window.

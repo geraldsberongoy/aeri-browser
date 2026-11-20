@@ -46,6 +46,7 @@ fn main() -> Result<()> {
         remote_debugging_port: std::env::var("AERI_REMOTE_DEBUGGING_PORT")
             .ok()
             .and_then(|port| port.parse().ok()),
+        download_dir: download_dir()?,
     };
     tracing::info!(data_dir = %config.data_dir.display(), "starting Aeri");
     if let Err(error) = runtime.devtools() {
@@ -71,4 +72,13 @@ fn data_dir() -> Result<PathBuf> {
     }
     let home = std::env::home_dir().context("no home directory")?;
     Ok(home.join("Library/Application Support/Aeri"))
+}
+
+/// `~/Downloads`, or `AERI_DOWNLOAD_DIR` (tests, dev).
+fn download_dir() -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("AERI_DOWNLOAD_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+    let home = std::env::home_dir().context("no home directory")?;
+    Ok(home.join("Downloads"))
 }

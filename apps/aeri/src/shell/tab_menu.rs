@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::profile_db::records_history;
 use aeri_core::store::Profile;
+use aeri_core::trust::site_of;
 use gpui::App;
 
 use super::tabs::{Place, TabStart};
@@ -80,6 +81,10 @@ impl Shell {
             TabCommand::ToggleFavourite => self.toggle_favourite(window_id, tab, cx),
             TabCommand::ToggleBookmark => self.toggle_bookmark(window_id, tab, cx),
             TabCommand::MoveToSpace(space) => self.move_to_space(window_id, tab, space, cx),
+            TabCommand::OpenBlockedPopup => self.open_blocked_popup(window_id, tab, cx),
+            TabCommand::AllowPopups(allowed) => self.allow_popups(window_id, tab, allowed, cx),
+            TabCommand::SiteSettings => self.site_settings(window_id, tab, cx),
+            TabCommand::OpenInDefaultBrowser => self.open_in_default_browser(tab),
             TabCommand::MoveTo {
                 index,
                 favourite: to_favourites,
@@ -159,6 +164,18 @@ impl Shell {
                 "Bookmark Tab"
             };
             add(title, command(TabCommand::ToggleBookmark));
+        }
+        if let Some(site) = site_of(page) {
+            add("", None);
+            add("Site Settings…", command(TabCommand::SiteSettings));
+            if self.popups_allowed(w.profile, page) {
+                let title = format!("Block Popups from {site}");
+                add(&title, command(TabCommand::AllowPopups(false)));
+            }
+            add(
+                "Open in Default Browser",
+                command(TabCommand::OpenInDefaultBrowser),
+            );
         }
         if favourite.is_none() {
             let others: Vec<_> = open.spaces.iter().filter(|s| s.id != w.space).collect();

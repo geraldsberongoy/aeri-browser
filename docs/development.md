@@ -91,6 +91,7 @@ Development switches:
 | `AERI_START_URL=https://example.com` | Open one window on this address per opened profile instead of restoring each profile's session. Without it, a profile with no session opens a new tab (`about:blank`, with the address bar shown). |
 | `AERI_REMOTE_DEBUGGING_PORT=9334` | Expose the DevTools protocol for scripted checks. |
 | `AERI_PROFILE=Work,Client` | Open (or create) these profiles, each in its own window, instead of the last-used one. For scripted checks; the Profiles menu is the Person's way. |
+| `AERI_DOWNLOAD_DIR=/tmp/aeri-downloads` | Save downloads here instead of `~/Downloads`. |
 | `AERI_LOG=info,aeri=debug` | `tracing` filter (stdout; colours only on a terminal). |
 | `--use-mock-keychain` | Chromium switch: skip the Keychain. Use it for scripted runs; see below. |
 | `--autoplay-policy=no-user-gesture-required` | Chromium switch: let a script play sound without a click (tab-signals checks). |
@@ -119,8 +120,20 @@ tab, ⌘⇧T reopen the last closed tab, ⌃Tab / ⌃⇧Tab next and previous ta
 next space, ⌘D bookmark the page (again: remove it), ⌥⌘B bookmarks, ⌘Y
 history, ⌘S show or hide the sidebar, ⌃⌘F full screen, ⌘Q quit. In the bar,
 ↑ / ↓ pick a suggestion. A profile's records (spaces, favourites, windows,
-closed tabs, history, bookmarks) are in `Profiles/<id>/profile.db` under the
-data directory; `sqlite3` reads it once Aeri has quit.
+closed tabs, history, bookmarks, sites always allowed to open popups) are in
+`Profiles/<id>/profile.db` under the data directory; `sqlite3` reads it once
+Aeri has quit.
+
+Trust (Phase 9): the strip shows **Popup blocked** while the shown tab's
+page was refused a popup it opened without a click (its menu opens it once
+or always allows the site), and a downloads button once the profile has
+downloaded something (cancel, reveal in Finder, Show All Downloads). The tab
+menu and palette have **Site Settings…** (Chrome's per-site permissions
+page) and **Open in Default Browser**; the palette has **Show Downloads**
+and **Clear Browsing Data…** (Chrome's page); the library's History has
+**Clear History…** by range. A certificate warning passed with Proceed
+shows again after relaunch. Chrome also keeps its own history in
+`Chromium/<id>/History`, which only Clear Browsing Data clears.
 
 Running under `lldb` (launch or attach) raises a system "Developer Tools
 Access" dialog and stalls until it is answered. Aeri also needs fds 3 and 4

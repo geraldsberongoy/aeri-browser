@@ -1,9 +1,10 @@
 //! The GPUI frame window of an Aeri window. It owns the window's size,
 //! position, full screen and Space, and draws the strip along the top: the
 //! window's own traffic lights, back, forward and reload, and at the right
-//! the window's profile (stage 1: every window shows its profile). Below the
-//! strip, at the left, the sidebar lists the window's tabs; the active tab's
-//! window sits beside it as a rounded card (`mac::Frame::layout`).
+//! the trust notices (a refused popup, downloads) and the window's profile
+//! (stage 1: every window shows its profile). Below the strip, at the left,
+//! the sidebar lists the window's tabs; the active tab's window sits beside
+//! it as a rounded card (`mac::Frame::layout`).
 
 mod sidebar;
 
@@ -62,6 +63,10 @@ pub struct WindowFrame {
     spaces: Vec<SpaceChip>,
     address: String,
     sidebar_shown: bool,
+    /// The shown tab's page had a popup refused.
+    popup_blocked: bool,
+    /// The profile's downloads this session, as the strip labels them.
+    downloads: Option<String>,
 }
 
 impl WindowFrame {
@@ -88,6 +93,8 @@ impl WindowFrame {
             spaces: Vec::new(),
             address: String::new(),
             sidebar_shown: true,
+            popup_blocked: false,
+            downloads: None,
         }
     }
 
@@ -128,6 +135,49 @@ impl WindowFrame {
             self.profile = profile;
             cx.notify();
         }
+    }
+
+    /// The strip's trust notices: a refused popup, the downloads label.
+    pub fn set_notices(
+        &mut self,
+        popup_blocked: bool,
+        downloads: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if (self.popup_blocked, &self.downloads) != (popup_blocked, &downloads) {
+            self.popup_blocked = popup_blocked;
+            self.downloads = downloads;
+            cx.notify();
+        }
+    }
+
+    /// A plain text button in the strip; a click sends `msg` with the point
+    /// clicked, where its menu hangs.
+    fn notice(
+        &self,
+        id: &'static str,
+        label: String,
+        msg: fn(u64, f32, f32) -> AppMsg,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let window = self.window_id;
+        div()
+            .id(id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(28.))
+            .px(px(10.))
+            .rounded(px(8.))
+            .text_size(px(13.))
+            .text_color(rgb(0xc9cbd1))
+            .hover(|style| style.bg(rgba(0xffffff14)))
+            .active(|style| style.bg(rgba(0xffffff22)))
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, _| {
+                let x = f32::from(event.position().x);
+                this.send(msg(window, x, STRIP_HEIGHT as f32 - 6.));
+            }))
+            .child(SharedString::from(label))
     }
 
     /// Mirrors the active tab's history.
@@ -270,6 +320,22 @@ impl Render for WindowFrame {
             .child(self.button("forward", "→", self.can_go_forward, Nav::Forward, cx))
             .child(self.button("reload", "↻", true, Nav::Reload, cx))
             .child(drag().flex_1())
+            .when(self.popup_blocked, |strip| {
+                strip.child(self.notice(
+                    "popup-blocked",
+                    "Popup blocked".to_owned(),
+                    |window, x, y| AppMsg::PopupMenu { window, x, y },
+                    cx,
+                ))
+            })
+            .when_some(self.downloads.clone(), |strip, label| {
+                strip.child(self.notice(
+                    "downloads",
+                    label,
+                    |window, x, y| AppMsg::DownloadsMenu { window, x, y },
+                    cx,
+                ))
+            })
             .child(self.profile_badge(cx))
             .child(drag().w(px(PAGE_EDGE)));
         div()
