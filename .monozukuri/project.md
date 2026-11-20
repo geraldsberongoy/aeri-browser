@@ -43,8 +43,14 @@ owner 2026-11-18). Phase 5 (profiles, S4) is built: profile badge and native
 menu in the strip, Profiles menu, profile manager window, dormancy, deferred
 deletion, orderly quit on SIGTERM, `cargo xtask isolation` (11/11). Still to
 drive live: rename, recolour, delete, Dock reopen. Evidence:
-`.monozukuri/specifications/phase-5-profiles.md`. Next: Phase 6 (tabs and
-session).
+`.monozukuri/specifications/phase-5-profiles.md`. Phase 6 (tabs and
+session) is built: `TabList` and `ProfileDb` in `aeri-core`, the shell's
+window/tab module (`apps/aeri/src/shell/windows.rs`), a plain sidebar, ⌘S,
+⌘1–9, ⌘⇧T, session restore with lazy tabs, history, "Open in <profile>"
+from the tab menu; `cargo xtask isolation` 13/13. Sidebar mouse actions not
+driven live yet. Evidence:
+`.monozukuri/specifications/phase-6-tabs-and-session.md`. Next: Phase 7
+(spaces and favourites).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

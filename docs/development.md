@@ -88,7 +88,7 @@ Development switches:
 | Variable or flag | Effect |
 | --- | --- |
 | `AERI_DATA_DIR=/tmp/aeri-data` | Use a throwaway data directory instead of `~/Library/Application Support/Aeri`. |
-| `AERI_START_URL=https://example.com` | First tab's address (default `about:blank`, which opens the address bar). |
+| `AERI_START_URL=https://example.com` | Open one window on this address per opened profile instead of restoring each profile's session. Without it, a profile with no session opens a new tab (`about:blank`, with the address bar shown). |
 | `AERI_REMOTE_DEBUGGING_PORT=9334` | Expose the DevTools protocol for scripted checks. |
 | `AERI_PROFILE=Work,Client` | Open (or create) these profiles, each in its own window, instead of the last-used one. For scripted checks; the Profiles menu is the Person's way. |
 | `AERI_LOG=info,aeri=debug` | `tracing` filter (stdout; colours only on a terminal). |
@@ -107,10 +107,17 @@ AERI_DATA_DIR=/tmp/aeri-data AERI_REMOTE_DEBUGGING_PORT=9334 \
 ```
 
 `kill <pid>` (SIGTERM) and Ctrl-C quit like the Quit menu: browsers close
-and CEF shuts down, so cookies are written to disk. Aeri replaces
-Chromium's own handlers, which end the process at once and lose recent
-cookies. Closing the last window does not quit; the Dock icon opens a
-window again.
+and CEF shuts down, so cookies are written to disk, and each open profile's
+session is saved. Aeri replaces Chromium's own handlers, which end the
+process at once and lose recent cookies. Closing the last window does not
+quit; the Dock icon opens a window again (that profile's session).
+
+Keys (from a page or the address bar): ⌘L address bar, ⌘T new tab, ⌘W close
+tab, ⌘⇧T reopen the last closed tab, ⌃Tab / ⌃⇧Tab next and previous tab,
+⌘1–⌘8 that tab, ⌘9 the last tab, ⌘S show or hide the sidebar, ⌃⌘F full
+screen, ⌘Q quit. A profile's records (session, closed tabs, history) are in
+`Profiles/<id>/profile.db` under the data directory; `sqlite3` reads it once
+Aeri has quit.
 
 Running under `lldb` (launch or attach) raises a system "Developer Tools
 Access" dialog and stalls until it is answered. Aeri also needs fds 3 and 4

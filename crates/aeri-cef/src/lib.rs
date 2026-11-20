@@ -35,8 +35,12 @@ pub enum Shortcut {
     FocusAddressBar,
     NewTab,
     CloseTab,
+    ReopenClosedTab,
     NextTab,
     PreviousTab,
+    /// ⌘1–⌘9: the nth tab; 9 is the last.
+    SelectTab(u8),
+    ToggleSidebar,
     Quit,
     ToggleFullScreen,
 }

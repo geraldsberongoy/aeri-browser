@@ -46,14 +46,23 @@ thread_local! {
     static TARGET: RefCell<Option<Retained<Target>>> = RefCell::default();
 }
 
-/// Shows `entries` hanging from (`right`, `top`), points from the view's
-/// top-left, with the menu's right edge at `right`; calls `on_pick` with the
-/// chosen entry's index. Runs a nested event loop until the menu closes;
-/// call outside any GPUI update.
+/// Which menu edge sits at the given `x`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    /// The menu opens to the right of `x` (context menus).
+    Left,
+    /// The menu ends at `x` (a menu hanging from a button at the right).
+    Right,
+}
+
+/// Shows `entries` hanging from (`x`, `top`), points from the view's
+/// top-left; calls `on_pick` with the chosen entry's index. Runs a nested
+/// event loop until the menu closes; call outside any GPUI update.
 pub fn pop_up(
     view: &NSView,
-    right: f64,
+    x: f64,
     top: f64,
+    align: Align,
     entries: &[Entry],
     on_pick: impl Fn(usize) + 'static,
 ) {
@@ -90,7 +99,10 @@ pub fn pop_up(
         menu.addItem(&item);
     }
     TARGET.with_borrow_mut(|slot| *slot = Some(target));
-    let x = (right - menu.size().width).max(0.0);
+    let x = match align {
+        Align::Left => x,
+        Align::Right => (x - menu.size().width).max(0.0),
+    };
     let y = if view.isFlipped() {
         top
     } else {

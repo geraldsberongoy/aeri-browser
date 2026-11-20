@@ -13,6 +13,8 @@ use crate::ids::ProfileId;
 pub enum StoreError {
     #[error("database error: {0}")]
     Sql(#[from] rusqlite::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     #[error("a profile name cannot be empty")]
     EmptyName,
     #[error("stored profile id {0:?} is not a valid id")]
@@ -90,6 +92,24 @@ const MIGRATIONS: &[&str] = &[
      );",
 ];
 
+/// Applies the migrations a database lacks, each in its own transaction,
+/// tracked by SQLite's `user_version`. A database from a newer build is
+/// refused rather than modified.
+pub(crate) fn migrate(conn: &Connection, migrations: &[&str]) -> Result<()> {
+    let supported = migrations.len() as i64;
+    let found: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if found > supported {
+        return Err(StoreError::TooNew { found, supported });
+    }
+    for (index, sql) in migrations.iter().enumerate().skip(found as usize) {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(sql)?;
+        tx.pragma_update(None, "user_version", index as i64 + 1)?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
 pub struct AppDb {
     conn: Connection,
 }
@@ -107,26 +127,8 @@ impl AppDb {
 
     fn with_connection(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "foreign_keys", true)?;
-        let db = Self { conn };
-        db.migrate()?;
-        Ok(db)
-    }
-
-    fn migrate(&self) -> Result<()> {
-        let supported = MIGRATIONS.len() as i64;
-        let found: i64 = self
-            .conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if found > supported {
-            return Err(StoreError::TooNew { found, supported });
-        }
-        for (index, sql) in MIGRATIONS.iter().enumerate().skip(found as usize) {
-            let tx = self.conn.unchecked_transaction()?;
-            tx.execute_batch(sql)?;
-            tx.pragma_update(None, "user_version", index as i64 + 1)?;
-            tx.commit()?;
-        }
-        Ok(())
+        migrate(&conn, MIGRATIONS)?;
+        Ok(Self { conn })
     }
 
     /// All profiles in the Person's order.

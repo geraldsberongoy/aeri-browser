@@ -247,6 +247,9 @@ const VK_Q: i32 = 0x51;
 const VK_T: i32 = 0x54;
 const VK_W: i32 = 0x57;
 const VK_F: i32 = 0x46;
+const VK_S: i32 = 0x53;
+const VK_1: i32 = 0x31;
+const VK_9: i32 = 0x39;
 
 const COMMAND: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0;
 const CONTROL: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0;
@@ -261,6 +264,11 @@ fn shortcut_for(event: &KeyEvent) -> Option<Shortcut> {
     match (event.windows_key_code, modifiers) {
         (VK_L, m) if m == COMMAND => Some(Shortcut::FocusAddressBar),
         (VK_T, m) if m == COMMAND => Some(Shortcut::NewTab),
+        (VK_T, m) if m == COMMAND | SHIFT => Some(Shortcut::ReopenClosedTab),
+        (VK_S, m) if m == COMMAND => Some(Shortcut::ToggleSidebar),
+        (code @ VK_1..=VK_9, m) if m == COMMAND => {
+            Some(Shortcut::SelectTab((code - VK_1 + 1) as u8))
+        }
         (VK_W, m) if m == COMMAND => Some(Shortcut::CloseTab),
         (VK_Q, m) if m == COMMAND => Some(Shortcut::Quit),
         (VK_TAB, m) if m == CONTROL => Some(Shortcut::NextTab),

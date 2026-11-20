@@ -111,6 +111,16 @@ renderers exit, and the browser process closes every file under
 `Chromium/<id>/` (103 open files before, 0 after). About 11 MB per dormant
 profile stays in the browser process (S4 table).
 
+Chromium keeps one startup profile loaded for the whole run, normally the
+last one whose window was active (`profile.last_used` in `Local State`).
+For Aeri that was an Aeri profile, which then never unloaded: its extension
+service worker outlived its last window (Observed in Phase 6, every time the
+harness closed that profile). Aeri starts Chromium with
+`--profile-directory=Default`, an empty profile no window uses, so every
+Aeri profile can go dormant. `Default` costs what it cost before on a fresh
+data directory, where it was already the startup profile; it runs Aeri's
+tab-signals worker and nothing else.
+
 ## Deletion
 
 Deleting a profile needs confirmation naming it. Then Aeri:

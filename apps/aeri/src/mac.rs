@@ -184,6 +184,8 @@ pub struct Frame {
     /// active tab's window exists.
     shown: RefCell<Option<Retained<NSWindow>>>,
     bar_visible: Cell<bool>,
+    /// Width of the sidebar left of the page card, in points (0: hidden).
+    sidebar: Cell<f64>,
     notifications: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
 
@@ -198,6 +200,7 @@ impl Frame {
             active: Cell::new(None),
             shown: RefCell::default(),
             bar_visible: Cell::new(false),
+            sidebar: Cell::new(0.0),
             notifications: RefCell::default(),
         })
     }
@@ -274,16 +277,27 @@ impl Frame {
         }
     }
 
-    /// Where the active tab's card goes, in screen coordinates.
-    fn page_rect(frame: &NSWindow) -> NSRect {
+    /// Where the active tab's card goes, in screen coordinates: below the
+    /// strip, right of the sidebar when it is shown.
+    fn page_rect(&self, frame: &NSWindow) -> NSRect {
         let rect = frame.frame();
+        let left = match self.sidebar.get() {
+            0.0 => PAGE_INSET,
+            sidebar => sidebar,
+        };
         NSRect::new(
-            NSPoint::new(rect.origin.x + PAGE_INSET, rect.origin.y + PAGE_INSET),
+            NSPoint::new(rect.origin.x + left, rect.origin.y + PAGE_INSET),
             NSSize::new(
-                (rect.size.width - 2.0 * PAGE_INSET).max(1.0),
+                (rect.size.width - left - PAGE_INSET).max(1.0),
                 (rect.size.height - STRIP_HEIGHT - PAGE_INSET).max(1.0),
             ),
         )
+    }
+
+    /// Shows or hides the sidebar (`width` 0) and refits the page.
+    pub fn set_sidebar(&self, width: f64) {
+        self.sidebar.set(width);
+        self.layout();
     }
 
     fn active_window(&self) -> Option<Retained<NSWindow>> {
@@ -300,18 +314,18 @@ impl Frame {
         let Some(frame) = self.frame.borrow().clone() else {
             return;
         };
-        let rect = frame.frame();
-        let page = Self::page_rect(&frame);
+        let page = self.page_rect(&frame);
         for (_, tab) in self.tabs.borrow().iter() {
             tab.setFrame_display(page, true);
         }
         if let Some(bar) = self.bar.borrow().as_ref() {
-            let width = (rect.size.width - 2.0 * BAR_SIDE_MARGIN).clamp(240.0, BAR_MAX_WIDTH);
+            // Centred over the page, not the window.
+            let width = (page.size.width - 2.0 * BAR_SIDE_MARGIN).clamp(240.0, BAR_MAX_WIDTH);
             let page_top = page.origin.y + page.size.height;
             let y = (page_top - page.size.height * BAR_FROM_TOP - BAR_HEIGHT / 2.0)
                 .min(page_top - BAR_MIN_TOP - BAR_HEIGHT);
             let bar_rect = NSRect::new(
-                NSPoint::new(rect.origin.x + (rect.size.width - width) / 2.0, y),
+                NSPoint::new(page.origin.x + (page.size.width - width) / 2.0, y),
                 NSSize::new(width, BAR_HEIGHT),
             );
             bar.setFrame_display(bar_rect, true);
@@ -325,7 +339,7 @@ impl Frame {
             // Not created yet: `created` activates it.
             return;
         };
-        next.setFrame_display(Self::page_rect(&frame), true);
+        next.setFrame_display(self.page_rect(&frame), true);
         // SAFETY: AppKit calls on the main thread.
         unsafe { frame.addChildWindow_ordered(&next, NSWindowOrderingMode::Above) };
         next.orderFront(None);
@@ -428,13 +442,14 @@ impl Frame {
         &self,
         x: f64,
         y: f64,
+        align: native_menu::Align,
         entries: &[native_menu::Entry],
         on_pick: impl Fn(usize) + 'static,
     ) {
         let Some(view) = self.frame.borrow().as_ref().and_then(|f| f.contentView()) else {
             return;
         };
-        native_menu::pop_up(&view, x, y, entries, on_pick);
+        native_menu::pop_up(&view, x, y, align, entries, on_pick);
     }
 
     /// Releases AppKit hooks once the window is closing.

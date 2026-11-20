@@ -1,18 +1,21 @@
 //! `cargo xtask isolation`: end-to-end checks that profiles keep website
-//! data apart (Phase 5; `docs/architecture/profile-isolation.md`).
+//! data apart (Phase 5; `docs/architecture/profile-isolation.md`) and keep
+//! their own sessions and history (Phase 6).
 //!
 //! Serves a local test site, runs the bundled app with two profiles that
 //! both open it, and drives each profile's page over the DevTools protocol.
-//! It then quits, relaunches and checks that each profile kept its own data,
-//! and finally closes one profile's window and checks the profile went
-//! dormant. No external site is part of any check.
+//! It then quits, checks what each profile recorded, relaunches without a
+//! start address (so each profile restores its session) and checks that
+//! each profile kept its own data, and finally closes one profile's window
+//! and checks the profile went dormant. No external site is part of any
+//! check.
 //!
-//! Needs `cargo xtask bundle` first and a logged-in macOS session: the app
-//! opens real windows.
+//! Needs `cargo xtask bundle` first, `sqlite3` on the PATH, and a logged-in
+//! macOS session: the app opens real windows.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -34,7 +37,7 @@ pub fn run() -> Result<()> {
     let mut report = Report::default();
 
     // First run: A and B each sign in and write; neither sees the other's.
-    let app = App::launch(&data, &log, &site)?;
+    let app = App::launch(&data, &log, Some(&format!("{}/", site.origin)))?;
     let mut cdp = app.devtools()?;
     let [a, b] = cdp.site_pages(&site.origin)?;
     report.check("separate sign-ins", || {
@@ -86,14 +89,53 @@ pub fn run() -> Result<()> {
     // Site permissions: DevTools can only grant them in contexts it created
     // itself ("Failed to find browser context"), not in a profile's. They
     // are checked with real prompts in Phase 9 (Trust).
+    // The uBlock Origin Lite store page each profile offers at its first
+    // launch is external: close both. Each is remembered as a closed tab.
+    let store = cdp.store_pages()?;
+    for target in store {
+        cdp.call("Target.closeTarget", json!({ "targetId": target }), None)?;
+    }
+    // Let the shell see the closes before it is told to quit.
+    std::thread::sleep(Duration::from_secs(1));
     drop(cdp);
     report.check("orderly quit", || app.quit());
 
-    // Second run: everything is still there, and still apart. Contexts get
-    // new ids each run, so tell A from B by who is signed in.
-    let app = App::launch(&data, &log, &site)?;
+    report.check("each profile records its own history and session", || {
+        let dbs = profile_dbs(&data)?;
+        ensure!(dbs.len() == 2, "{} profile.db files", dbs.len());
+        for db in &dbs {
+            let history = sqlite(db, "SELECT url FROM history")?;
+            ensure!(
+                history.lines().any(|u| u.starts_with(&site.origin)),
+                "{}: history {history:?}",
+                db.display()
+            );
+            let session = sqlite(db, "SELECT url FROM tabs")?;
+            ensure!(
+                session.lines().any(|u| u.starts_with(&site.origin)),
+                "{}: session {session:?}",
+                db.display()
+            );
+            let closed = sqlite(db, "SELECT url FROM closed_tabs")?;
+            ensure!(
+                closed.contains("chromewebstore.google.com"),
+                "{}: closed tabs {closed:?}",
+                db.display()
+            );
+        }
+        Ok(())
+    });
+
+    // Second run, no start address: each profile restores its session.
+    // Everything is still there, and still apart. Contexts get new ids each
+    // run, so tell A from B by who is signed in.
+    let app = App::launch(&data, &log, None)?;
     let mut cdp = app.devtools()?;
-    let [first, second] = cdp.site_pages(&site.origin)?;
+    let pages = cdp.site_pages(&site.origin);
+    report.check("sessions restore", || {
+        pages.as_ref().map(|_| ()).map_err(|err| anyhow!("{err:#}"))
+    });
+    let [first, second] = pages?;
     let (a, b) = if whoami(&mut cdp, &first)? == "alice" {
         (first, second)
     } else {
@@ -159,6 +201,35 @@ pub fn run() -> Result<()> {
 
     let _ = std::fs::remove_dir_all(&data);
     report.finish(&log)
+}
+
+/// Each profile's `profile.db` under the data directory.
+fn profile_dbs(data: &Path) -> Result<Vec<PathBuf>> {
+    let mut dbs = Vec::new();
+    for entry in std::fs::read_dir(data.join("Profiles"))? {
+        let db = entry?.path().join("profile.db");
+        if db.exists() {
+            dbs.push(db);
+        }
+    }
+    Ok(dbs)
+}
+
+/// Runs `sql` on `db` with the `sqlite3` tool, once the app has quit (a WAL
+/// database cannot be opened read-only without its `-shm` file); one row a
+/// line.
+fn sqlite(db: &Path, sql: &str) -> Result<String> {
+    let output = Command::new("sqlite3")
+        .arg(db)
+        .arg(sql)
+        .output()
+        .context("running sqlite3")?;
+    ensure!(
+        output.status.success(),
+        "sqlite3: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stdout)?)
 }
 
 fn whoami(cdp: &mut DevTools, page: &Page) -> Result<String> {
@@ -227,19 +298,25 @@ struct App {
 }
 
 impl App {
-    fn launch(data: &Path, log: &Path, site: &Site) -> Result<Self> {
+    /// With `start_url`, each profile opens a window on it; without, each
+    /// restores its session.
+    fn launch(data: &Path, log: &Path, start_url: Option<&str>) -> Result<Self> {
         let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(log)?;
-        let child = Command::new(APP)
+        let mut command = Command::new(APP);
+        command
             .arg("--use-mock-keychain")
             .env("AERI_DATA_DIR", data)
             .env("AERI_PROFILE", PROFILES)
-            .env("AERI_START_URL", format!("{}/", site.origin))
             .env("AERI_REMOTE_DEBUGGING_PORT", port.to_string())
-            .env("AERI_LOG", "info")
+            .env("AERI_LOG", "info,aeri=debug");
+        if let Some(url) = start_url {
+            command.env("AERI_START_URL", url);
+        }
+        let child = command
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log))
             .spawn()
@@ -347,6 +424,31 @@ impl DevTools {
             .as_array()
             .cloned()
             .unwrap_or_default())
+    }
+
+    /// The two profiles' uBlock Origin Lite store pages, once both are open.
+    fn store_pages(&mut self) -> Result<Vec<String>> {
+        let started = Instant::now();
+        loop {
+            let store: Vec<String> = self
+                .targets()?
+                .iter()
+                .filter(|t| {
+                    t["type"] == "page"
+                        && t["url"]
+                            .as_str()
+                            .is_some_and(|u| u.starts_with("https://chromewebstore.google.com/"))
+                })
+                .filter_map(|t| t["targetId"].as_str().map(str::to_owned))
+                .collect();
+            if store.len() == 2 {
+                return Ok(store);
+            }
+            if started.elapsed() > TIMEOUT {
+                bail!("{} store pages opened, not 2", store.len());
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
     }
 
     /// One page on the site per profile, once two profiles show it.

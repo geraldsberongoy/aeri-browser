@@ -40,7 +40,7 @@ fn main() -> Result<()> {
             .filter(|name| !name.is_empty())
             .map(str::to_owned)
             .collect(),
-        start_url: std::env::var("AERI_START_URL").unwrap_or_else(|_| "about:blank".to_owned()),
+        start_url: std::env::var("AERI_START_URL").ok(),
         remote_debugging_port: std::env::var("AERI_REMOTE_DEBUGGING_PORT")
             .ok()
             .and_then(|port| port.parse().ok()),

@@ -21,23 +21,41 @@ actions!(
         FocusAddressBar,
         NewTab,
         CloseTab,
+        ReopenClosedTab,
         NextTab,
         PreviousTab,
+        ToggleSidebar,
         Quit,
         ToggleFullScreen
     ]
 );
 
+/// ⌘1–⌘9: show the nth tab (9: the last).
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = address_bar, no_json)]
+pub struct SelectTab(pub u8);
+
 pub fn bindings() -> Vec<KeyBinding> {
-    vec![
+    let mut bindings = vec![
         KeyBinding::new("cmd-l", FocusAddressBar, None),
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseTab, None),
+        KeyBinding::new("cmd-shift-t", ReopenClosedTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+        KeyBinding::new("cmd-s", ToggleSidebar, None),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
-    ]
+    ];
+    let keys = [
+        "cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9",
+    ];
+    bindings.extend(
+        (1..)
+            .zip(keys)
+            .map(|(n, keys)| KeyBinding::new(keys, SelectTab(n), None)),
+    );
+    bindings
 }
 
 const SLIDE: Duration = Duration::from_millis(180);
@@ -225,9 +243,18 @@ impl Render for AddressBar {
             .on_action(cx.listener(|this, _: &FocusAddressBar, window, cx| this.reveal(window, cx)))
             .on_action(cx.listener(|this, _: &NewTab, _, _| this.shortcut(Shortcut::NewTab)))
             .on_action(cx.listener(|this, _: &CloseTab, _, _| this.shortcut(Shortcut::CloseTab)))
+            .on_action(cx.listener(|this, _: &ReopenClosedTab, _, _| {
+                this.shortcut(Shortcut::ReopenClosedTab)
+            }))
             .on_action(cx.listener(|this, _: &NextTab, _, _| this.shortcut(Shortcut::NextTab)))
             .on_action(
                 cx.listener(|this, _: &PreviousTab, _, _| this.shortcut(Shortcut::PreviousTab)),
+            )
+            .on_action(cx.listener(|this, action: &SelectTab, _, _| {
+                this.shortcut(Shortcut::SelectTab(action.0))
+            }))
+            .on_action(
+                cx.listener(|this, _: &ToggleSidebar, _, _| this.shortcut(Shortcut::ToggleSidebar)),
             )
             .on_action(cx.listener(|this, _: &Quit, _, _| this.shortcut(Shortcut::Quit)))
             .on_action(cx.listener(|this, _: &ToggleFullScreen, _, _| {

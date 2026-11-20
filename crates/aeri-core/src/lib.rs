@@ -5,5 +5,7 @@
 pub mod engine;
 pub mod ids;
 pub mod omnibox;
+pub mod profile_db;
 pub mod store;
 pub mod tab;
+pub mod workspace;

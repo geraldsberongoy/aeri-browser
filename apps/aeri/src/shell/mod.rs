@@ -12,15 +12,18 @@
 //! and runs after the borrow is released.
 //!
 //! Each tab is its own CEF window (one Chrome-style browser per window);
-//! [`Frame`] stacks a window's tabs under one GPUI frame window.
+//! [`Frame`](crate::mac::Frame) stacks a window's tabs under one GPUI frame
+//! window. Windows and tabs are in [`windows`].
 //!
 //! Profiles (ADR 0004): every window belongs to one profile. A profile with
 //! a window is open and holds its request context; when its last window
 //! goes, it turns dormant and the context is released. Aeri keeps running
 //! with no windows, like other Mac browsers.
 
+mod windows;
+
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -28,27 +31,24 @@ use std::time::Instant;
 
 use aeri_cef::{
     DevTools, Extension, ExtensionsWatch, ProfileContext, Runtime, RuntimeConfig, Shortcut, Signal,
-    TabObserver, TabWindow,
 };
-use aeri_core::engine::{Command, Event};
 use aeri_core::ids::{ProfileId, TabId};
-use aeri_core::omnibox;
+use aeri_core::profile_db::ProfileDb;
 use aeri_core::store::{ACCENTS, AppDb, Profile};
-use aeri_core::tab::Tab;
 use anyhow::{Context as _, Result};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{
-    App, AppContext, Bounds, Menu, MenuItem, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowHandle, WindowKind, WindowOptions, actions, point, px, size,
+    App, AppContext, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowHandle,
+    WindowOptions, actions, px, size,
 };
 
-use crate::address_bar::{self, AddressBar};
-use crate::mac::{self, BAR_HEIGHT, Frame};
-use crate::native_menu::Entry;
+use self::windows::{AeriWindow, Place, TabStart, WindowSeed};
+use crate::address_bar;
+use crate::mac;
+use crate::native_menu::{Align, Entry};
 use crate::profile_manager::{self, ProfileManager};
 use crate::text_input;
-use crate::window_frame::{TRAFFIC_LIGHTS, WindowFrame};
 
 /// Neutral default search provider (stage 1, open question 1).
 const SEARCH_TEMPLATE: &str = "https://duckduckgo.com/?q={query}";
@@ -84,6 +84,19 @@ pub enum AppMsg {
         window: u64,
         shortcut: Shortcut,
     },
+    /// A command on one tab, from the sidebar or its context menu.
+    Tab {
+        window: u64,
+        tab: TabId,
+        command: TabCommand,
+    },
+    /// A tab in the sidebar was right-clicked at (`x`, `y`) in the window.
+    TabMenu {
+        window: u64,
+        tab: TabId,
+        x: f32,
+        y: f32,
+    },
     ExtensionsChanged {
         profile: ProfileId,
     },
@@ -94,6 +107,11 @@ pub enum AppMsg {
     Nav {
         window: u64,
         nav: Nav,
+    },
+    /// "Open in" another profile: the address only (stage 1).
+    OpenInProfile {
+        profile: ProfileId,
+        url: String,
     },
     /// The strip's profile badge was clicked at (`x`, `y`) in the window.
     ProfileMenu {
@@ -139,12 +157,26 @@ pub enum Nav {
     Reload,
 }
 
+/// What can be done to one tab from the sidebar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabCommand {
+    Select,
+    Close,
+    CloseOthers,
+    Duplicate,
+    TogglePin,
+    /// Drag and drop: move to this position in the window's tab list.
+    MoveTo(usize),
+}
+
 pub struct Config {
     pub data_dir: PathBuf,
     /// Development and tests: open (creating if needed) the profiles with
     /// these names, each in a window, instead of the last-used profile.
     pub profiles: Vec<String>,
-    pub start_url: String,
+    /// Development and tests: open one window on this address instead of
+    /// restoring each profile's session.
+    pub start_url: Option<String>,
     pub remote_debugging_port: Option<u16>,
 }
 
@@ -159,51 +191,24 @@ struct SwitchProfile {
 
 type Effect = Box<dyn FnOnce(&mut Shell)>;
 
-/// How a new tab's browser starts.
-enum TabStart {
-    Load(String),
-    /// A page opened it; its browser is waiting in the engine.
-    Adopt,
-}
-
-struct TabEntry {
-    model: Tab,
-    /// Set once the tab's CEF window has been created.
-    cef: Option<Rc<TabWindow>>,
-    /// A background tab's address, loaded when the tab is first shown; until
-    /// then it has no CEF window and no renderer (S7).
-    unseen: Option<String>,
-}
-
-struct AeriWindow {
-    id: u64,
-    profile: ProfileId,
-    frame: Rc<Frame>,
-    frame_window: WindowHandle<WindowFrame>,
-    bar: WindowHandle<AddressBar>,
-    bar_shown: bool,
-    tabs: Vec<TabEntry>,
-    active: TabId,
-    closing: bool,
-}
-
-impl AeriWindow {
-    fn entry(&self, tab: TabId) -> Option<&TabEntry> {
-        self.tabs.iter().find(|entry| entry.model.id == tab)
-    }
-
-    fn active_cef(&self) -> Option<Rc<TabWindow>> {
-        self.entry(self.active).and_then(|entry| entry.cef.clone())
-    }
+/// What to open once a profile is ready.
+enum Plan {
+    /// Its saved session (a new tab if there is none).
+    Restore,
+    /// One window on this address.
+    Url(String),
 }
 
 /// A profile that has (or is about to have) a window.
 struct OpenProfile {
     context: ProfileContext,
+    /// `Profiles/<id>/profile.db`: session, closed tabs, history. Absent if
+    /// it could not be opened (logged); the profile still browses.
+    db: Option<ProfileDb>,
     /// Browsers can be created only once the context has initialized.
     ready: bool,
-    /// Addresses of windows to open once ready.
-    waiting: Vec<String>,
+    /// Windows to open once ready.
+    plans: Vec<Plan>,
     extensions: Vec<Extension>,
     _extensions_watch: Option<ExtensionsWatch>,
     opened_at: Instant,
@@ -218,9 +223,10 @@ struct Shell {
     open: HashMap<ProfileId, OpenProfile>,
     engine_ready: bool,
     /// Profiles to open once the engine is ready.
-    launch: Vec<ProfileId>,
+    launch: Vec<(ProfileId, Plan)>,
     devtools: Option<DevTools>,
-    start_url: String,
+    /// Profiles whose session changed while handling the current message.
+    dirty: HashSet<ProfileId>,
     windows: Vec<AeriWindow>,
     next_window: u64,
     manager: Option<WindowHandle<ProfileManager>>,
@@ -249,6 +255,12 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     let db = AppDb::open(&config.data_dir.join("app.db")).context("opening app.db")?;
     // Chromium is not running yet, so deleted profiles can go now.
     remove_deleted_profiles(&db, &config.data_dir);
+    // An explicit start address opens one window on it; otherwise each
+    // profile restores its session.
+    let plan = || match &config.start_url {
+        Some(url) => Plan::Url(url.clone()),
+        None => Plan::Restore,
+    };
     let mut launch = Vec::new();
     for name in &config.profiles {
         let existing = db.profiles()?.into_iter().find(|p| &p.name == name);
@@ -256,10 +268,10 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
             Some(profile) => profile,
             None => db.create_profile(name, db.suggest_accent()?)?,
         };
-        launch.push(profile.id);
+        launch.push((profile.id, plan()));
     }
     if launch.is_empty() {
-        launch.push(db.launch_profile()?.id);
+        launch.push((db.launch_profile()?.id, plan()));
     }
     let root_cache_path = config.data_dir.join("Chromium");
 
@@ -313,7 +325,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         engine_ready: false,
         launch,
         devtools: runtime.devtools().ok().cloned(),
-        start_url: config.start_url,
+        dirty: HashSet::new(),
         windows: Vec::new(),
         next_window: 1,
         manager: None,
@@ -334,6 +346,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
                     effect(&mut shell);
                 }
             }
+            cx.update(|cx| shell.flush_sessions(cx));
             if done {
                 tracing::info!("all windows closed; shutting CEF down");
                 shell.open.clear();
@@ -470,6 +483,13 @@ impl Shell {
             AppMsg::AddressSubmitted { window, text } => self.address_submitted(window, &text, cx),
             AppMsg::AddressDismissed { window } => self.hide_bar(window, cx),
             AppMsg::Shortcut { window, shortcut } => self.shortcut(window, shortcut, cx),
+            AppMsg::Tab {
+                window,
+                tab,
+                command,
+            } => self.tab_command(window, tab, command, cx),
+            AppMsg::TabMenu { window, tab, x, y } => self.tab_menu(window, tab, x, y),
+            AppMsg::OpenInProfile { profile, url } => self.open_in_profile(profile, url, cx),
             AppMsg::ExtensionsChanged { profile } => self.extensions_changed(profile, cx),
             AppMsg::Nav { window, nav } => self.nav(window, nav),
             AppMsg::ExtensionAction { window, extension } => {
@@ -496,7 +516,7 @@ impl Shell {
             AppMsg::Reopen => {
                 if self.windows.is_empty() && !self.quitting {
                     match self.db.launch_profile() {
-                        Ok(profile) => self.open_profile_window(profile.id, NEW_TAB_URL, cx),
+                        Ok(profile) => self.open_profile_window(profile.id, Plan::Restore, cx),
                         Err(err) => tracing::error!(%err, "no profile to open"),
                     }
                 }
@@ -508,24 +528,24 @@ impl Shell {
 
     fn engine_ready(&mut self, cx: &mut App) {
         self.engine_ready = true;
-        let url = self.start_url.clone();
-        for profile in std::mem::take(&mut self.launch) {
-            self.open_profile_window(profile, &url, cx);
+        for (profile, plan) in std::mem::take(&mut self.launch) {
+            self.open_profile_window(profile, plan, cx);
         }
     }
 
-    /// Opens a window of `profile` on `url`, waking the profile first if it
-    /// is dormant (its context initializes asynchronously).
-    fn open_profile_window(&mut self, profile: ProfileId, url: &str, cx: &mut App) {
+    /// Opens a window of `profile` (its session, or an address), waking the
+    /// profile first if it is dormant (its context initializes
+    /// asynchronously).
+    fn open_profile_window(&mut self, profile: ProfileId, plan: Plan, cx: &mut App) {
         if !self.engine_ready {
-            self.launch.push(profile);
+            self.launch.push((profile, plan));
             return;
         }
         if let Some(open) = self.open.get_mut(&profile) {
             if open.ready {
-                self.open_window(profile, url, cx);
+                self.open_planned(profile, plan, cx);
             } else {
-                open.waiting.push(url.to_owned());
+                open.plans.push(plan);
             }
             return;
         }
@@ -536,12 +556,23 @@ impl Shell {
         match ProfileContext::open(&self.root_cache_path, profile, ready) {
             Ok(context) => {
                 tracing::info!(%profile, "opening profile");
+                let path = self
+                    .data_dir
+                    .join("Profiles")
+                    .join(profile.to_string())
+                    .join("profile.db");
+                let db = ProfileDb::open(&path)
+                    .inspect_err(|err| {
+                        tracing::error!(%err, %profile, "could not open profile.db; nothing is recorded")
+                    })
+                    .ok();
                 self.open.insert(
                     profile,
                     OpenProfile {
                         context,
+                        db,
                         ready: false,
-                        waiting: vec![url.to_owned()],
+                        plans: vec![plan],
                         extensions: Vec::new(),
                         _extensions_watch: None,
                         opened_at: Instant::now(),
@@ -549,6 +580,33 @@ impl Shell {
                 );
             }
             Err(err) => tracing::error!(%err, %profile, "could not open the profile"),
+        }
+    }
+
+    /// Opens a ready profile's window(s) for `plan`.
+    fn open_planned(&mut self, profile: ProfileId, plan: Plan, cx: &mut App) {
+        match plan {
+            Plan::Url(url) => self.open_window(profile, WindowSeed::url(&url), cx),
+            Plan::Restore => {
+                let session = self
+                    .open
+                    .get(&profile)
+                    .and_then(|open| open.db.as_ref())
+                    .map(|db| db.session())
+                    .transpose()
+                    .inspect_err(|err| tracing::warn!(%err, %profile, "could not read the session"))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                if session.is_empty() {
+                    self.open_window(profile, WindowSeed::url(NEW_TAB_URL), cx);
+                    return;
+                }
+                tracing::info!(%profile, windows = session.len(), "restoring session");
+                for saved in session {
+                    self.open_window(profile, saved.into(), cx);
+                }
+            }
         }
     }
 
@@ -567,8 +625,8 @@ impl Shell {
             ms = open.opened_at.elapsed().as_millis() as u64,
             "profile ready"
         );
-        for url in std::mem::take(&mut open.waiting) {
-            self.open_window(profile, &url, cx);
+        for plan in std::mem::take(&mut open.plans) {
+            self.open_planned(profile, plan, cx);
         }
         self.offer_blocker(profile, cx);
     }
@@ -619,7 +677,7 @@ impl Shell {
         }
         tracing::info!(%profile, "offering uBlock Origin Lite");
         let start = TabStart::Load(BLOCKER_STORE_URL.to_owned());
-        self.add_tab(window_id, TabId::next(), start, None, true, cx);
+        self.add_tab(window_id, TabId::next(), start, Place::End, true, cx);
     }
 
     fn mark_used(&self, profile: ProfileId) {
@@ -645,7 +703,7 @@ impl Shell {
                 cx.activate(true);
                 self.later(move |_| frame.bring_forward());
             }
-            None => self.open_profile_window(profile, NEW_TAB_URL, cx),
+            None => self.open_profile_window(profile, Plan::Restore, cx),
         }
     }
 
@@ -675,7 +733,8 @@ impl Shell {
         let tx = self.tx.clone();
         let frame = w.frame.clone();
         self.later(move |_| {
-            frame.pop_up_menu(f64::from(x), f64::from(y), &entries, move |ix| {
+            let (x, y) = (f64::from(x), f64::from(y));
+            frame.pop_up_menu(x, y, Align::Right, &entries, move |ix| {
                 let msg = match ix.checked_sub(ids.len()) {
                     None => AppMsg::OpenProfile { profile: ids[ix] },
                     Some(1) => AppMsg::ShowProfiles { new: true },
@@ -779,7 +838,7 @@ impl Shell {
             Ok(profile) => {
                 tracing::info!(profile = %profile.id, "profile created");
                 self.refresh_profiles(cx);
-                self.open_profile_window(profile.id, NEW_TAB_URL, cx);
+                self.open_profile_window(profile.id, Plan::Restore, cx);
             }
             Err(err) => tracing::warn!(%err, "could not create the profile"),
         }
@@ -812,7 +871,7 @@ impl Shell {
         }
         if !others {
             match self.db.launch_profile() {
-                Ok(next) => self.open_profile_window(next.id, NEW_TAB_URL, cx),
+                Ok(next) => self.open_profile_window(next.id, Plan::Restore, cx),
                 Err(err) => tracing::error!(%err, "no profile to open"),
             }
         }
@@ -840,523 +899,6 @@ impl Shell {
         self.windows.iter_mut().find(|w| w.id == id)
     }
 
-    fn window_of_tab(&self, tab: TabId) -> Option<u64> {
-        self.windows
-            .iter()
-            .find(|w| w.entry(tab).is_some())
-            .map(|w| w.id)
-    }
-
-    /// Opens a window of an open, ready profile: the GPUI frame and address
-    /// bar, then (outside the update) the first tab's CEF window.
-    fn open_window(&mut self, profile: ProfileId, url: &str, cx: &mut App) {
-        let Some(record) = self.profiles.iter().find(|p| p.id == profile).cloned() else {
-            return;
-        };
-        let id = self.next_window;
-        self.next_window += 1;
-        let tab = TabId::next();
-        // Like other Mac apps, a new window cascades from the newest one
-        // instead of hiding exactly behind or over it.
-        let bounds = self
-            .windows
-            .last()
-            .and_then(|w| {
-                w.frame_window
-                    .update(cx, |_, window, _| window.bounds())
-                    .ok()
-            })
-            .map(|b| Bounds::new(point(b.origin.x + px(28.), b.origin.y + px(28.)), b.size))
-            .unwrap_or_else(|| Bounds::centered(None, size(px(1280.), px(820.)), cx));
-
-        let frame_options = WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some(record.name.clone().into()),
-                appears_transparent: true,
-                traffic_light_position: Some(TRAFFIC_LIGHTS),
-            }),
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(480.), px(320.))),
-            // The strip drags with `start_window_move`; AppKit must not hold
-            // back clicks on its buttons to tell a drag from a double-click.
-            app_owns_titlebar_drag: true,
-            ..Default::default()
-        };
-        let tx = self.tx.clone();
-        let frame_window = match cx.open_window(frame_options, |window, cx| {
-            cx.new(|cx| WindowFrame::new(id, record, tx, window, cx))
-        }) {
-            Ok(handle) => handle,
-            Err(err) => {
-                tracing::error!(%err, "could not open a window frame");
-                return;
-            }
-        };
-        let bar_options = WindowOptions {
-            titlebar: None,
-            kind: WindowKind::PopUp,
-            focus: false,
-            show: true,
-            is_movable: false,
-            is_resizable: false,
-            is_minimizable: false,
-            window_background: WindowBackgroundAppearance::Transparent,
-            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                point(px(0.), px(0.)),
-                size(px(640.), px(BAR_HEIGHT as f32)),
-            ))),
-            ..Default::default()
-        };
-        let tx = self.tx.clone();
-        let extensions = self
-            .open
-            .get(&profile)
-            .map(|open| open.extensions.clone())
-            .unwrap_or_default();
-        let bar = match cx.open_window(bar_options, |window, cx| {
-            cx.new(|cx| AddressBar::new(id, tx, extensions, window, cx))
-        }) {
-            Ok(handle) => handle,
-            Err(err) => {
-                tracing::error!(%err, "could not open the address bar");
-                let _ = frame_window.update(cx, |_, window, _| window.remove_window());
-                return;
-            }
-        };
-        let frame_view = frame_window
-            .update(cx, |_, window, _| content_view(window))
-            .ok()
-            .flatten();
-        let bar_view = bar
-            .update(cx, |_, window, _| content_view(window))
-            .ok()
-            .flatten();
-
-        let frame = Frame::new(id, self.tx.clone());
-        self.windows.push(AeriWindow {
-            id,
-            profile,
-            frame: frame.clone(),
-            frame_window,
-            bar,
-            bar_shown: false,
-            tabs: vec![TabEntry {
-                model: Tab::new(tab, url),
-                cef: None,
-                unseen: None,
-            }],
-            active: tab,
-            closing: false,
-        });
-        let url = url.to_owned();
-        let starts_blank = url == NEW_TAB_URL;
-        self.later(move |shell| {
-            if let (Some(frame_view), Some(bar_view)) = (frame_view, bar_view) {
-                frame.attach(frame_view, bar_view);
-            }
-            frame.activate(tab);
-            shell.create_tab_window(id, tab, TabStart::Load(url));
-        });
-        if starts_blank {
-            self.show_bar(id, cx);
-        }
-        self.mark_used(profile);
-        self.refresh_manager(cx);
-    }
-
-    /// Adds a tab to a window after `after` (else at the end); its CEF window
-    /// follows outside the update.
-    fn add_tab(
-        &mut self,
-        window_id: u64,
-        tab: TabId,
-        start: TabStart,
-        after: Option<TabId>,
-        foreground: bool,
-        cx: &mut App,
-    ) {
-        let Some(w) = self.window_mut(window_id) else {
-            return;
-        };
-        let url = match &start {
-            TabStart::Load(url) => url.as_str(),
-            TabStart::Adopt => "",
-        };
-        let index = after
-            .and_then(|after| w.tabs.iter().position(|e| e.model.id == after))
-            .map_or(w.tabs.len(), |ix| ix + 1);
-        let unseen = match &start {
-            TabStart::Load(url) if !foreground => Some(url.clone()),
-            _ => None,
-        };
-        let lazy = unseen.is_some();
-        w.tabs.insert(
-            index,
-            TabEntry {
-                model: Tab::new(tab, url),
-                cef: None,
-                unseen,
-            },
-        );
-        if foreground {
-            w.active = tab;
-        }
-        if lazy {
-            return;
-        }
-        let frame = w.frame.clone();
-        self.later(move |shell| {
-            if foreground {
-                frame.activate(tab);
-            }
-            shell.create_tab_window(window_id, tab, start);
-        });
-        if foreground {
-            self.refresh_bar(window_id, cx);
-        }
-    }
-
-    /// Outside the update: creates a tab's CEF window. The frame orders it
-    /// in from [`TabObserver::created`] if it is the active tab.
-    fn create_tab_window(&mut self, window_id: u64, tab: TabId, start: TabStart) {
-        let tx = self.tx.clone();
-        let sink: aeri_cef::SignalSink = Arc::new(move |signal| {
-            let _ = tx.unbounded_send(AppMsg::Signal(signal));
-        });
-        let Some(w) = self.windows.iter_mut().find(|w| w.id == window_id) else {
-            return;
-        };
-        let Some(context) = self.open.get(&w.profile).map(|open| open.context.clone()) else {
-            return;
-        };
-        let observer: Rc<dyn TabObserver> = w.frame.clone();
-        let opened = match start {
-            TabStart::Load(url) => TabWindow::open(&context, tab, &url, sink, observer),
-            TabStart::Adopt => TabWindow::adopt(tab),
-        };
-        match opened {
-            Ok(cef) => {
-                if let Some(entry) = w.tabs.iter_mut().find(|e| e.model.id == tab) {
-                    entry.cef = Some(Rc::new(cef));
-                }
-            }
-            Err(err) => {
-                tracing::error!(%err, %tab, "could not open a tab");
-                let _ = self.tx.unbounded_send(AppMsg::TabClosed {
-                    window: window_id,
-                    tab,
-                });
-            }
-        }
-    }
-
-    /// A page opened a tab: it joins the opener's window, next to it.
-    fn tab_opened(&mut self, tab: TabId, opener: TabId, foreground: bool, cx: &mut App) {
-        let Some(window_id) = self.window_of_tab(opener) else {
-            tracing::warn!(%tab, "page-opened tab without a window");
-            return;
-        };
-        let start = TabStart::Adopt;
-        self.add_tab(window_id, tab, start, Some(opener), foreground, cx);
-    }
-
-    /// The Person opened a link in a new tab, next to its page. A background
-    /// one stays unseen (no window) until shown. Never into another
-    /// profile's window.
-    fn open_link(&mut self, opener: TabId, url: String, foreground: bool, cx: &mut App) {
-        let Some(window_id) = self.window_of_tab(opener) else {
-            return;
-        };
-        let start = TabStart::Load(url);
-        self.add_tab(
-            window_id,
-            TabId::next(),
-            start,
-            Some(opener),
-            foreground,
-            cx,
-        );
-    }
-
-    /// Chrome or an extension wanted a tab: open it in the profile's newest
-    /// window, or a new window of that profile.
-    fn open_url(&mut self, profile: ProfileId, url: String, cx: &mut App) {
-        if !self.profiles.iter().any(|p| p.id == profile) {
-            tracing::warn!(%profile, url, "tab requested for an unknown profile");
-            return;
-        }
-        let window = self
-            .windows
-            .iter()
-            .rfind(|w| w.profile == profile && !w.closing)
-            .map(|w| w.id);
-        let Some(window_id) = window else {
-            self.open_profile_window(profile, &url, cx);
-            return;
-        };
-        tracing::info!(url, "Chrome-created tab opens as an Aeri tab");
-        let start = TabStart::Load(url);
-        self.add_tab(window_id, TabId::next(), start, None, true, cx);
-    }
-
-    fn engine_event(&mut self, event: Event, cx: &mut App) {
-        let tab_id = event.tab();
-        let Some(window_id) = self.window_of_tab(tab_id) else {
-            return;
-        };
-        let Some(w) = self.window_mut(window_id) else {
-            return;
-        };
-        match &event {
-            Event::LoadFailed {
-                url, error_text, ..
-            } => tracing::info!(%tab_id, %url, %error_text, "load failed"),
-            Event::RendererGone { reason, .. } => tracing::warn!(%tab_id, %reason, "renderer gone"),
-            _ => {}
-        }
-        let Some(entry) = w.tabs.iter_mut().find(|e| e.model.id == tab_id) else {
-            return;
-        };
-        let activity = entry.model.activity;
-        let changed = entry.model.apply(&event);
-        if entry.model.activity != activity {
-            tracing::info!(%tab_id, activity = ?entry.model.activity, "tab activity");
-        }
-        if changed && w.active == tab_id {
-            self.refresh_bar(window_id, cx);
-        }
-    }
-
-    /// Mirrors the active tab in the address bar and the strip.
-    fn refresh_bar(&self, window_id: u64, cx: &mut App) {
-        let Some(w) = self.window(window_id) else {
-            return;
-        };
-        let Some(tab) = w.entry(w.active).map(|entry| entry.model.clone()) else {
-            return;
-        };
-        let _ = w.frame_window.update(cx, |frame, _, cx| {
-            frame.show_history(tab.can_go_back, tab.can_go_forward, cx)
-        });
-        let _ = w
-            .bar
-            .update(cx, |bar, window, cx| bar.show_tab(&tab, window, cx));
-    }
-
-    fn nav(&mut self, window_id: u64, nav: Nav) {
-        let Some(w) = self.window(window_id) else {
-            return;
-        };
-        let Some(page) = w.active_cef() else { return };
-        let tab = w.active;
-        let command = match nav {
-            Nav::Back => Command::GoBack { tab },
-            Nav::Forward => Command::GoForward { tab },
-            Nav::Reload => Command::Reload { tab },
-        };
-        self.later(move |_| page.execute(&command));
-    }
-
-    fn show_bar(&mut self, window_id: u64, cx: &mut App) {
-        self.refresh_bar(window_id, cx);
-        let Some(w) = self.window_mut(window_id) else {
-            return;
-        };
-        w.bar_shown = true;
-        let _ = w.bar.update(cx, |bar, window, cx| bar.reveal(window, cx));
-        let frame = w.frame.clone();
-        self.later(move |_| frame.show_bar());
-    }
-
-    fn hide_bar(&mut self, window_id: u64, cx: &mut App) {
-        self.refresh_bar(window_id, cx);
-        let Some(w) = self.window_mut(window_id) else {
-            return;
-        };
-        let was_shown = std::mem::replace(&mut w.bar_shown, false);
-        let frame = w.frame.clone();
-        let page = w.active_cef();
-        self.later(move |_| {
-            frame.hide_bar(was_shown);
-            if was_shown && let Some(page) = page {
-                page.focus_page();
-            }
-        });
-    }
-
-    fn address_submitted(&mut self, window_id: u64, text: &str, cx: &mut App) {
-        let Some(w) = self.window(window_id) else {
-            return;
-        };
-        if let (Some(destination), Some(page)) =
-            (omnibox::classify(text, SEARCH_TEMPLATE), w.active_cef())
-        {
-            let command = Command::Navigate {
-                tab: w.active,
-                url: destination.url().to_string(),
-            };
-            self.later(move |_| page.execute(&command));
-        }
-        self.hide_bar(window_id, cx);
-    }
-
-    /// Makes `tab` the shown tab of its window. An unseen tab gets its CEF
-    /// window now; the frame shows it once created.
-    fn switch_to(&mut self, window_id: u64, tab: TabId, cx: &mut App) {
-        let Some(w) = self.window_mut(window_id) else {
-            return;
-        };
-        w.active = tab;
-        let unseen = w
-            .tabs
-            .iter_mut()
-            .find(|e| e.model.id == tab)
-            .and_then(|e| e.unseen.take());
-        let frame = w.frame.clone();
-        let page = w.active_cef();
-        let bar_shown = w.bar_shown;
-        self.later(move |shell| {
-            frame.activate(tab);
-            if let Some(url) = unseen {
-                shell.create_tab_window(window_id, tab, TabStart::Load(url));
-            } else if !bar_shown && let Some(page) = page {
-                page.focus_page();
-            }
-        });
-        self.refresh_bar(window_id, cx);
-    }
-
-    fn shortcut(&mut self, window_id: u64, shortcut: Shortcut, cx: &mut App) {
-        match shortcut {
-            Shortcut::FocusAddressBar => self.show_bar(window_id, cx),
-            Shortcut::NewTab => {
-                let start = TabStart::Load(NEW_TAB_URL.to_owned());
-                self.add_tab(window_id, TabId::next(), start, None, true, cx);
-                self.show_bar(window_id, cx);
-            }
-            Shortcut::CloseTab => {
-                let Some(w) = self.window_mut(window_id) else {
-                    return;
-                };
-                // The last tab stays (stage 1: closing it leaves the window open).
-                if w.tabs.len() < 2 {
-                    return;
-                }
-                let closing = w.active;
-                let index = w
-                    .tabs
-                    .iter()
-                    .position(|e| e.model.id == closing)
-                    .unwrap_or(0);
-                let next = w.tabs[if index + 1 < w.tabs.len() {
-                    index + 1
-                } else {
-                    index - 1
-                }]
-                .model
-                .id;
-                let entry = w.tabs.remove(index);
-                self.switch_to(window_id, next, cx);
-                self.later(move |_| {
-                    if let Some(cef) = entry.cef {
-                        cef.close();
-                    }
-                });
-            }
-            Shortcut::NextTab | Shortcut::PreviousTab => {
-                let Some(w) = self.window(window_id) else {
-                    return;
-                };
-                let count = w.tabs.len();
-                if count < 2 {
-                    return;
-                }
-                let index = w
-                    .tabs
-                    .iter()
-                    .position(|e| e.model.id == w.active)
-                    .unwrap_or(0);
-                let next = if shortcut == Shortcut::NextTab {
-                    (index + 1) % count
-                } else {
-                    (index + count - 1) % count
-                };
-                let tab = w.tabs[next].model.id;
-                self.switch_to(window_id, tab, cx);
-            }
-            Shortcut::Quit => self.quit(cx),
-            Shortcut::ToggleFullScreen => {
-                if let Some(frame) = self.window(window_id).map(|w| w.frame.clone()) {
-                    self.later(move |_| frame.toggle_fullscreen());
-                }
-            }
-        }
-    }
-
-    /// A tab's CEF window is gone. Closing the window's last tab while the
-    /// window is closing removes the window.
-    fn tab_closed(&mut self, window_id: u64, tab: TabId, cx: &mut App) {
-        let Some(w) = self.window_mut(window_id) else {
-            return;
-        };
-        w.tabs.retain(|e| e.model.id != tab);
-        if w.tabs.is_empty() {
-            self.remove_window(window_id, cx);
-        }
-    }
-
-    /// Closes every tab (browsers first), then the window.
-    fn close_window(&mut self, window_id: u64, cx: &mut App) {
-        let Some(w) = self.window_mut(window_id) else {
-            return;
-        };
-        if w.closing {
-            return;
-        }
-        w.closing = true;
-        // Tabs whose CEF window never opened have nothing to close.
-        w.tabs.retain(|e| e.cef.is_some());
-        if w.tabs.is_empty() {
-            self.remove_window(window_id, cx);
-            return;
-        }
-        let pages: Vec<_> = w.tabs.iter().filter_map(|e| e.cef.clone()).collect();
-        self.later(move |_| {
-            for page in pages {
-                page.close();
-            }
-        });
-    }
-
-    fn remove_window(&mut self, window_id: u64, cx: &mut App) {
-        let Some(index) = self.windows.iter().position(|w| w.id == window_id) else {
-            return;
-        };
-        let w = self.windows.remove(index);
-        let frame = w.frame.clone();
-        self.later(move |_| frame.detach());
-        let _ = w.bar.update(cx, |_, window, _| window.remove_window());
-        let _ = w
-            .frame_window
-            .update(cx, |_, window, _| window.remove_window());
-        // A profile's last window gone: it turns dormant, and its request
-        // context is released (stage 1: a dormant profile runs nothing).
-        let profile = w.profile;
-        let still_shown = self.windows.iter().any(|w| w.profile == profile);
-        let waking = self
-            .open
-            .get(&profile)
-            .is_some_and(|open| !open.waiting.is_empty());
-        if !still_shown
-            && !waking
-            && let Some(released) = self.open.remove(&profile)
-        {
-            tracing::info!(%profile, "profile dormant");
-            self.later(move |_| drop(released));
-        }
-        self.refresh_manager(cx);
-    }
-
     /// Orderly quit: close every window; CEF shuts down once all are gone.
     fn quit(&mut self, cx: &mut App) {
         if self.quitting {
@@ -1367,6 +909,11 @@ impl Shell {
         // The profile in front opens at the next launch.
         if let Some(front) = self.windows.iter().find(|w| w.frame.is_key()) {
             self.mark_used(front.profile);
+        }
+        // Every open profile's windows, as they are now, reopen next time.
+        let profiles: Vec<ProfileId> = self.open.keys().copied().collect();
+        for profile in profiles {
+            self.save_session(profile, cx);
         }
         let ids: Vec<u64> = self.windows.iter().map(|w| w.id).collect();
         for id in ids {

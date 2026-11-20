@@ -202,6 +202,14 @@ wrap_app! {
                 // preconnects for Chrome's own omnibox (Aeri has its own and
                 // its own search provider), and network time queries.
                 append_to_list(command_line, "disable-features", DISABLED_FEATURES);
+                // Chrome loads its last-used profile at start-up and keeps
+                // it loaded for the whole run. That would be the Aeri
+                // profile whose window was last active, which then never
+                // goes dormant. Start on the unused `Default` instead.
+                command_line.append_switch_with_value(
+                    Some(&CefString::from("profile-directory")),
+                    Some(&CefString::from("Default")),
+                );
             }
             if browser_process && self.devtools_pipe.load(Ordering::Relaxed) {
                 // See `devtools`: the pipe is a browser-target session, and
