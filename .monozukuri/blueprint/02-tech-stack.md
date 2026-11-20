@@ -19,7 +19,7 @@ labelled Observed / Reported / Inferred). Requirements:
 | Platform glue | `objc2` + `objc2-app-kit` (macOS), `windows` crate (Windows) | Already in GPUI's and cef-rs's dependency trees; keeps everything in Rust — over Swift/ObjC++ bridges (second toolchain, nothing they do that objc2 can't) |
 | Aeri's own data | SQLite via `rusqlite` (bundled), one `app.db` + one `profile.db` per profile, WAL, migrations in code | Local-first, transactional, one file per profile makes deletion and isolation trivial — over separate history/bookmarks/session DBs (more files, no gain) and JSON files (no transactions, slow history search) |
 | Content blocking | uBlock Origin Lite from the Chrome Web Store, offered at each profile's first launch (ADR 0008, superseding ADR 0003's built-in adblock-rust blocker) | Classic uBO is dead on current Chromium; uBO Lite already works in Aeri and saves building and maintaining a blocker — over adblock-rust in the browser process (fresher lists, CNAME, fuller rules, one engine for all profiles, but a medium phase now and more later) |
-| Secrets (Aeri's basic store) | `keyring-core` + `apple-native-keyring-store` (data-protection Keychain) / `windows-native-keyring-store` | OS-protected, MIT/Apache, maintained — over storing ciphertext in SQLite (key management becomes ours) |
+| Secrets (Aeri's basic store) | Chrome's password manager of the profile, its key in the Keychain ("Aeri Safe Storage") — ADR 0009 (2026-11-20), replacing `keyring-core` + native keyring stores | Proven on real sites with Chrome's save, fill-on-pick and screen-lock confirmation; the keyring crates and own form handling were never added |
 | Diagnostics | `tracing` + `tracing-subscriber` to a local rotating file; nothing leaves the machine | Structured, per-profile spans; no telemetry by rule |
 | Errors | `thiserror` in libraries, `anyhow` at the app edge | Explicit, typed errors where callers branch on them |
 | Build and packaging | Cargo workspace; cef-rs `bundle-cef-app`; our own `scripts/sign-macos.sh` (inside-out signing, hardened runtime, notarisation) | cef-rs has no signing step (Observed) — over CMake (unneeded; no C++ of our own) |
@@ -124,8 +124,8 @@ implements them. No CEF type crosses into `aeri-core` or the UI.
 - `gpui` (zed, pinned commit) — native UI.
 - (`adblock` dropped with the built-in blocker; ADR 0008.)
 - `rusqlite` (bundled) — SQLite.
-- `keyring-core`, `apple-native-keyring-store`, `windows-native-keyring-store`
-  — OS secret storage.
+- (keyring crates dropped: the basic store is Chrome's password manager;
+  ADR 0009.)
 - `objc2`, `objc2-app-kit`, `objc2-foundation` — AppKit glue.
 - `serde`, `serde_json` — theme/shortcut files, list metadata.
 - `tracing`, `tracing-subscriber`, `thiserror`, `anyhow`.

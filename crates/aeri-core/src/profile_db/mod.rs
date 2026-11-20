@@ -1,11 +1,13 @@
 //! `Profiles/<id>/profile.db`: one profile's own records (ADR 0004): its
 //! workspace (spaces and their tabs, favourites, and which space each window
-//! shows), recently closed tabs, history and bookmarks. Nothing here is ever
-//! readable from another profile: each profile has its own file.
+//! shows), recently closed tabs, history, bookmarks and settings. Nothing
+//! here is ever readable from another profile: each profile has its own
+//! file.
 
 mod bookmarks;
 mod closed;
 mod history;
+mod settings;
 mod workspace;
 
 use std::path::Path;
@@ -102,6 +104,8 @@ const MIGRATIONS: &[&str] = &[
     // 5: those choices live in Chrome's popup site settings instead, which
     // the Person can also see and change there.
     "DROP TABLE popup_sites;",
+    // 6: the profile's settings, one value per key.
+    "CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
 ];
 
 pub struct ProfileDb {

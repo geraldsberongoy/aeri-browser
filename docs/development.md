@@ -135,6 +135,14 @@ certificate warning passed with Proceed shows again after relaunch.
 Chrome's own history recording is off, so its `History` database keeps
 only the downloads list.
 
+Passwords (Phase 10, ADR 0009): each profile's provider is in the profile
+menu (Save Passwords in Aeri, Use a Password-Manager Extension, Don't Save
+Passwords) with Manage Passwords… (also in the palette), which opens
+Chrome's password manager page. Chrome's "Save password?" bubble follows a
+submitted sign-in; a saved one is listed when you click the field and
+filled only after macOS confirms it is you. Scripted checks must not
+answer that prompt; quitting Aeri dismisses it.
+
 Running under `lldb` (launch or attach) raises a system "Developer Tools
 Access" dialog and stalls until it is answered. Aeri also needs fds 3 and 4
 free at start for its private DevTools pipe (ADR 0006); if a parent process

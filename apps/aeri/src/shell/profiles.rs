@@ -6,12 +6,14 @@ use std::path::Path;
 use std::time::Instant;
 
 use aeri_cef::ProfileContext;
+use aeri_core::credentials::PasswordProvider;
 use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::profile_db::ProfileDb;
 use aeri_core::store::{ACCENTS, AppDb};
 use aeri_core::workspace::TabList;
 use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
+use super::passwords::{apply_password_provider, provider_title};
 use super::tabs::{Place, TabStart};
 use super::{AppMsg, OpenProfile, Plan, Shell, content_view, menus};
 use crate::mac::{self};
@@ -34,6 +36,13 @@ pub(super) fn remove_deleted_profiles(db: &AppDb, data_dir: &Path) {
             }
         }
         Err(err) => tracing::warn!(%err, "could not remove deleted profiles' data"),
+    }
+}
+
+fn item(title: &str) -> Entry {
+    Entry::Item {
+        title: title.to_owned(),
+        checked: false,
     }
 }
 
@@ -111,6 +120,7 @@ impl Shell {
             let _ = tx.unbounded_send(AppMsg::ExtensionsChanged { profile });
         });
         open.extensions = open.context.extensions();
+        apply_password_provider(profile, open);
         self.load_workspace(profile);
         let Some(open) = self.open.get_mut(&profile) else {
             return;
@@ -202,40 +212,59 @@ impl Shell {
         }
     }
 
-    /// The native profile menu under the strip's badge. The menu is modal:
-    /// while it is open the shell handles no messages (they queue), the
-    /// same as during any AppKit menu tracking.
+    /// The native profile menu under the strip's badge: profiles, then the
+    /// window's profile's password provider. The menu is modal: while it is
+    /// open the shell handles no messages (they queue), the same as during
+    /// any AppKit menu tracking.
     pub(super) fn profile_menu(&mut self, window_id: u64, x: f32, y: f32) {
         let Some(w) = self.window(window_id) else {
             return;
         };
-        let mut entries: Vec<Entry> = self
-            .profiles
-            .iter()
-            .map(|profile| Entry::Item {
-                title: profile.name.clone(),
-                checked: profile.id == w.profile,
-            })
-            .collect();
-        let ids: Vec<ProfileId> = self.profiles.iter().map(|p| p.id).collect();
-        entries.push(Entry::Separator);
-        for title in ["New Profile…", "Manage Profiles…"] {
-            entries.push(Entry::Item {
-                title: title.to_owned(),
-                checked: false,
-            });
+        let profile = w.profile;
+        let provider = self.password_provider(profile);
+        let mut rows: Vec<(Entry, Option<AppMsg>)> = Vec::new();
+        for p in &self.profiles {
+            let entry = Entry::Item {
+                title: p.name.clone(),
+                checked: p.id == profile,
+            };
+            rows.push((entry, Some(AppMsg::OpenProfile { profile: p.id })));
         }
+        rows.push((Entry::Separator, None));
+        rows.push((
+            item("New Profile…"),
+            Some(AppMsg::ShowProfiles { new: true }),
+        ));
+        rows.push((
+            item("Manage Profiles…"),
+            Some(AppMsg::ShowProfiles { new: false }),
+        ));
+        rows.push((Entry::Separator, None));
+        for choice in PasswordProvider::ALL {
+            let entry = Entry::Item {
+                title: provider_title(choice).to_owned(),
+                checked: choice == provider,
+            };
+            let msg = AppMsg::SetPasswordProvider {
+                profile,
+                provider: choice,
+            };
+            rows.push((entry, Some(msg)));
+        }
+        // Shown for every provider: sign-ins saved earlier stay offered on
+        // a field the Person picks until deleted there (Observed).
+        let msg = AppMsg::ManagePasswords { window: window_id };
+        rows.push((item("Manage Passwords…"), Some(msg)));
+        let (entries, msgs): (Vec<Entry>, Vec<Option<AppMsg>>) = rows.into_iter().unzip();
+        let msgs = std::cell::RefCell::new(msgs);
         let tx = self.tx.clone();
         let frame = w.frame.clone();
         self.later(move |_| {
             let (x, y) = (f64::from(x), f64::from(y));
             frame.pop_up_menu(x, y, Align::Right, &entries, move |ix| {
-                let msg = match ix.checked_sub(ids.len()) {
-                    None => AppMsg::OpenProfile { profile: ids[ix] },
-                    Some(1) => AppMsg::ShowProfiles { new: true },
-                    Some(_) => AppMsg::ShowProfiles { new: false },
-                };
-                let _ = tx.unbounded_send(msg);
+                if let Some(msg) = msgs.borrow_mut().get_mut(ix).and_then(Option::take) {
+                    let _ = tx.unbounded_send(msg);
+                }
             });
         });
     }

@@ -6,6 +6,7 @@ use aeri_core::suggest;
 use gpui::App;
 
 use super::bar::{BarRow, Pick, suggestion_row, typed_row};
+use super::passwords::PASSWORDS_PAGE;
 use super::session::now;
 use super::trust::{CLEAR_DATA_PAGE, DOWNLOADS_PAGE};
 use super::{Shell, TabCommand};
@@ -24,6 +25,7 @@ pub enum PaletteCommand {
     ShowHistory,
     ShowDownloads,
     ClearBrowsingData,
+    ManagePasswords,
     SiteSettings,
     OpenInDefaultBrowser,
     ToggleSidebar,
@@ -52,6 +54,7 @@ const COMMANDS: &[(PaletteCommand, &str)] = &[
     (PaletteCommand::ShowHistory, "⌘Y"),
     (PaletteCommand::ShowDownloads, ""),
     (PaletteCommand::ClearBrowsingData, ""),
+    (PaletteCommand::ManagePasswords, ""),
     (PaletteCommand::SiteSettings, ""),
     (PaletteCommand::OpenInDefaultBrowser, ""),
     (PaletteCommand::ToggleSidebar, "⌘S"),
@@ -167,6 +170,7 @@ impl Shell {
             PaletteCommand::ShowHistory => "Show History",
             PaletteCommand::ShowDownloads => "Show Downloads",
             PaletteCommand::ClearBrowsingData => "Clear Browsing Data…",
+            PaletteCommand::ManagePasswords => "Manage Passwords…",
             PaletteCommand::SiteSettings => "Site Settings…",
             PaletteCommand::OpenInDefaultBrowser => "Open in Default Browser",
             PaletteCommand::ToggleSidebar => "Show or Hide Sidebar",
@@ -229,6 +233,7 @@ impl Shell {
             PaletteCommand::ManageProfiles => self.show_profile_manager(false, cx),
             PaletteCommand::ShowDownloads => self.open_page(window_id, DOWNLOADS_PAGE, cx),
             PaletteCommand::ClearBrowsingData => self.open_page(window_id, CLEAR_DATA_PAGE, cx),
+            PaletteCommand::ManagePasswords => self.open_page(window_id, PASSWORDS_PAGE, cx),
             _ => {}
         }
     }

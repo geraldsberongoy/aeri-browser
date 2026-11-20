@@ -27,7 +27,7 @@ Abbreviations:
 | Website | actor | Chromium renderer processes, sandboxed | Aeri exposes no JS bridge; `helper::` injects only CSS and filter scripts |
 | Extension | actor | Chromium extension system, per request context | Aeri never grants extra APIs |
 | Web engine | actor | `cef::` (the engine seam implementation) | `core::engine` defines the commands and events |
-| Operating system | actor | `app::platform` (appearance, memory pressure, menus, file dialogs, notifications) | Secrets via `core::credentials` → keyring crates |
+| Operating system | actor | `app::platform` (appearance, memory pressure, menus, file dialogs, notifications) | Secrets: Chrome's password manager, its key in the Keychain (ADR 0009) |
 
 ## Domains
 
@@ -58,7 +58,7 @@ Abbreviations:
 | Closed-tab record | entity | `profile.db.closed_tabs` | |
 | History entry | entity | `profile.db.history` | Chromium may also keep its own copy *(S4)* |
 | Bookmark | entity | `profile.db.bookmarks` (folder tree via `parent_id`, `position`) | |
-| Saved sign-in | entity | Provider-dependent: Keychain / Credential Manager item (basic store), Apple Passwords, or an extension | Metadata (site, username, last used) in `profile.db.signins`; never the secret |
+| Saved sign-in | entity | Provider-dependent: Chrome's password manager of the profile (basic store, ADR 0009), Apple Passwords, or an extension | Chrome's `Login Data`, encrypted with the key in the Keychain; Aeri keeps no copy |
 | Password provider | entity | `profile.db.settings.password_provider` | |
 | Site permission | entity | Chromium content settings of the profile's request context | Read and cleared through `cef::permissions`; prompts are Chrome UI |
 | Certificate exception | entity | Chromium (in-memory decision of the request context) | `cef::` clears exceptions at start-up to enforce "until quit" |
@@ -80,7 +80,7 @@ Abbreviations:
 | Website storage never crosses profiles | rule | Chromium (separate request contexts and renderers) | Verified by an isolation test *(S4)* |
 | Aeri records never cross profiles | rule | `core::store` (one `profile.db` per profile) | |
 | Window shows its profile identity | rule | `app::shell::sidebar` | Also the window title and accent |
-| Delete profile: confirm, remove all | rule | `core::identity::delete_profile` | Removes `Profiles/<id>`, `Chromium/<id>`, keyring items |
+| Delete profile: confirm, remove all | rule | `core::identity::delete_profile` | Removes `Profiles/<id>` and `Chromium/<id>` (saved sign-ins included) |
 | Open in another profile carries only the address | rule | `core::identity` | |
 | Tab in exactly one space or favourites | rule | `core::workspace` | |
 | Tab never moves across profiles | rule | `core::workspace` | |
@@ -110,13 +110,13 @@ Abbreviations:
 | Extension cost visible | rule | `cef::resources` (`CefTaskManager`) | |
 | One provider per profile; defaults | rule | `core::credentials` | |
 | System passwords shared across profiles | rule | `core::credentials` (shows the notice) | Unavailable until an organisation account exists |
-| Basic-store secrets in OS storage only | rule | `core::credentials::keystore` (keyring crates) | |
-| Extension provider ⇒ Aeri silent | rule | `core::credentials` | |
-| Offer to save after submit | rule | `helper::forms` (detects submit) → `core::credentials` | *(S6)* |
-| Fill only on the matching secure top-level site, on pick | rule | `core::credentials` | Fill injected by `helper::forms` *(S6)* |
-| OS confirmation; no caching of secrets | rule | `core::credentials` | `LAContext` / `UserConsentVerifier` via `app::platform` |
+| Basic-store secrets encrypted with a key in OS storage | rule | Chrome's password manager (ADR 0009) | |
+| Extension provider ⇒ Aeri silent | rule | `core::credentials` (Chrome's manager stops saving) | Sign-ins saved before stay offered until deleted |
+| Offer to save after submit | rule | Chrome's password manager (save bubble) | S6: Observed |
+| Fill only on the matching site, on pick | rule | Chrome's password manager with screen lock before filling (`core::credentials`) | Chrome also fills on HTTP and same-site frames (Inferred) |
+| OS confirmation; no caching of secrets | rule | Chrome's password manager (macOS screen lock) | |
 | Passkeys use system support | rule | Chromium WebAuthn | Limited until the entitlement exists |
-| View, edit, delete basic-store sign-ins | rule | `app::settings::passwords` | |
+| View, edit, delete basic-store sign-ins | rule | Chrome's password manager page (`app::shell` Manage Passwords…) | |
 | History per completed top-level visit | rule | `core::library` | Fed by `cef::` load-end events |
 | Clear data per profile, by category and range | rule | `core::library::clear` | Chromium parts via `cef::` (`ClearCertificateExceptions`, cache and cookie APIs) |
 | Session remembered on quit | rule | `core::continuity` | Written continuously, not only at quit |
@@ -196,11 +196,9 @@ lacks a home.
   "playing audio" that has not been located yet. **S7** must confirm both.
   If either fails, rest becomes the only lever and the rule needs a stage-1
   revisit.
-- **Basic-store save/fill** — `helper::forms` (form detection and fill)
-  versus Chrome's own password manager inside Chrome-style CEF. **S6**
-  decides. If Chrome's manager is used, its secrets sit in Chromium's
-  encrypted database with the key in the Keychain, not as Keychain items.
-  That conflicts with the stage-1 invariant and would need a stage-1 revisit.
+- **Basic-store save/fill** — resolved by S6 (Phase 10): Chrome's own
+  password manager, with the stage-1 storage rule revised by the owner
+  (ADR 0009). `helper::forms` is not built.
 - **Favourite live page across two windows** — whether a CEF browser view
   can move between two Views windows of the same profile. **S1** decides;
   the fallback is the stage-1 edge case's "showing in another window"
@@ -218,8 +216,9 @@ None. Every stage-2 component is the home of at least one element:
 - `serde_json` → themes, shortcuts
 - `tracing` → diagnostics
 - `objc2` → `app::platform`
-- keyring crates → credentials
-- `aeri-helper` → forms
+- `aeri-helper` → renderer-process hooks (forms dropped with ADR 0009)
+
+The keyring crates were dropped with ADR 0009 (Phase 10).
 
 ## New spikes found while mapping
 

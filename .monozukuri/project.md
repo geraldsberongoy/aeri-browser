@@ -75,8 +75,15 @@ strip menu, Chrome's own history off (`history.saving_disabled` set through
 CEF's C API: cef-rs's `set_preference` fails), Clear History… by range,
 Chrome's settings pages for site settings and clearing, Open in Default
 Browser, usage descriptions for macOS prompts; isolation 13/13 and live
-checks. Evidence: `.monozukuri/specifications/phase-9-trust.md`. Next:
-Phase 10 (passwords).
+checks. Evidence: `.monozukuri/specifications/phase-9-trust.md`. Phase 10
+(passwords) is built: S6 showed Chrome's password manager works in Aeri's
+windows; the owner chose it as the basic store (ADR 0009, stage-1 storage
+rule revised). Provider per profile (`aeri-core::credentials`, `profile.db`
+migration 6), Chrome's preferences set before pages open (save only for
+Aeri's store, fill only on pick after the screen lock, no auto sign-in, no
+leak checks), profile menu and palette, Manage Passwords…. Evidence:
+`.monozukuri/specifications/phase-10-passwords.md`. Next: Phase 11
+(resource stewardship).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

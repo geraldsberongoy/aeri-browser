@@ -268,7 +268,10 @@ Credentials (Decided: system password manager first, changeable later)
   same accounts. Aeri says so when that provider is chosen. This is the one
   deliberate exception to profile isolation, and it covers sign-ins only.
 - Sign-ins in Aeri's basic store belong to exactly one profile and are kept
-  in the system's protected secret storage, never in Aeri's ordinary records.
+  by that profile's Chrome password manager, encrypted with a key held in
+  the system's protected secret storage; never in Aeri's own records
+  (revised 2026-11-20 by the owner, ADR 0009: each sign-in was to be its
+  own system secret).
 - When the provider is an extension, Aeri offers nothing itself, to avoid two
   competing offers.
 - Aeri offers to save a sign-in only after it has been submitted on a page;
@@ -281,8 +284,8 @@ Credentials (Decided: system password manager first, changeable later)
   it.
 - Passkeys use the system's own passkey support where the system offers it.
 - The Person can view (after the system confirms it is them), edit and delete
-  sign-ins in Aeri's basic store; system and extension sign-ins are managed
-  in those tools.
+  sign-ins in Aeri's basic store, on Chrome's password manager page; system
+  and extension sign-ins are managed in those tools.
 
 Library
 - A history entry is recorded for each completed top-level visit in a profile.

@@ -15,8 +15,9 @@
 //! [`Frame`](crate::mac::Frame) stacks a window's tabs under one GPUI frame
 //! window. One child module per concern: [`windows`], [`tabs`] and the
 //! [`tab_menu`], [`spaces`] and [`favourites`], the [`bar`] and its
-//! [`palette`], the [`library`], [`profiles`], [`shortcuts`], the
-//! [`session`] records and [`quit`].
+//! [`palette`], the [`library`], [`profiles`] and their [`passwords`],
+//! [`trust`] (popups, downloads, clearing), [`shortcuts`], the [`session`]
+//! records and [`quit`].
 //!
 //! Profiles (ADR 0004): every window belongs to one profile. A profile with
 //! a window is open and holds its request context; when its last window
@@ -27,6 +28,7 @@ mod bar;
 mod favourites;
 mod library;
 mod palette;
+mod passwords;
 mod profiles;
 mod quit;
 mod session;
@@ -48,6 +50,7 @@ use std::time::Instant;
 use aeri_cef::{
     DevTools, Extension, ExtensionsWatch, ProfileContext, Runtime, RuntimeConfig, Shortcut, Signal,
 };
+use aeri_core::credentials::PasswordProvider;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
 use aeri_core::profile_db::ProfileDb;
 use aeri_core::store::{AppDb, Profile};
@@ -183,6 +186,15 @@ pub enum AppMsg {
         new: bool,
     },
     ProfileManagerClosed,
+    /// From the profile menu: where the profile's sign-ins are saved.
+    SetPasswordProvider {
+        profile: ProfileId,
+        provider: PasswordProvider,
+    },
+    /// Chrome's password manager page, in a new tab of the window's profile.
+    ManagePasswords {
+        window: u64,
+    },
     /// The sidebar's space header was clicked at (`x`, `y`) in the window.
     SpaceMenu {
         window: u64,
@@ -557,6 +569,12 @@ impl Shell {
                 self.extension_action(window, extension, cx)
             }
             AppMsg::ProfileMenu { window, x, y } => self.profile_menu(window, x, y),
+            AppMsg::SetPasswordProvider { profile, provider } => {
+                self.set_password_provider(profile, provider);
+            }
+            AppMsg::ManagePasswords { window } => {
+                self.open_page(window, self::passwords::PASSWORDS_PAGE, cx);
+            }
             AppMsg::PopupMenu { window, x, y } => self.popup_menu(window, x, y),
             AppMsg::DownloadsMenu { window, x, y } => self.downloads_menu(window, x, y),
             AppMsg::DownloadPick { window, pick } => self.download_pick(window, pick, cx),

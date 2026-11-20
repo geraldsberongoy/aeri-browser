@@ -84,6 +84,12 @@ impl ProfileContext {
         );
     }
 
+    /// Sets one of the profile's boolean Chrome preferences. Main thread,
+    /// after the context is initialized.
+    pub fn set_bool_preference(&self, name: &str, value: bool) -> Result<(), String> {
+        set_bool_preference(&self.context, name, value)
+    }
+
     /// Installed, enabled extensions with a toolbar action. Main thread,
     /// after the context is initialized.
     pub fn extensions(&self) -> Vec<Extension> {
