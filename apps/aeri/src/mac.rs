@@ -50,6 +50,12 @@ use crate::window_frame::STRIP_HEIGHT;
 const BAR_MAX_WIDTH: f64 = 760.0;
 const BAR_SIDE_MARGIN: f64 = 96.0;
 pub const BAR_HEIGHT: f64 = 56.0;
+/// One suggestion row under the bar, and the list's gap (6), padding (8)
+/// and border (2).
+pub const SUGGESTION_HEIGHT: f64 = 36.0;
+pub const SUGGESTION_CHROME: f64 = 16.0;
+/// Rows shown at once; more scroll.
+pub const MAX_VISIBLE_SUGGESTIONS: usize = 9;
 const BAR_FROM_TOP: f64 = 0.4;
 /// The bar never comes closer than this to the page's top edge.
 const BAR_MIN_TOP: f64 = 8.0;
@@ -73,6 +79,23 @@ pub fn bring_to_front(view: *mut c_void) {
     if let Some(window) = window_of(view) {
         window.makeKeyAndOrderFront(None);
     }
+}
+
+/// A native menu with its top-left at (`x`, `y`) in a GPUI window's
+/// content view (the library window's row menus).
+pub fn pop_up_menu_in(
+    view: *mut c_void,
+    x: f64,
+    y: f64,
+    entries: &[native_menu::Entry],
+    on_pick: impl Fn(usize) + 'static,
+) {
+    if view.is_null() {
+        return;
+    }
+    // SAFETY: a live content NSView from GPUI, on the main thread.
+    let view = unsafe { &*(view as *const NSView) };
+    native_menu::pop_up(view, x, y, native_menu::Align::Left, entries, on_pick);
 }
 
 thread_local! {
@@ -184,6 +207,8 @@ pub struct Frame {
     /// active tab's window exists.
     shown: RefCell<Option<Retained<NSWindow>>>,
     bar_visible: Cell<bool>,
+    /// Suggestion rows under the bar; its window grows downwards to fit.
+    bar_rows: Cell<usize>,
     /// Width of the sidebar left of the page card, in points (0: hidden).
     sidebar: Cell<f64>,
     notifications: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
@@ -200,6 +225,7 @@ impl Frame {
             active: Cell::new(None),
             shown: RefCell::default(),
             bar_visible: Cell::new(false),
+            bar_rows: Cell::new(0),
             sidebar: Cell::new(0.0),
             notifications: RefCell::default(),
         })
@@ -334,9 +360,21 @@ impl Frame {
             let page_top = page.origin.y + page.size.height;
             let y = (page_top - page.size.height * BAR_FROM_TOP - BAR_HEIGHT / 2.0)
                 .min(page_top - BAR_MIN_TOP - BAR_HEIGHT);
+            // The pill stays put; rows hang below it, never past the card.
+            let top = y + BAR_HEIGHT;
+            let rows = self.bar_rows.get().min(MAX_VISIBLE_SUGGESTIONS);
+            let list = if rows == 0 {
+                0.0
+            } else {
+                SUGGESTION_CHROME + rows as f64 * SUGGESTION_HEIGHT
+            };
+            let height = (BAR_HEIGHT + list).min(top - page.origin.y).max(BAR_HEIGHT);
             let bar_rect = NSRect::new(
-                NSPoint::new(page.origin.x + (page.size.width - width) / 2.0, y),
-                NSSize::new(width, BAR_HEIGHT),
+                NSPoint::new(
+                    page.origin.x + (page.size.width - width) / 2.0,
+                    top - height,
+                ),
+                NSSize::new(width, height),
             );
             bar.setFrame_display(bar_rect, true);
         }
@@ -373,6 +411,13 @@ impl Frame {
         frame.removeChildWindow(&bar);
         // SAFETY: AppKit call on the main thread.
         unsafe { frame.addChildWindow_ordered(&bar, NSWindowOrderingMode::Above) };
+    }
+
+    /// Fits the bar's window to `rows` suggestion rows (0: the pill only).
+    pub fn set_bar_rows(&self, rows: usize) {
+        if self.bar_rows.replace(rows) != rows {
+            self.layout();
+        }
     }
 
     /// Shows the address bar and gives it the keyboard.

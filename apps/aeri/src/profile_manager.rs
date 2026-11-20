@@ -53,6 +53,7 @@ impl ProfileManager {
             |this, input, event: &InputEvent, cx| match event {
                 InputEvent::Submitted(name) => this.create(name.clone(), cx),
                 InputEvent::Cancelled => input.update(cx, |input, cx| input.set_text("", cx)),
+                _ => {}
             },
         )
         .detach();
@@ -125,6 +126,7 @@ impl ProfileManager {
                         input.update(cx, |input, cx| input.set_text(name, cx));
                     }
                 }
+                _ => {}
             },
         )
         .detach();

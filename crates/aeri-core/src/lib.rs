@@ -7,5 +7,6 @@ pub mod ids;
 pub mod omnibox;
 pub mod profile_db;
 pub mod store;
+pub mod suggest;
 pub mod tab;
 pub mod workspace;

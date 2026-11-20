@@ -45,6 +45,13 @@ pub enum Shortcut {
     ToggleSidebar,
     PreviousSpace,
     NextSpace,
+    /// ⌘D: bookmark the shown page, or remove its bookmarks.
+    ToggleBookmark,
+    /// ⌥⌘B and ⌘Y: the library window.
+    ShowBookmarks,
+    ShowHistory,
+    /// ⇧⌘P: the command palette.
+    CommandPalette,
     Quit,
     ToggleFullScreen,
 }

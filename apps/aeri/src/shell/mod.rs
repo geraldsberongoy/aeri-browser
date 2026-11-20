@@ -20,6 +20,7 @@
 //! goes, it turns dormant and the context is released. Aeri keeps running
 //! with no windows, like other Mac browsers.
 
+mod library;
 mod spaces;
 mod windows;
 
@@ -45,10 +46,12 @@ use gpui::{
     WindowOptions, actions, px, size,
 };
 
+pub use self::library::{BarRow, Pick};
 pub use self::spaces::SPACE_ICONS;
 use self::spaces::{Parked, SpaceInfo};
 use self::windows::{AeriWindow, Place, TabEntry, TabStart};
 use crate::address_bar;
+use crate::library::{Library, LibraryMsg};
 use crate::mac;
 use crate::native_menu::{Align, Entry};
 use crate::profile_manager::{self, ProfileManager};
@@ -78,10 +81,17 @@ pub enum AppMsg {
     CloseWindow {
         window: u64,
     },
-    AddressSubmitted {
+    /// The Person typed in the bar: suggest for `text`.
+    BarQuery {
         window: u64,
         text: String,
     },
+    /// Return or a click on a bar row.
+    BarPick {
+        window: u64,
+        pick: Pick,
+    },
+    Library(LibraryMsg),
     AddressDismissed {
         window: u64,
     },
@@ -208,6 +218,8 @@ pub enum TabCommand {
     Duplicate,
     TogglePin,
     ToggleFavourite,
+    /// Bookmark the tab's page, or remove its bookmarks.
+    ToggleBookmark,
     MoveToSpace(SpaceId),
     /// Drag and drop: move to this position among the favourites or the
     /// space's tabs, (un)favouriting it if it came from the other list.
@@ -288,6 +300,8 @@ struct Shell {
     next_window: u64,
     manager: Option<WindowHandle<ProfileManager>>,
     space_editor: Option<WindowHandle<SpaceEditor>>,
+    /// The library window and the profile it shows.
+    library: Option<(WindowHandle<Library>, ProfileId)>,
     tx: UnboundedSender<AppMsg>,
     quitting: bool,
     effects: RefCell<Vec<Effect>>,
@@ -388,6 +402,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         next_window: 1,
         manager: None,
         space_editor: None,
+        library: None,
         tx,
         quitting: false,
         effects: RefCell::default(),
@@ -539,7 +554,9 @@ impl Shell {
             }) => self.open_link(opener, url, foreground, cx),
             AppMsg::TabClosed { window, tab } => self.tab_closed(window, tab, cx),
             AppMsg::CloseWindow { window } => self.close_window(window, cx),
-            AppMsg::AddressSubmitted { window, text } => self.address_submitted(window, &text, cx),
+            AppMsg::BarQuery { window, text } => self.bar_query(window, text, cx),
+            AppMsg::BarPick { window, pick } => self.bar_pick(window, pick, cx),
+            AppMsg::Library(msg) => self.library_msg(msg, cx),
             AppMsg::AddressDismissed { window } => self.hide_bar(window, cx),
             AppMsg::Shortcut { window, shortcut } => self.shortcut(window, shortcut, cx),
             AppMsg::Tab {

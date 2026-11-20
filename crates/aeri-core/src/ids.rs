@@ -62,3 +62,13 @@ impl fmt::Display for SpaceId {
         write!(f, "space-{}", self.0)
     }
 }
+
+/// A bookmark's or bookmark folder's identifier within its profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BookmarkId(pub i64);
+
+impl fmt::Display for BookmarkId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "bookmark-{}", self.0)
+    }
+}

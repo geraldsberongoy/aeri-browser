@@ -32,6 +32,7 @@ use gpui::{
 use super::spaces::Parked;
 use super::{AppMsg, NEW_TAB_URL, Nav, Plan, SEARCH_TEMPLATE, Shell, TabCommand, content_view};
 use crate::address_bar::AddressBar;
+use crate::library::Section;
 use crate::mac::{BAR_HEIGHT, Frame};
 use crate::native_menu::{Align, Entry};
 use crate::window_frame::{SIDEBAR_WIDTH, SidebarTab, SpaceChip, TRAFFIC_LIGHTS, WindowFrame};
@@ -71,7 +72,7 @@ impl TabEntry {
         self.unseen.as_deref().unwrap_or(&self.model.url)
     }
 
-    fn label(&self) -> String {
+    pub(super) fn label(&self) -> String {
         // Chromium titles a blank page "about:blank".
         if self.url() == NEW_TAB_URL {
             "New Tab".to_owned()
@@ -132,6 +133,8 @@ pub(super) struct AeriWindow {
     pub(super) frame_window: gpui::WindowHandle<WindowFrame>,
     pub(super) bar: gpui::WindowHandle<AddressBar>,
     pub(super) bar_shown: bool,
+    /// The bar is the command palette.
+    pub(super) palette: bool,
     pub(super) sidebar: bool,
     /// The space shown.
     pub(super) space: SpaceId,
@@ -366,6 +369,7 @@ impl Shell {
             frame_window,
             bar,
             bar_shown: false,
+            palette: false,
             sidebar: true,
             space: seed.space,
             tabs,
@@ -766,17 +770,28 @@ impl Shell {
             })
             .collect();
         let model = self.shown_model(w);
+        let address = model
+            .as_ref()
+            .map(|tab| super::library::display_address(&tab.url))
+            .unwrap_or_default();
         let _ = w.frame_window.update(cx, |frame, _, cx| {
             frame.set_tabs(tabs, cx);
             frame.set_spaces(spaces, cx);
+            frame.set_address(address, cx);
             if let Some(tab) = &model {
                 frame.show_history(tab.can_go_back, tab.can_go_forward, cx);
             }
         });
         if let Some(tab) = model {
+            // Only web and file pages can be bookmarked.
+            let bookmarked = records_history(&tab.url).then(|| {
+                open.db
+                    .as_ref()
+                    .is_some_and(|db| db.is_bookmarked(&tab.url).unwrap_or(false))
+            });
             let _ = w
                 .bar
-                .update(cx, |bar, window, cx| bar.show_tab(&tab, window, cx));
+                .update(cx, |bar, _, cx| bar.show_tab(&tab, bookmarked, cx));
         }
     }
 
@@ -795,26 +810,46 @@ impl Shell {
         self.later(move |_| page.execute(&command));
     }
 
+    /// ⌘L: the bar takes the keyboard with the shown address.
     pub(super) fn show_bar(&mut self, window_id: u64, cx: &mut App) {
+        self.reveal_bar(window_id, false, cx);
+    }
+
+    /// ⇧⌘P: the bar as the command palette, listing the commands.
+    pub(super) fn show_palette(&mut self, window_id: u64, cx: &mut App) {
+        self.reveal_bar(window_id, true, cx);
+        self.bar_query(window_id, String::new(), cx);
+    }
+
+    fn reveal_bar(&mut self, window_id: u64, palette: bool, cx: &mut App) {
         self.refresh_window(window_id, cx);
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
         w.bar_shown = true;
-        let _ = w.bar.update(cx, |bar, window, cx| bar.reveal(window, cx));
+        w.palette = palette;
+        let _ = w
+            .bar
+            .update(cx, |bar, window, cx| bar.reveal(palette, window, cx));
         let frame = w.frame.clone();
-        self.later(move |_| frame.show_bar());
+        self.later(move |_| {
+            frame.set_bar_rows(0);
+            frame.show_bar();
+        });
     }
 
     pub(super) fn hide_bar(&mut self, window_id: u64, cx: &mut App) {
-        self.refresh_window(window_id, cx);
         let page = self.shown_cef(window_id);
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
         let was_shown = std::mem::replace(&mut w.bar_shown, false);
+        w.palette = false;
+        let _ = w.bar.update(cx, |bar, _, cx| bar.dismissed(cx));
         let frame = w.frame.clone();
+        self.refresh_window(window_id, cx);
         self.later(move |_| {
+            frame.set_bar_rows(0);
             frame.hide_bar(was_shown);
             if was_shown && let Some(page) = page {
                 page.focus_page();
@@ -822,22 +857,35 @@ impl Shell {
         });
     }
 
-    pub(super) fn address_submitted(&mut self, window_id: u64, text: &str, cx: &mut App) {
+    /// Opens what the Person typed or picked: in the shown tab from the
+    /// address bar, in a new tab from the palette (or the shown tab if it is
+    /// blank). The omnibox rules apply: never a script address.
+    pub(super) fn go(&mut self, window_id: u64, text: &str, new_tab: bool, cx: &mut App) {
         let Some(w) = self.window(window_id) else {
             return;
         };
-        if let (Some(destination), Some(page), Some(tab)) = (
-            omnibox::classify(text, SEARCH_TEMPLATE),
-            self.shown_cef(window_id),
-            w.shown(),
-        ) {
-            let command = Command::Navigate {
-                tab,
-                url: destination.url().to_string(),
-            };
+        let blank = self.shown_model(w).is_none_or(|tab| tab.url == NEW_TAB_URL);
+        let target = w.shown();
+        self.hide_bar(window_id, cx);
+        let Some(destination) = omnibox::classify(text, SEARCH_TEMPLATE) else {
+            return;
+        };
+        let url = destination.url().to_string();
+        if new_tab && !blank {
+            self.add_tab(
+                window_id,
+                TabId::next(),
+                TabStart::Load(url),
+                Place::End,
+                true,
+                cx,
+            );
+            return;
+        }
+        if let (Some(page), Some(tab)) = (self.shown_cef(window_id), target) {
+            let command = Command::Navigate { tab, url };
             self.later(move |_| page.execute(&command));
         }
-        self.hide_bar(window_id, cx);
     }
 
     /// Makes `tab` (one of the space's tabs or a favourite) the window's
@@ -938,6 +986,14 @@ impl Shell {
             Shortcut::ToggleSidebar => self.toggle_sidebar(window_id, cx),
             Shortcut::PreviousSpace => self.step_space(window_id, -1, cx),
             Shortcut::NextSpace => self.step_space(window_id, 1, cx),
+            Shortcut::ToggleBookmark => {
+                if let Some(tab) = shown {
+                    self.toggle_bookmark(window_id, tab, cx);
+                }
+            }
+            Shortcut::ShowBookmarks => self.show_library(window_id, Section::Bookmarks, cx),
+            Shortcut::ShowHistory => self.show_library(window_id, Section::History, cx),
+            Shortcut::CommandPalette => self.show_palette(window_id, cx),
             Shortcut::Quit => self.quit(cx),
             Shortcut::ToggleFullScreen => {
                 if let Some(frame) = self.window(window_id).map(|w| w.frame.clone()) {
@@ -1013,6 +1069,7 @@ impl Shell {
                 self.refresh_window(window_id, cx);
             }
             TabCommand::ToggleFavourite => self.toggle_favourite(window_id, tab, cx),
+            TabCommand::ToggleBookmark => self.toggle_bookmark(window_id, tab, cx),
             TabCommand::MoveToSpace(space) => self.move_to_space(window_id, tab, space, cx),
             TabCommand::MoveTo {
                 index,
@@ -1081,6 +1138,19 @@ impl Shell {
             add("Add to Favourites", command(TabCommand::ToggleFavourite));
         }
         add("Duplicate Tab", command(TabCommand::Duplicate));
+        let page = item.value.url();
+        if records_history(page) {
+            let bookmarked = open
+                .db
+                .as_ref()
+                .is_some_and(|db| db.is_bookmarked(page).unwrap_or(false));
+            let title = if bookmarked {
+                "Remove Bookmark"
+            } else {
+                "Bookmark Tab"
+            };
+            add(title, command(TabCommand::ToggleBookmark));
+        }
         if favourite.is_none() {
             let others: Vec<_> = open.spaces.iter().filter(|s| s.id != w.space).collect();
             if !others.is_empty() {
@@ -1468,6 +1538,7 @@ impl Shell {
         {
             tracing::info!(%profile, "profile dormant");
             self.dirty.remove(&profile);
+            self.close_library_of(profile, cx);
             self.later(move |_| drop(released));
         }
         self.refresh_manager(cx);

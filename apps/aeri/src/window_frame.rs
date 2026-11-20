@@ -83,6 +83,7 @@ pub struct WindowFrame {
     can_go_forward: bool,
     tabs: Vec<SidebarTab>,
     spaces: Vec<SpaceChip>,
+    address: String,
     sidebar_shown: bool,
 }
 
@@ -108,6 +109,7 @@ impl WindowFrame {
             can_go_forward: false,
             tabs: Vec::new(),
             spaces: Vec::new(),
+            address: String::new(),
             sidebar_shown: true,
         }
     }
@@ -124,6 +126,14 @@ impl WindowFrame {
     pub fn set_spaces(&mut self, spaces: Vec<SpaceChip>, cx: &mut Context<Self>) {
         if self.spaces != spaces {
             self.spaces = spaces;
+            cx.notify();
+        }
+    }
+
+    /// The shown tab's address, without its scheme.
+    pub fn set_address(&mut self, address: String, cx: &mut Context<Self>) {
+        if self.address != address {
+            self.address = address;
             cx.notify();
         }
     }
@@ -301,9 +311,49 @@ impl WindowFrame {
             .px(px(PAGE_EDGE + 2.))
             .pb(px(PAGE_EDGE))
             .gap(px(4.))
+            .child(self.address_row(cx))
             .child(self.space_header(cx))
             .child(list)
             .child(self.space_switcher(cx))
+    }
+
+    /// The shown tab's address, resting at the top of the sidebar; a click
+    /// calls the floating bar, like ⌘L. Plain text: the frame cannot hold a
+    /// text field.
+    fn address_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let window = self.window_id;
+        let empty = self.address.is_empty();
+        div()
+            .id("address")
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(30.))
+            .px(px(10.))
+            .rounded(px(7.))
+            .bg(rgba(0xffffff0a))
+            .text_size(px(12.))
+            .text_color(if empty { rgb(0x6c6e75) } else { rgb(0xb4b6bc) })
+            .hover(|style| style.bg(rgba(0xffffff14)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                this.send(AppMsg::Shortcut {
+                    window,
+                    shortcut: Shortcut::FocusAddressBar,
+                });
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(SharedString::from(if empty {
+                        "Search or enter address".to_owned()
+                    } else {
+                        self.address.clone()
+                    })),
+            )
     }
 
     /// The shown space's colour, icon and name; a click opens the space
@@ -333,7 +383,8 @@ impl WindowFrame {
                     this.send(AppMsg::SpaceMenu {
                         window,
                         x: PAGE_EDGE + 10.,
-                        y: STRIP_HEIGHT as f32 + 30.,
+                        // Below the address row (30 + 4) and the header (30).
+                        y: STRIP_HEIGHT as f32 + 64.,
                     });
                 }),
             )

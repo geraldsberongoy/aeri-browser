@@ -242,6 +242,10 @@ wrap_life_span_handler! {
 
 /// `windows_key_code` values (Windows virtual-key codes, used on every OS).
 const VK_TAB: i32 = 0x09;
+const VK_B: i32 = 0x42;
+const VK_D: i32 = 0x44;
+const VK_P: i32 = 0x50;
+const VK_Y: i32 = 0x59;
 const VK_L: i32 = 0x4C;
 const VK_N: i32 = 0x4E;
 const VK_Q: i32 = 0x51;
@@ -269,6 +273,10 @@ fn shortcut_for(event: &KeyEvent) -> Option<Shortcut> {
         (VK_L, m) if m == COMMAND => Some(Shortcut::FocusAddressBar),
         (VK_T, m) if m == COMMAND => Some(Shortcut::NewTab),
         (VK_N, m) if m == COMMAND => Some(Shortcut::NewWindow),
+        (VK_D, m) if m == COMMAND => Some(Shortcut::ToggleBookmark),
+        (VK_B, m) if m == COMMAND | OPTION => Some(Shortcut::ShowBookmarks),
+        (VK_Y, m) if m == COMMAND => Some(Shortcut::ShowHistory),
+        (VK_P, m) if m == COMMAND | SHIFT => Some(Shortcut::CommandPalette),
         (VK_T, m) if m == COMMAND | SHIFT => Some(Shortcut::ReopenClosedTab),
         (VK_S, m) if m == COMMAND => Some(Shortcut::ToggleSidebar),
         (code @ VK_1..=VK_9, m) if m == COMMAND => {

@@ -56,6 +56,7 @@ impl SpaceEditor {
             |this, _, event: &InputEvent, window, cx| match event {
                 InputEvent::Submitted(_) => this.save(window, cx),
                 InputEvent::Cancelled => this.close(window),
+                _ => {}
             },
         )
         .detach();

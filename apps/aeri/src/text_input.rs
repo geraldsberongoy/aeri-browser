@@ -2,7 +2,8 @@
 //!
 //! Adapted from GPUI's `examples/input.rs` (zed-industries/zed@96362135,
 //! Apache-2.0): selection, IME (`EntityInputHandler`), clipboard, mouse
-//! selection. Aeri adds submit/cancel events and programmatic text.
+//! selection. Aeri adds submit/cancel/edit/up/down events and programmatic
+//! text.
 
 use std::ops::Range;
 
@@ -33,6 +34,8 @@ actions!(
         Copy,
         Submit,
         Cancel,
+        Up,
+        Down,
     ]
 );
 
@@ -57,6 +60,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, context),
         KeyBinding::new("enter", Submit, context),
         KeyBinding::new("escape", Cancel, context),
+        KeyBinding::new("up", Up, context),
+        KeyBinding::new("down", Down, context),
     ]
 }
 
@@ -67,6 +72,12 @@ pub enum InputEvent {
     Submitted(String),
     /// Escape was pressed.
     Cancelled,
+    /// The Person changed the text (typing, deleting, pasting, an input
+    /// method); carries the new text. Not sent for [`TextInput::set_text`].
+    Edited(String),
+    /// ↑ or ↓ was pressed.
+    Up,
+    Down,
 }
 
 pub struct TextInput {
@@ -122,12 +133,25 @@ impl TextInput {
         cx.notify();
     }
 
+    pub fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
     fn submit(&mut self, _: &Submit, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(InputEvent::Submitted(self.content.to_string()));
     }
 
     fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(InputEvent::Cancelled);
+    }
+
+    fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(InputEvent::Up);
+    }
+
+    fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(InputEvent::Down);
     }
 
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
@@ -435,6 +459,7 @@ impl EntityInputHandler for TextInput {
         self.selection_reversed = false;
         self.marked_range.take();
         window.notify_text_input_changed(&self.focus_handle);
+        cx.emit(InputEvent::Edited(self.content.to_string()));
         cx.notify();
     }
 
@@ -473,6 +498,7 @@ impl EntityInputHandler for TextInput {
         self.selection_reversed = false;
 
         window.notify_text_input_changed(&self.focus_handle);
+        cx.emit(InputEvent::Edited(self.content.to_string()));
         cx.notify();
     }
 
@@ -728,6 +754,8 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::up))
+            .on_action(cx.listener(Self::down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
