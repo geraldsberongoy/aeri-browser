@@ -65,7 +65,8 @@ Option 3.
 - A click runs `Extensions.triggerAction` for the window's active tab. The
   tab target is found by Chrome window id: the tab's own CEF DevTools
   session answers `Browser.getWindowForTarget`, and each Aeri tab is alone
-  in its Chrome window.
+  in its Chrome window. (Phase 9: that session stays watched for the tab's
+  life, with `Page` enabled, to report popups Chrome's blocker refuses.)
 - Tabs pages open (`window.open`, links with a target) get a new tab id in
   `OnBeforePopup`. Their popup browser view gets a tab window inside
   `OnPopupBrowserViewCreated` (CEF needs the widget before the callback

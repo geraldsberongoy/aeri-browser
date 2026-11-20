@@ -90,7 +90,7 @@ pub enum Signal {
         url: String,
     },
     /// A page tried to open `url` without the Person's gesture, and its site
-    /// is not always allowed: Aeri refused it (Phase 9).
+    /// does not always allow popups: Chrome refused it (Phase 9).
     PopupBlocked {
         opener: TabId,
         url: String,

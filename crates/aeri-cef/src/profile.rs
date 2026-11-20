@@ -3,11 +3,10 @@
 //!
 //! Each context is set up before it is reported ready (Phase 9):
 //! certificate exceptions from earlier runs are cleared (a proceed lasts
-//! until quit), and Chrome's popup blocker lets every popup through to
-//! `OnBeforePopup`, where Aeri decides and can tell the Person.
+//! until quit), and Chrome's own history recording is off (`profile.db`
+//! keeps the profile's history). Popups stay Chrome's decision; the sites
+//! always allowed them are Chrome's popup site settings.
 
-use std::cell::RefCell;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -16,23 +15,19 @@ use cef::rc::Rc as _;
 use cef::{
     CefString, CompletionCallback, ContentSettingTypes, ContentSettingValues,
     ImplCompletionCallback, ImplPreferenceManager, ImplPreferenceObserver, ImplRequestContext,
-    ImplRequestContextHandler, JsonWriterOptions, PreferenceObserver, Registration, RequestContext,
-    RequestContextHandler, RequestContextSettings, WrapCompletionCallback, WrapPreferenceObserver,
-    WrapRequestContextHandler, request_context_create_context, wrap_completion_callback,
-    wrap_preference_observer, wrap_request_context_handler, write_json,
+    ImplRequestContextHandler, ImplValue, JsonWriterOptions, PreferenceObserver, Registration,
+    RequestContext, RequestContextHandler, RequestContextSettings, WrapCompletionCallback,
+    WrapPreferenceObserver, WrapRequestContextHandler, request_context_create_context,
+    value_create, wrap_completion_callback, wrap_preference_observer, wrap_request_context_handler,
+    write_json,
 };
 
 use crate::Error;
 use crate::extensions::{self, Extension};
 
-/// Sites (`aeri_core::trust::site_of`) whose pages may open popups without a
-/// gesture, shared with the profile's tab clients.
-pub(crate) type PopupSites = Rc<RefCell<HashSet<String>>>;
-
 #[derive(Clone)]
 pub struct ProfileContext {
     pub(crate) context: RequestContext,
-    pub(crate) popup_sites: PopupSites,
     path: PathBuf,
 }
 
@@ -63,16 +58,30 @@ impl ProfileContext {
         let mut handler = AeriRequestContextHandler::new(Rc::new(on_initialized));
         let context = request_context_create_context(Some(&settings), Some(&mut handler))
             .ok_or(Error::RequestContext)?;
-        Ok(Self {
-            context,
-            popup_sites: PopupSites::default(),
-            path,
-        })
+        Ok(Self { context, path })
     }
 
-    /// Replaces the sites always allowed to open popups.
-    pub fn set_popup_sites(&self, sites: impl IntoIterator<Item = String>) {
-        *self.popup_sites.borrow_mut() = sites.into_iter().collect();
+    /// Whether Chrome lets `url`'s pages open popups without a gesture (the
+    /// site's popup setting is Allow).
+    pub fn popups_allowed(&self, url: &str) -> bool {
+        popups_allowed(&self.context, url)
+    }
+
+    /// Sets `url`'s site to always allow popups, or back to Chrome's default
+    /// (blocked without a gesture). Chrome's site settings show the choice.
+    pub fn set_popups_allowed(&self, url: &str, allowed: bool) {
+        let url = CefString::from(url);
+        let value = if allowed {
+            ContentSettingValues::ALLOW
+        } else {
+            ContentSettingValues::DEFAULT
+        };
+        self.context.set_content_setting(
+            Some(&url),
+            Some(&url),
+            ContentSettingTypes::POPUPS,
+            value,
+        );
     }
 
     /// Installed, enabled extensions with a toolbar action. Main thread,
@@ -128,13 +137,25 @@ wrap_request_context_handler! {
             let Some(context) = request_context else {
                 return;
             };
-            // Popups through to `OnBeforePopup`, where Aeri decides.
-            context.set_content_setting(
-                None,
-                None,
-                ContentSettingTypes::POPUPS,
-                ContentSettingValues::ALLOW,
-            );
+            // Aeri's `profile.db` history is the profile's only one, so
+            // clearing it clears everything the profile recorded.
+            if let Err(error) = set_bool_preference(context, "history.saving_disabled", true) {
+                tracing::warn!(error, "Chrome's history recording stays on");
+            }
+            // Popups need the Person's gesture unless a site is allowed; an
+            // allow-everything default (set by Phase 9's first build, or in
+            // Chrome's settings) goes back to Chrome's default.
+            if context.content_setting(None, None, ContentSettingTypes::POPUPS)
+                == ContentSettingValues::ALLOW
+            {
+                tracing::info!("default popup setting reset from Allow");
+                context.set_content_setting(
+                    None,
+                    None,
+                    ContentSettingTypes::POPUPS,
+                    ContentSettingValues::DEFAULT,
+                );
+            }
             // Ready only once earlier runs' proceeds are gone, so no page of
             // this profile can load past a warning without a new click.
             let mut done = CertificatesCleared::new(self.on_initialized.clone());
@@ -153,5 +174,45 @@ wrap_completion_callback! {
             tracing::debug!("certificate exceptions cleared");
             (self.on_initialized)();
         }
+    }
+}
+
+/// Whether the site setting lets `url`'s pages open popups without a gesture.
+pub(crate) fn popups_allowed(context: &RequestContext, url: &str) -> bool {
+    let url = CefString::from(url);
+    context.content_setting(Some(&url), Some(&url), ContentSettingTypes::POPUPS)
+        == ContentSettingValues::ALLOW
+}
+
+/// Sets a boolean preference of the profile. cef-rs's `set_preference`
+/// returned false with an empty error string and with none (Observed), while
+/// the same call made directly with a zeroed error string succeeds, so this
+/// calls CEF directly.
+fn set_bool_preference(context: &RequestContext, name: &str, value: bool) -> Result<(), String> {
+    let cef_value = value_create().ok_or("no CEF value")?;
+    cef_value.set_bool(value.into());
+    let name = CefString::from(name);
+    let manager = ImplPreferenceManager::get_raw(context);
+    // SAFETY: `manager` is the live context's preference manager and is
+    // used only during this call. CEF takes the value's reference added
+    // here, and `error` is a zeroed string CEF may fill; it is cleared
+    // before returning.
+    unsafe {
+        let set = (*manager).set_preference.ok_or("no set_preference")?;
+        let mut error: cef::sys::cef_string_t = std::mem::zeroed();
+        cef_value.add_ref();
+        let done = set(
+            manager,
+            (&name).into(),
+            ImplValue::get_raw(&cef_value),
+            &mut error,
+        );
+        let reason = if error.str_.is_null() {
+            String::new()
+        } else {
+            String::from_utf16_lossy(std::slice::from_raw_parts(error.str_, error.length))
+        };
+        cef::sys::cef_string_utf16_clear(&mut error);
+        if done == 0 { Err(reason) } else { Ok(()) }
     }
 }

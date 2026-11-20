@@ -17,7 +17,9 @@ pub fn site_of(url: &str) -> Option<String> {
 
 /// Whether a page may open a popup (stage 1: only in response to the
 /// Person's click or key press). Without a gesture, only a site the Person
-/// always allows may, and Aeri's and extensions' own pages.
+/// always allows may, and Aeri's and extensions' own pages. Chrome's popup
+/// blocker enforces this rule with the profile's popup site settings; Aeri
+/// uses it to tell when Chrome refused a popup, which Chrome does silently.
 pub fn popup_allowed(
     user_gesture: bool,
     opener_url: &str,

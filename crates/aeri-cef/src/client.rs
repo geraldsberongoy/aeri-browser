@@ -5,24 +5,21 @@
 
 use aeri_core::engine::Event;
 use aeri_core::ids::TabId;
-use aeri_core::trust;
 use cef::rc::Rc as _;
 use cef::{
-    Browser, CefString, Client, DisplayHandler, DownloadHandler, Errorcode, Frame, ImplBrowser,
-    ImplClient, ImplDisplayHandler, ImplFrame, ImplKeyboardHandler, ImplLifeSpanHandler,
-    ImplLoadHandler, ImplRequestHandler, KeyEvent, KeyEventType, KeyboardHandler, LifeSpanHandler,
-    LoadHandler, RequestHandler, TerminationStatus, WrapClient, WrapDisplayHandler,
-    WrapKeyboardHandler, WrapLifeSpanHandler, WrapLoadHandler, WrapRequestHandler, wrap_client,
-    wrap_display_handler, wrap_keyboard_handler, wrap_life_span_handler, wrap_load_handler,
-    wrap_request_handler,
+    Browser, CefString, Client, DisplayHandler, DownloadHandler, Errorcode, Frame, ImplClient,
+    ImplDisplayHandler, ImplFrame, ImplKeyboardHandler, ImplLifeSpanHandler, ImplLoadHandler,
+    ImplRequestHandler, KeyEvent, KeyEventType, KeyboardHandler, LifeSpanHandler, LoadHandler,
+    RequestHandler, TerminationStatus, WrapClient, WrapDisplayHandler, WrapKeyboardHandler,
+    WrapLifeSpanHandler, WrapLoadHandler, WrapRequestHandler, wrap_client, wrap_display_handler,
+    wrap_keyboard_handler, wrap_life_span_handler, wrap_load_handler, wrap_request_handler,
 };
 
 use crate::downloads::download_handler;
-use crate::profile::PopupSites;
 use crate::{Shortcut, Signal, SignalSink};
 
-pub(crate) fn tab_client(tab: TabId, sink: SignalSink, popup_sites: PopupSites) -> Client {
-    TabClient::new(tab, sink, popup_sites)
+pub(crate) fn tab_client(tab: TabId, sink: SignalSink) -> Client {
+    TabClient::new(tab, sink)
 }
 
 fn emit(sink: &SignalSink, event: Event) {
@@ -41,7 +38,6 @@ wrap_client! {
     struct TabClient {
         tab: TabId,
         sink: SignalSink,
-        popup_sites: PopupSites,
     }
 
     impl Client {
@@ -58,7 +54,7 @@ wrap_client! {
         }
 
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
-            Some(TabLifeSpanHandler::new(self.tab, self.sink.clone(), self.popup_sites.clone()))
+            Some(TabLifeSpanHandler::new(self.tab, self.sink.clone()))
         }
 
         fn download_handler(&self) -> Option<DownloadHandler> {
@@ -199,7 +195,6 @@ wrap_life_span_handler! {
     struct TabLifeSpanHandler {
         tab: TabId,
         sink: SignalSink,
-        popup_sites: PopupSites,
     }
 
     impl LifeSpanHandler {
@@ -213,18 +208,18 @@ wrap_life_span_handler! {
 
         // A popup the page may open becomes an Aeri tab: the browser gets
         // its own tab client now, and the window code hands its view to the
-        // application (`Signal::TabOpened`). Without the Person's gesture
-        // only an always-allowed site may open one (Phase 9); a refused one
-        // is reported so the Person can open it.
+        // application (`Signal::TabOpened`). Chrome's popup blocker has
+        // already refused popups without the Person's gesture (Phase 9; the
+        // window code reports those).
         fn on_before_popup(
             &self,
-            browser: Option<&mut Browser>,
+            _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
             popup_id: ::std::os::raw::c_int,
             target_url: Option<&CefString>,
             _target_frame_name: Option<&CefString>,
             target_disposition: cef::WindowOpenDisposition,
-            user_gesture: ::std::os::raw::c_int,
+            _user_gesture: ::std::os::raw::c_int,
             _popup_features: Option<&cef::PopupFeatures>,
             _window_info: Option<&mut cef::WindowInfo>,
             client: Option<&mut Option<Client>>,
@@ -233,19 +228,9 @@ wrap_life_span_handler! {
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             let url = text(target_url);
-            let opener_url = browser
-                .and_then(|browser| browser.main_frame())
-                .map(|frame| CefString::from(&frame.url()).to_string())
-                .unwrap_or_default();
-            let sites = self.popup_sites.borrow();
-            if !trust::popup_allowed(user_gesture != 0, &opener_url, |site| sites.contains(site)) {
-                tracing::info!(opener = %self.tab, url, "popup without a gesture blocked");
-                (self.sink)(Signal::PopupBlocked { opener: self.tab, url });
-                return 1;
-            }
             let Some(client) = client else { return 1 };
             let tab = TabId::next();
-            *client = Some(tab_client(tab, self.sink.clone(), self.popup_sites.clone()));
+            *client = Some(tab_client(tab, self.sink.clone()));
             tracing::debug!(opener = %self.tab, %tab, url, "popup becomes a tab");
             crate::window::expect_popup(crate::window::PendingPopup {
                 popup_id,

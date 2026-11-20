@@ -68,13 +68,15 @@ session, quit), `profile_db/` (workspace, closed, history, bookmarks),
 `mac/frame.rs`, `window_frame/sidebar.rs`, `text_input/element.rs` and the
 isolation harness's `devtools`/`site`; no file is over ~630 lines. Phase 9
 (trust) is built: certificate exceptions cleared before a profile is ready,
-popups decided in `OnBeforePopup` (gesture or always-allowed site, migration
-4) with a Popup blocked notice, downloads placed by `aeri-core::trust`
-(`aeri-cef::downloads`) with a strip menu, Clear History… by range, Chrome's
-settings pages for site settings and clearing, Open in Default Browser;
-isolation 13/13 and live checks. Chrome's own history keeps recording (CEF
-refuses `history.saving_disabled`). Evidence:
-`.monozukuri/specifications/phase-9-trust.md`. Next: Phase 10 (passwords).
+Chrome's popup blocker kept (allowed sites in its site settings) with
+refused popups reported from each tab's `Page.windowOpen` as a Popup blocked
+notice, downloads placed by `aeri-core::trust` (`aeri-cef::downloads`) with a
+strip menu, Chrome's own history off (`history.saving_disabled` set through
+CEF's C API: cef-rs's `set_preference` fails), Clear History… by range,
+Chrome's settings pages for site settings and clearing, Open in Default
+Browser, usage descriptions for macOS prompts; isolation 13/13 and live
+checks. Evidence: `.monozukuri/specifications/phase-9-trust.md`. Next:
+Phase 10 (passwords).
 
 ## Stack in one line
 Rust · CEF (Chromium) via cef-rs, one frameless Chrome-style window per tab ·

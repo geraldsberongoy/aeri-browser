@@ -15,6 +15,7 @@ use std::rc::{Rc, Weak};
 
 use aeri_core::engine::Command;
 use aeri_core::ids::TabId;
+use aeri_core::trust;
 use cef::rc::Rc as _;
 use cef::{
     Browser, BrowserSettings, BrowserView, BrowserViewDelegate, CefString, ChromeToolbarType,
@@ -27,7 +28,8 @@ use cef::{
 };
 
 use crate::client::tab_client;
-use crate::{DevTools, Error, ProfileContext, SignalSink};
+use crate::profile::popups_allowed;
+use crate::{DevTools, Error, ProfileContext, Signal, SignalSink};
 
 /// AppKit-level hooks for the application's window frame. Called on the main
 /// thread from CEF callbacks; implementations may touch AppKit but must not
@@ -53,14 +55,15 @@ struct State {
     /// Chrome's id for this tab's Chrome window, read once from the page's
     /// own DevTools session when the window opens, plus what waits for it.
     chrome_window_id: Cell<Option<i64>>,
-    window_id_request: RefCell<Option<WindowIdRequest>>,
+    window_id_request: RefCell<Option<Vec<(String, DevTools)>>>,
+    /// The page's own DevTools session, watched for the tab's life: the
+    /// window id answer and popups Chrome refused.
+    devtools: RefCell<Option<Registration>>,
 }
 
-struct WindowIdRequest {
-    _registration: Option<Registration>,
-    message_id: i32,
-    waiting: Vec<(String, DevTools)>,
-}
+/// Message ids on a tab's own DevTools session (only Aeri sends on it).
+const PAGE_ENABLE: i32 = 1;
+const WINDOW_FOR_TARGET: i32 = 2;
 
 /// A popup a tab's page asked for, between `OnBeforePopup` and the creation
 /// of its browser view.
@@ -119,7 +122,7 @@ impl TabWindow {
         sink: SignalSink,
         observer: Rc<dyn TabObserver>,
     ) -> Result<Self, Error> {
-        let mut client = tab_client(tab, sink.clone(), context.popup_sites.clone());
+        let mut client = tab_client(tab, sink.clone());
         let mut view_delegate = AeriBrowserViewDelegate::new();
         let mut request_context = context.context.clone();
         let view = browser_view_create(
@@ -159,6 +162,7 @@ impl TabWindow {
             toolbar: RefCell::default(),
             chrome_window_id: Cell::default(),
             window_id_request: RefCell::default(),
+            devtools: RefCell::default(),
         });
         let mut delegate = AeriWindowDelegate::new(state.clone());
         window_create_top_level(Some(&mut delegate)).ok_or(Error::BrowserView)?;
@@ -218,8 +222,8 @@ impl TabWindow {
             return;
         }
         let waiting = (extension_id.to_owned(), devtools.clone());
-        if let Some(request) = &mut *self.state.window_id_request.borrow_mut() {
-            request.waiting.push(waiting);
+        if let Some(waiting_list) = &mut *self.state.window_id_request.borrow_mut() {
+            waiting_list.push(waiting);
             return;
         }
         request_window_id(&self.state, vec![waiting]);
@@ -234,27 +238,30 @@ impl TabWindow {
     }
 }
 
+/// Watches the page's own DevTools session for the tab's life. `Page`
+/// events report `window.open` calls, including those Chrome's popup blocker
+/// refuses before any CEF callback sees them.
+fn watch_devtools(state: &Rc<State>) {
+    let Some(host) = state.view.browser().and_then(|browser| browser.host()) else {
+        tracing::warn!(tab = ?state.tab, "no browser to watch");
+        return;
+    };
+    let mut observer = TabDevToolsObserver::new(Rc::downgrade(state));
+    *state.devtools.borrow_mut() = host.add_dev_tools_message_observer(Some(&mut observer));
+    host.execute_dev_tools_method(PAGE_ENABLE, Some(&CefString::from("Page.enable")), None);
+}
+
 /// Asks the page's own DevTools session for its Chrome window id
-/// (`WindowIdObserver` takes the answer). `waiting` actions run once known.
+/// (`TabDevToolsObserver` takes the answer). `waiting` actions run once known.
 fn request_window_id(state: &Rc<State>, waiting: Vec<(String, DevTools)>) {
     let Some(host) = state.view.browser().and_then(|browser| browser.host()) else {
         tracing::warn!(tab = ?state.tab, "no browser to read its Chrome window id");
         return;
     };
-    let mut observer = WindowIdObserver::new(Rc::downgrade(state));
-    let registration = host.add_dev_tools_message_observer(Some(&mut observer));
-    // The request is stored before the call: the result may arrive
-    // re-entrantly.
-    *state.window_id_request.borrow_mut() = Some(WindowIdRequest {
-        _registration: registration,
-        message_id: 0,
-        waiting,
-    });
+    // Stored before the call: the result may arrive re-entrantly.
+    *state.window_id_request.borrow_mut() = Some(waiting);
     let method = CefString::from("Browser.getWindowForTarget");
-    let message_id = host.execute_dev_tools_method(0, Some(&method), None);
-    if let Some(request) = &mut *state.window_id_request.borrow_mut() {
-        request.message_id = message_id;
-    }
+    host.execute_dev_tools_method(WINDOW_FOR_TARGET, Some(&method), None);
 }
 
 /// Lays the hidden toolbar along the window's top edge.
@@ -269,7 +276,7 @@ fn place_toolbar(toolbar: &View, window_bounds: &Rect) {
 }
 
 wrap_dev_tools_message_observer! {
-    struct WindowIdObserver {
+    struct TabDevToolsObserver {
         state: Weak<State>,
     }
 
@@ -281,11 +288,11 @@ wrap_dev_tools_message_observer! {
             success: ::std::os::raw::c_int,
             result: Option<&[u8]>,
         ) {
+            if message_id != WINDOW_FOR_TARGET {
+                return;
+            }
             let Some(state) = self.state.upgrade() else { return };
-            let request = state.window_id_request.borrow_mut().take_if(|request| {
-                request.message_id == 0 || request.message_id == message_id
-            });
-            let Some(request) = request else { return };
+            let Some(waiting) = state.window_id_request.borrow_mut().take() else { return };
             let window_id = (success != 0)
                 .then_some(result)
                 .flatten()
@@ -297,9 +304,37 @@ wrap_dev_tools_message_observer! {
             };
             state.chrome_window_id.set(Some(window_id));
             crate::signals::watch(window_id, state.tab, state.sink.clone());
-            for (extension_id, devtools) in request.waiting {
+            for (extension_id, devtools) in waiting {
                 devtools.trigger_extension_action(window_id, extension_id);
             }
+        }
+
+        fn on_dev_tools_event(
+            &self,
+            browser: Option<&mut Browser>,
+            method: Option<&CefString>,
+            params: Option<&[u8]>,
+        ) {
+            if method.is_none_or(|method| method.to_string() != "Page.windowOpen") {
+                return;
+            }
+            let (Some(state), Some(browser)) = (self.state.upgrade(), browser) else { return };
+            let Some(params) = params.and_then(|json| serde_json::from_slice::<serde_json::Value>(json).ok()) else {
+                return;
+            };
+            let user_gesture = params["userGesture"].as_bool().unwrap_or(false);
+            let url = params["url"].as_str().unwrap_or_default().to_owned();
+            let opener_url = browser
+                .main_frame()
+                .map(|frame| CefString::from(&frame.url()).to_string())
+                .unwrap_or_default();
+            let Some(context) = browser.host().and_then(|host| host.request_context()) else { return };
+            // Chrome's own rule: what it allows reaches `OnBeforePopup`.
+            if trust::popup_allowed(user_gesture, &opener_url, |site| popups_allowed(&context, site)) {
+                return;
+            }
+            tracing::info!(opener = %state.tab, url, "popup without a gesture blocked");
+            (state.sink)(Signal::PopupBlocked { opener: state.tab, url });
         }
     }
 }
@@ -349,6 +384,7 @@ wrap_window_delegate! {
                 BY_BROWSER.with_borrow_mut(|tabs| tabs.insert(browser.identifier(), state));
             }
             // Known early, for tab signals and extension actions alike.
+            watch_devtools(&self.state);
             request_window_id(&self.state, Vec::new());
             let observer = self.state.observer.borrow().clone();
             observer.created(self.state.tab, window.window_handle());

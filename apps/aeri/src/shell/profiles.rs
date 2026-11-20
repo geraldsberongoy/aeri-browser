@@ -111,12 +111,6 @@ impl Shell {
             let _ = tx.unbounded_send(AppMsg::ExtensionsChanged { profile });
         });
         open.extensions = open.context.extensions();
-        if let Some(db) = &open.db {
-            match db.popup_sites() {
-                Ok(sites) => open.context.set_popup_sites(sites),
-                Err(err) => tracing::warn!(%err, "could not read the popup choices"),
-            }
-        }
         self.load_workspace(profile);
         let Some(open) = self.open.get_mut(&profile) else {
             return;

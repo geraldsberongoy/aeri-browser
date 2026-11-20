@@ -50,6 +50,43 @@ fn bundle() -> Result<()> {
         let entry = entry?;
         std::fs::copy(entry.path(), signals.join(entry.file_name()))?;
     }
+    // What macOS shows when a site the Person allowed first uses a device
+    // (cef-rs writes the bare app name; location had none).
+    let plist = app.join("Contents/Info.plist");
+    for (key, text) in [
+        (
+            "NSCameraUsageDescription",
+            "Websites you allow can then use your camera.",
+        ),
+        (
+            "NSMicrophoneUsageDescription",
+            "Websites you allow can then use your microphone.",
+        ),
+        (
+            "NSLocationUsageDescription",
+            "Websites you allow can then know your location.",
+        ),
+        (
+            "NSLocationWhenInUseUsageDescription",
+            "Websites you allow can then know your location.",
+        ),
+        (
+            "NSBluetoothAlwaysUsageDescription",
+            "Websites you allow can then connect to Bluetooth devices.",
+        ),
+        (
+            "NSWebBrowserPublicKeyCredentialUsageDescription",
+            "Websites can then let you sign in with a passkey.",
+        ),
+    ] {
+        let status = std::process::Command::new("plutil")
+            .args(["-replace", key, "-string", text])
+            .arg(&plist)
+            .status()?;
+        if !status.success() {
+            bail!("could not set {key}: {status}");
+        }
+    }
     // Ad-hoc signature over the whole bundle (helpers and framework
     // included); the per-binary linker signatures leave it unverifiable.
     // Hardened runtime stays off for development builds.

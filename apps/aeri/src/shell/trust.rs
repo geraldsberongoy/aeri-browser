@@ -183,7 +183,8 @@ impl Shell {
     }
 
     /// Always allows (or no longer allows) popups from the tab's site, for
-    /// its profile. Allowing also opens the popup that was refused.
+    /// its profile: Chrome's popup site setting, which Site Settings shows.
+    /// Allowing also opens the popup that was refused.
     pub(super) fn allow_popups(&mut self, window_id: u64, tab: TabId, allowed: bool, cx: &mut App) {
         let Some(profile) = self.window(window_id).map(|w| w.profile) else {
             return;
@@ -199,15 +200,7 @@ impl Shell {
         let Some(open) = self.open.get(&profile) else {
             return;
         };
-        if let Some(db) = &open.db {
-            let saved = db
-                .set_popups_allowed(&site, allowed)
-                .and_then(|()| db.popup_sites());
-            match saved {
-                Ok(sites) => open.context.set_popup_sites(sites),
-                Err(err) => tracing::warn!(%err, "could not save the popup choice"),
-            }
-        }
+        open.context.set_popups_allowed(&site, allowed);
         tracing::info!(%profile, site, allowed, "popups from site");
         if allowed {
             self.open_blocked_popup(window_id, tab, cx);
@@ -222,9 +215,7 @@ impl Shell {
         };
         self.open
             .get(&profile)
-            .and_then(|open| open.db.as_ref())
-            .and_then(|db| db.popup_sites().ok())
-            .is_some_and(|sites| sites.contains(&site))
+            .is_some_and(|open| open.context.popups_allowed(&site))
     }
 
     /// A download started, progressed or ended.
