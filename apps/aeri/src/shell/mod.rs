@@ -25,6 +25,7 @@
 //! goes, it turns dormant and the context is released. Aeri keeps running
 //! with no windows, like other Mac browsers.
 
+mod appearance;
 mod bar;
 mod favourites;
 mod library;
@@ -215,6 +216,8 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
 
     let (tx, mut rx) = unbounded::<AppMsg>();
     SHELL_TX.with_borrow_mut(|slot| *slot = Some(tx.clone()));
+    // Before any window opens: every view paints from the theme.
+    appearance::start(&db, tx.clone(), cx);
     let runtime_config = RuntimeConfig {
         root_cache_path: root_cache_path.clone(),
         log_file: Some(config.data_dir.join("chromium.log")),
@@ -445,6 +448,7 @@ impl Shell {
             AppMsg::RestCheck => self.rest_check(cx),
             AppMsg::MemoryPressure(level) => self.memory_pressure(level, cx),
             AppMsg::Resources(msg) => self.resources_msg(msg, cx),
+            AppMsg::SystemAppearanceChanged => self.system_appearance_changed(cx),
             AppMsg::Quit => self.quit(cx),
         }
         self.quitting && self.windows.is_empty()

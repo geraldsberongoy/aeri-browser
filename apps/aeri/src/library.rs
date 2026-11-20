@@ -4,16 +4,18 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use aeri_core::appearance::Tokens;
 use aeri_core::ids::BookmarkId;
 use aeri_core::profile_db::{Bookmark, HistoryEntry};
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, MouseButton,
-    MouseDownEvent, SharedString, Stateful, Window, div, prelude::*, px, rgb, rgba,
+    MouseDownEvent, SharedString, Stateful, Window, div, prelude::*, px,
 };
 
 use crate::shell::AppMsg;
 use crate::text_input::{InputEvent, TextInput};
+use crate::theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
@@ -186,7 +188,13 @@ impl Library {
         }
     }
 
-    fn bookmark_row(&self, ix: usize, bookmark: &Bookmark, cx: &mut Context<Self>) -> AnyElement {
+    fn bookmark_row(
+        &self,
+        ix: usize,
+        bookmark: &Bookmark,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let item = LibraryItem::Bookmark(bookmark.clone());
         let url = bookmark.url.clone();
         let renaming = self
@@ -199,7 +207,7 @@ impl Library {
                 .flex_1()
                 .px(px(6.))
                 .rounded(px(5.))
-                .bg(rgba(0xffffff14))
+                .bg(theme::c(t.field))
                 .child(input)
                 .into_any_element(),
             None => div()
@@ -218,7 +226,7 @@ impl Library {
                 }))
                 .into_any_element(),
         };
-        row(("bookmark", ix))
+        row(("bookmark", ix), t)
             .pl(px(10. + 18. * bookmark.depth as f32))
             .when_some(url.clone(), |row, url| {
                 row.on_click(cx.listener(move |this, _, _, _| {
@@ -227,11 +235,17 @@ impl Library {
             })
             .on_mouse_down(MouseButton::Right, self.menu(item, cx))
             .child(title)
-            .when_some(url, |row, url| row.child(muted(url)))
+            .when_some(url, |row, url| row.child(muted(url, t)))
             .into_any_element()
     }
 
-    fn history_row(&self, ix: usize, entry: &HistoryEntry, cx: &mut Context<Self>) -> AnyElement {
+    fn history_row(
+        &self,
+        ix: usize,
+        entry: &HistoryEntry,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let item = LibraryItem::History(entry.clone());
         let url = entry.url.clone();
         let title = if entry.title.is_empty() {
@@ -239,7 +253,7 @@ impl Library {
         } else {
             entry.title.clone()
         };
-        row(("history", ix))
+        row(("history", ix), t)
             .pl(px(10.))
             .on_click(cx.listener(move |this, _, _, _| {
                 this.send(LibraryMsg::Open(url.clone()));
@@ -254,8 +268,8 @@ impl Library {
                     .whitespace_nowrap()
                     .child(SharedString::from(title)),
             )
-            .child(muted(entry.url.clone()))
-            .child(muted(when(entry.last_visit_at)))
+            .child(muted(entry.url.clone(), t))
+            .child(muted(when(entry.last_visit_at), t))
             .into_any_element()
     }
 
@@ -273,7 +287,14 @@ impl Library {
         })
     }
 
-    fn tab(&self, section: Section, label: &'static str, cx: &mut Context<Self>) -> AnyElement {
+    fn tab(
+        &self,
+        section: Section,
+        label: &'static str,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = *t;
         div()
             .id(label)
             .px(px(12.))
@@ -281,11 +302,11 @@ impl Library {
             .rounded(px(7.))
             .text_size(px(13.))
             .when(self.section == section, |d| {
-                d.bg(rgba(0xffffff1f)).text_color(rgb(0xf2f3f5))
+                d.bg(theme::c(t.selected)).text_color(theme::c(t.text))
             })
             .when(self.section != section, |d| {
-                d.text_color(rgb(0x9a9ca3))
-                    .hover(|s| s.bg(rgba(0xffffff0f)))
+                d.text_color(theme::c(t.text_tertiary))
+                    .hover(|s| s.bg(theme::c(t.hover)))
             })
             .on_click(cx.listener(move |this, _, _, cx| this.select(section, cx)))
             .child(label)
@@ -293,19 +314,21 @@ impl Library {
     }
 }
 
-fn header_button(id: &'static str, label: &'static str) -> Stateful<gpui::Div> {
+fn header_button(id: &'static str, label: &'static str, t: &Tokens) -> Stateful<gpui::Div> {
+    let t = *t;
     div()
         .id(id)
         .px(px(12.))
         .py(px(4.))
         .rounded(px(7.))
         .text_size(px(13.))
-        .bg(rgba(0xffffff12))
-        .hover(|s| s.bg(rgba(0xffffff1f)))
+        .bg(theme::c(t.hover))
+        .hover(|s| s.bg(theme::c(t.pressed)))
         .child(label)
 }
 
-fn row(id: impl Into<gpui::ElementId>) -> Stateful<gpui::Div> {
+fn row(id: impl Into<gpui::ElementId>, t: &Tokens) -> Stateful<gpui::Div> {
+    let t = *t;
     div()
         .id(id)
         .flex()
@@ -316,11 +339,11 @@ fn row(id: impl Into<gpui::ElementId>) -> Stateful<gpui::Div> {
         .pr(px(10.))
         .rounded(px(7.))
         .text_size(px(13.))
-        .text_color(rgb(0xe4e5e9))
-        .hover(|style| style.bg(rgba(0xffffff0f)))
+        .text_color(theme::c(t.text))
+        .hover(|style| style.bg(theme::c(t.hover)))
 }
 
-fn muted(text: String) -> impl IntoElement {
+fn muted(text: String, t: &Tokens) -> impl IntoElement {
     div()
         .flex_none()
         .max_w(px(280.))
@@ -328,7 +351,7 @@ fn muted(text: String) -> impl IntoElement {
         .text_ellipsis()
         .whitespace_nowrap()
         .text_size(px(12.))
-        .text_color(rgb(0x8a8c93))
+        .text_color(theme::c(t.text_tertiary))
         .child(SharedString::from(text))
 }
 
@@ -352,20 +375,21 @@ impl Focusable for Library {
 
 impl Render for Library {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme::tokens(cx);
         let rows: Vec<AnyElement> = match self.section {
             Section::Bookmarks => self
                 .bookmarks
                 .clone()
                 .iter()
                 .enumerate()
-                .map(|(ix, b)| self.bookmark_row(ix, b, cx))
+                .map(|(ix, b)| self.bookmark_row(ix, b, &t, cx))
                 .collect(),
             Section::History => self
                 .history
                 .clone()
                 .iter()
                 .enumerate()
-                .map(|(ix, e)| self.history_row(ix, e, cx))
+                .map(|(ix, e)| self.history_row(ix, e, &t, cx))
                 .collect(),
         };
         let empty = match self.section {
@@ -377,24 +401,26 @@ impl Render for Library {
             .flex_none()
             .items_center()
             .gap(px(6.))
-            .child(self.tab(Section::Bookmarks, "Bookmarks", cx))
-            .child(self.tab(Section::History, "History", cx))
+            .child(self.tab(Section::Bookmarks, "Bookmarks", &t, cx))
+            .child(self.tab(Section::History, "History", &t, cx))
             .child(div().flex_1())
             .when(self.section == Section::Bookmarks, |header| {
                 header.child(
-                    header_button("new-folder", "New Folder")
+                    header_button("new-folder", "New Folder", &t)
                         .on_click(cx.listener(|this, _, _, _| this.send(LibraryMsg::NewFolder))),
                 )
             })
             .when(self.section == Section::History, |header| {
-                header.child(header_button("clear-history", "Clear History…").on_click(
-                    cx.listener(|this, event: &ClickEvent, _, _| {
-                        this.send(LibraryMsg::ClearMenu {
-                            x: f32::from(event.position().x),
-                            y: f32::from(event.position().y),
-                        })
-                    }),
-                ))
+                header.child(
+                    header_button("clear-history", "Clear History…", &t).on_click(cx.listener(
+                        |this, event: &ClickEvent, _, _| {
+                            this.send(LibraryMsg::ClearMenu {
+                                x: f32::from(event.position().x),
+                                y: f32::from(event.position().y),
+                            })
+                        },
+                    )),
+                )
             });
         div()
             .size_full()
@@ -404,12 +430,12 @@ impl Render for Library {
             .pt(px(36.))
             .px(px(16.))
             .pb(px(12.))
-            .bg(rgb(0x1d1e22))
-            .text_color(rgb(0xf2f3f5))
+            .bg(theme::c(t.panel))
+            .text_color(theme::c(t.text))
             .child(
                 div()
                     .text_size(px(12.))
-                    .text_color(rgb(0x9a9ca3))
+                    .text_color(theme::c(t.text_tertiary))
                     .child(SharedString::from(self.profile_name.clone())),
             )
             .child(header)
@@ -421,9 +447,9 @@ impl Render for Library {
                     .flex()
                     .items_center()
                     .rounded(px(7.))
-                    .bg(rgba(0xffffff0d))
+                    .bg(theme::c(t.field))
                     .border_1()
-                    .border_color(rgba(0xffffff14))
+                    .border_color(theme::c(t.separator))
                     .text_size(px(13.))
                     .line_height(px(18.))
                     .child(self.filter.clone()),
@@ -442,7 +468,7 @@ impl Render for Library {
                             div()
                                 .p(px(10.))
                                 .text_size(px(13.))
-                                .text_color(rgb(0x8a8c93))
+                                .text_color(theme::c(t.text_tertiary))
                                 .child(empty),
                         )
                     })

@@ -7,17 +7,18 @@
 use std::time::Duration;
 
 use aeri_cef::{Extension, Shortcut};
+use aeri_core::appearance::Tokens;
 use aeri_core::tab::{LoadState, Tab};
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     Animation, AnimationExt, AnyElement, Context, Entity, FocusHandle, Focusable, KeyBinding,
-    ScrollHandle, SharedString, Window, actions, div, ease_out_quint, img, prelude::*, px, rgb,
-    rgba,
+    ScrollHandle, SharedString, Window, actions, div, ease_out_quint, img, prelude::*, px,
 };
 
 use crate::mac::{MAX_VISIBLE_SUGGESTIONS, SUGGESTION_CHROME, SUGGESTION_HEIGHT};
 use crate::shell::{AppMsg, BarRow, Pick};
 use crate::text_input::{InputEvent, TextInput};
+use crate::theme;
 
 actions!(
     address_bar,
@@ -253,6 +254,7 @@ impl AddressBar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = extension.id.clone();
+        let t = theme::tokens(cx);
         let icon = match &extension.icon {
             Some(path) => img(path.clone()).size(px(16.)).into_any_element(),
             None => div()
@@ -268,8 +270,8 @@ impl AddressBar {
             .justify_center()
             .size(px(28.))
             .rounded(px(8.))
-            .hover(|style| style.bg(rgba(0xffffff1a)))
-            .active(|style| style.bg(rgba(0xffffff26)))
+            .hover(move |style| style.bg(theme::c(t.hover)))
+            .active(move |style| style.bg(theme::c(t.pressed)))
             .on_click(cx.listener(move |this, _, _, _| {
                 this.send(AppMsg::ExtensionAction {
                     window: this.window_id,
@@ -281,6 +283,7 @@ impl AddressBar {
     }
 
     fn star(&self, bookmarked: bool, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme::tokens(cx);
         div()
             .id("bookmark")
             .flex()
@@ -290,11 +293,11 @@ impl AddressBar {
             .size(px(28.))
             .rounded(px(8.))
             .text_color(if bookmarked {
-                rgb(0xf5c542)
+                theme::c(t.accent)
             } else {
-                rgb(0x8a8c93)
+                theme::c(t.text_tertiary)
             })
-            .hover(|style| style.bg(rgba(0xffffff1a)))
+            .hover(move |style| style.bg(theme::c(t.hover)))
             .on_click(cx.listener(|this, _, _, _| this.shortcut(Shortcut::ToggleBookmark)))
             .child(if bookmarked { "★" } else { "☆" })
             .into_any_element()
@@ -302,6 +305,7 @@ impl AddressBar {
 
     fn row(&self, ix: usize, row: &BarRow, cx: &mut Context<Self>) -> AnyElement {
         let pick = row.pick.clone();
+        let t = theme::tokens(cx);
         let muted = |text: &str| {
             div()
                 .flex_none()
@@ -310,7 +314,7 @@ impl AddressBar {
                 .text_ellipsis()
                 .whitespace_nowrap()
                 .text_size(px(12.))
-                .text_color(rgb(0x8a8c93))
+                .text_color(theme::c(t.text_tertiary))
                 .child(SharedString::from(text.to_owned()))
         };
         div()
@@ -323,10 +327,10 @@ impl AddressBar {
             .px(px(12.))
             .rounded(px(8.))
             .text_size(px(13.))
-            .text_color(rgb(0xe4e5e9))
-            .when(ix == self.selected, |row| row.bg(rgba(0xffffff1f)))
+            .text_color(theme::c(t.text))
+            .when(ix == self.selected, |row| row.bg(theme::c(t.selected)))
             .when(ix != self.selected, |row| {
-                row.hover(|style| style.bg(rgba(0xffffff0f)))
+                row.hover(move |style| style.bg(theme::c(t.hover)))
             })
             .on_click(cx.listener(move |this, _, _, _| this.pick(pick.clone())))
             .child(
@@ -350,12 +354,12 @@ impl AddressBar {
         });
     }
 
-    fn status_color(&self) -> u32 {
-        match self.load {
-            LoadState::Loading => 0x7aa2ff,
-            LoadState::Failed { .. } | LoadState::Crashed { .. } => 0xff6b6b,
-            _ => 0x5c5f66,
-        }
+    fn status_color(&self, t: &Tokens) -> gpui::Rgba {
+        theme::c(match self.load {
+            LoadState::Loading => t.accent,
+            LoadState::Failed { .. } | LoadState::Crashed { .. } => t.danger,
+            _ => t.text_disabled,
+        })
     }
 }
 
@@ -367,6 +371,7 @@ impl Focusable for AddressBar {
 
 impl Render for AddressBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme::tokens(cx);
         let mut buttons: Vec<AnyElement> = Vec::new();
         if let (Some(bookmarked), false) = (self.bookmarked, self.palette) {
             buttons.push(self.star(bookmarked, cx));
@@ -388,16 +393,16 @@ impl Render for AddressBar {
             .pl(px(14.))
             .pr(px(if buttons.is_empty() { 14. } else { 6. }))
             .rounded(px(12.))
-            .bg(rgba(0x1d1e22f2))
+            .bg(theme::c(t.raised))
             .border_1()
-            .border_color(rgba(0xffffff1f))
-            .text_color(rgb(0xf2f3f5))
+            .border_color(theme::c(t.card_border))
+            .text_color(theme::c(t.text))
             .text_size(px(14.))
             .line_height(px(20.))
             .child(if self.palette {
                 div()
                     .flex_none()
-                    .text_color(rgb(0x8a8c93))
+                    .text_color(theme::c(t.text_tertiary))
                     .child("›")
                     .into_any_element()
             } else {
@@ -405,7 +410,7 @@ impl Render for AddressBar {
                     .flex_none()
                     .size(px(8.))
                     .rounded_full()
-                    .bg(rgb(self.status_color()))
+                    .bg(self.status_color(&t))
                     .into_any_element()
             })
             .child(div().flex_1().min_w_0().child(self.input.clone()))
@@ -498,9 +503,9 @@ impl Render for AddressBar {
                             + SUGGESTION_CHROME as f32
                             - 6.))
                         .rounded(px(12.))
-                        .bg(rgb(0x1d1e22))
+                        .bg(theme::c(t.raised))
                         .border_1()
-                        .border_color(rgba(0xffffff1f))
+                        .border_color(theme::c(t.card_border))
                         .overflow_y_scroll()
                         .track_scroll(&self.list)
                         .children(rows),

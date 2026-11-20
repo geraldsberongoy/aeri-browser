@@ -172,6 +172,8 @@ pub enum AppMsg {
     /// macOS reported a change in memory pressure.
     MemoryPressure(Pressure),
     Resources(ResourceMsg),
+    /// macOS switched light/dark or an accessibility display setting.
+    SystemAppearanceChanged,
     Quit,
 }
 

@@ -2,6 +2,7 @@
 //! and what a pick does. Suggestions come only from the window's profile;
 //! nothing typed leaves the machine before a pick.
 
+use aeri_core::appearance::AppAppearance;
 use aeri_core::engine::Command;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
 use aeri_core::omnibox::{self, Destination};
@@ -29,6 +30,10 @@ pub enum Pick {
     Command(PaletteCommand),
     Space(SpaceId),
     Profile(ProfileId),
+    /// Light, dark, system or the theme's own.
+    Appearance(AppAppearance),
+    /// A bundled theme, by its place in `appearance::presets()`.
+    Theme(usize),
 }
 
 /// One row under the bar.
@@ -186,7 +191,7 @@ impl Shell {
             return;
         };
         let rows = if palette {
-            self.palette_rows(window_id, &text)
+            self.palette_rows(window_id, &text, cx)
         } else {
             self.address_rows(window_id, &text)
         };
@@ -289,6 +294,14 @@ impl Shell {
             Pick::Profile(profile) => {
                 self.hide_bar(window_id, cx);
                 self.show_profile(profile, cx);
+            }
+            Pick::Appearance(appearance) => {
+                self.hide_bar(window_id, cx);
+                self.set_app_appearance(appearance, cx);
+            }
+            Pick::Theme(index) => {
+                self.hide_bar(window_id, cx);
+                self.use_preset(index, cx);
             }
         }
     }

@@ -7,12 +7,14 @@ use aeri_core::store::{ACCENTS, Profile};
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, Focusable, FontWeight, PromptLevel, SharedString,
-    Stateful, Window, div, prelude::*, px, rgb, rgba,
+    Stateful, Window, div, prelude::*, px, rgb,
 };
 
 use crate::shell::AppMsg;
 use crate::text_input::{InputEvent, TextInput};
+use crate::theme;
 use crate::window_frame::avatar;
+use aeri_core::appearance::Tokens;
 
 /// A profile as the manager shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -173,6 +175,7 @@ impl ProfileManager {
         on_pick: impl Fn(&mut Self, u32, &mut Context<Self>) + Clone + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let t = theme::tokens(cx);
         div()
             .flex()
             .gap(px(6.))
@@ -184,9 +187,9 @@ impl ProfileManager {
                     .rounded_full()
                     .border_2()
                     .border_color(if accent == selected {
-                        rgb(0xf2f3f5)
+                        theme::c(t.text)
                     } else {
-                        rgba(0x00000000)
+                        theme::ca(t.text, 0.)
                     })
                     .p(px(2.))
                     .cursor_pointer()
@@ -196,6 +199,7 @@ impl ProfileManager {
     }
 
     fn profile_row(&self, ix: usize, row: &Row, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme::tokens(cx);
         let profile = row.listed.profile.clone();
         let id = profile.id;
         let can_delete = self.rows.len() > 1;
@@ -205,7 +209,7 @@ impl ProfileManager {
             .gap(px(12.))
             .p(px(12.))
             .rounded(px(10.))
-            .bg(rgb(0x26272c))
+            .bg(theme::c(t.inset))
             .child(avatar(&profile, 36.))
             .child(
                 div()
@@ -214,7 +218,7 @@ impl ProfileManager {
                     .flex_1()
                     .min_w_0()
                     .gap(px(6.))
-                    .child(field(row.name.clone()))
+                    .child(field(row.name.clone(), &t))
                     .child(self.swatches(
                         "accent",
                         profile.accent,
@@ -228,23 +232,26 @@ impl ProfileManager {
                     )),
             )
             .child(
-                button(("open", ix), if row.listed.open { "Show" } else { "Open" }).on_click(
-                    cx.listener(move |this, _, _, _| {
-                        let _ = this.tx.unbounded_send(AppMsg::OpenProfile { profile: id });
-                    }),
-                ),
+                button(
+                    ("open", ix),
+                    if row.listed.open { "Show" } else { "Open" },
+                    &t,
+                )
+                .on_click(cx.listener(move |this, _, _, _| {
+                    let _ = this.tx.unbounded_send(AppMsg::OpenProfile { profile: id });
+                })),
             )
             .child(if can_delete {
-                button(("delete", ix), "Delete…")
-                    .text_color(rgb(0xff8a80))
+                button(("delete", ix), "Delete…", &t)
+                    .text_color(theme::c(t.danger))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.confirm_delete(&profile, window, cx)
                     }))
                     .into_any_element()
             } else {
                 // Stage 1: the only profile cannot be deleted.
-                button(("delete", ix), "Delete…")
-                    .text_color(rgb(0x56585e))
+                button(("delete", ix), "Delete…", &t)
+                    .text_color(theme::c(t.text_disabled))
                     .cursor_default()
                     .into_any_element()
             })
@@ -253,22 +260,23 @@ impl ProfileManager {
 }
 
 /// A text input styled as an editable field.
-fn field(input: Entity<TextInput>) -> impl IntoElement {
+fn field(input: Entity<TextInput>, t: &Tokens) -> impl IntoElement {
     div()
         .h(px(28.))
         .px(px(8.))
         .flex()
         .items_center()
         .rounded(px(7.))
-        .bg(rgba(0xffffff0d))
+        .bg(theme::c(t.field))
         .border_1()
-        .border_color(rgba(0xffffff14))
+        .border_color(theme::c(t.separator))
         .text_size(px(14.))
         .line_height(px(20.))
         .child(input)
 }
 
-fn button(id: impl Into<gpui::ElementId>, label: &'static str) -> Stateful<gpui::Div> {
+fn button(id: impl Into<gpui::ElementId>, label: &'static str, t: &Tokens) -> Stateful<gpui::Div> {
+    let t = *t;
     div()
         .id(id)
         .flex_none()
@@ -277,11 +285,11 @@ fn button(id: impl Into<gpui::ElementId>, label: &'static str) -> Stateful<gpui:
         .flex()
         .items_center()
         .rounded(px(7.))
-        .bg(rgba(0xffffff12))
+        .bg(theme::c(t.hover))
         .text_size(px(13.))
-        .text_color(rgb(0xe4e5e9))
-        .hover(|style| style.bg(rgba(0xffffff1f)))
-        .active(|style| style.bg(rgba(0xffffff2b)))
+        .text_color(theme::c(t.text))
+        .hover(|style| style.bg(theme::c(t.pressed)))
+        .active(|style| style.bg(theme::c(t.pressed)))
         .child(SharedString::from(label))
 }
 
@@ -293,6 +301,7 @@ impl Focusable for ProfileManager {
 
 impl Render for ProfileManager {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme::tokens(cx);
         let rows: Vec<AnyElement> = self
             .rows
             .iter()
@@ -306,12 +315,12 @@ impl Render for ProfileManager {
             .p(px(12.))
             .rounded(px(10.))
             .border_1()
-            .border_color(rgba(0xffffff1a))
+            .border_color(theme::c(t.separator))
             .child(
                 div()
                     .text_size(px(12.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(0x9a9ca3))
+                    .text_color(theme::c(t.text_tertiary))
                     .child("New profile"),
             )
             .child(
@@ -319,13 +328,13 @@ impl Render for ProfileManager {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .child(div().flex_1().child(field(self.new_name.clone())))
-                    .child(
-                        button("create", "Create").on_click(cx.listener(|this, _, _, cx| {
+                    .child(div().flex_1().child(field(self.new_name.clone(), &t)))
+                    .child(button("create", "Create", &t).on_click(cx.listener(
+                        |this, _, _, cx| {
                             let name = this.new_name.read(cx).text().to_owned();
                             this.create(name, cx);
-                        })),
-                    ),
+                        },
+                    ))),
             )
             .child(self.swatches(
                 "new-accent",
@@ -344,8 +353,8 @@ impl Render for ProfileManager {
             .pt(px(44.))
             .px(px(20.))
             .pb(px(20.))
-            .bg(rgb(0x1d1e22))
-            .text_color(rgb(0xf2f3f5))
+            .bg(theme::c(t.panel))
+            .text_color(theme::c(t.text))
             .child(
                 div()
                     .flex()
@@ -357,7 +366,7 @@ impl Render for ProfileManager {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Profiles"),
                     )
-                    .child(div().text_size(px(13.)).text_color(rgb(0x9a9ca3)).child(
+                    .child(div().text_size(px(13.)).text_color(theme::c(t.text_tertiary)).child(
                         "Each profile keeps its own sign-ins, cookies, history and extensions.",
                     )),
             )

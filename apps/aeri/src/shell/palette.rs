@@ -84,7 +84,7 @@ pub(super) fn matches(words: &[String], haystack: &str) -> bool {
 impl Shell {
     /// Commands; with text, also spaces, profiles, tabs, bookmarks, history
     /// and the typed text.
-    pub(super) fn palette_rows(&self, window_id: u64, text: &str) -> Vec<BarRow> {
+    pub(super) fn palette_rows(&self, window_id: u64, text: &str, cx: &App) -> Vec<BarRow> {
         let Some(w) = self.window(window_id) else {
             return Vec::new();
         };
@@ -127,6 +127,7 @@ impl Shell {
                     pick: Pick::Profile(p.id),
                 }),
         );
+        rows.extend(self.appearance_rows(&words, cx));
         let ranked = suggest::rank(text, self.candidates(window_id, text), now());
         rows.extend(ranked.suggestions.iter().map(suggestion_row));
         rows.extend(typed_row(text));

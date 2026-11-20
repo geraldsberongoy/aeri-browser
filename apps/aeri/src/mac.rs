@@ -6,6 +6,7 @@
 //! safe from CEF callbacks. It must not run inside a GPUI update: moving or
 //! keying GPUI windows re-enters GPUI.
 
+mod appearance;
 mod frame;
 mod pressure;
 
@@ -21,6 +22,9 @@ use objc2_foundation::{NSArray, NSBundle, NSString, NSURL};
 
 use crate::native_menu;
 
+pub use self::appearance::{
+    accessibility, set_app_appearance, system_is_dark, watch as watch_appearance,
+};
 pub use self::frame::{
     BAR_HEIGHT, Frame, MAX_VISIBLE_SUGGESTIONS, SUGGESTION_CHROME, SUGGESTION_HEIGHT,
 };

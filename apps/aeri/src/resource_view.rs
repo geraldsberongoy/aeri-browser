@@ -11,10 +11,12 @@ use aeri_core::ids::TabId;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, SharedString, Stateful, Window, div, prelude::*,
-    px, rgb, rgba,
+    px,
 };
 
 use crate::shell::AppMsg;
+use crate::theme;
+use aeri_core::appearance::Tokens;
 
 /// What the resource view asks of the shell.
 pub enum ResourceMsg {
@@ -92,10 +94,11 @@ impl ResourceView {
     }
 
     fn tab_row(&self, row: &TabRow, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme::tokens(cx);
         let tab = row.tab;
-        line(("tab", tab.0))
+        line(("tab", tab.0), &t)
             .child(title(row.title.clone()))
-            .child(cell(row.state.clone(), 150.).text_color(rgb(0x8a8c93)))
+            .child(cell(row.state.clone(), 150.).text_color(theme::c(t.text_tertiary)))
             .child(cell(row.cpu.map(percent).unwrap_or_default(), 60.))
             .child(cell(row.memory.map(bytes).unwrap_or_default(), 80.))
             .child(
@@ -106,11 +109,11 @@ impl ResourceView {
                     .gap(px(6.))
                     .justify_end()
                     .when(row.can_rest, |d| {
-                        d.child(button(("rest", tab.0), "Rest").on_click(
+                        d.child(button(("rest", tab.0), "Rest", &t).on_click(
                             cx.listener(move |this, _, _, _| this.send(ResourceMsg::Rest(tab))),
                         ))
                     })
-                    .child(button(("close", tab.0), "Close").on_click(
+                    .child(button(("close", tab.0), "Close", &t).on_click(
                         cx.listener(move |this, _, _, _| this.send(ResourceMsg::Close(tab))),
                     )),
             )
@@ -131,7 +134,8 @@ fn bytes(memory: u64) -> String {
     }
 }
 
-fn line(id: impl Into<gpui::ElementId>) -> Stateful<gpui::Div> {
+fn line(id: impl Into<gpui::ElementId>, t: &Tokens) -> Stateful<gpui::Div> {
+    let t = *t;
     div()
         .id(id)
         .flex()
@@ -142,8 +146,8 @@ fn line(id: impl Into<gpui::ElementId>) -> Stateful<gpui::Div> {
         .px(px(10.))
         .rounded(px(7.))
         .text_size(px(13.))
-        .text_color(rgb(0xe4e5e9))
-        .hover(|style| style.bg(rgba(0xffffff0f)))
+        .text_color(theme::c(t.text))
+        .hover(|style| style.bg(theme::c(t.hover)))
 }
 
 fn title(text: String) -> gpui::Div {
@@ -167,20 +171,25 @@ fn cell(text: String, width: f32) -> gpui::Div {
         .child(SharedString::from(text))
 }
 
-fn button(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>) -> Stateful<gpui::Div> {
+fn button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    t: &Tokens,
+) -> Stateful<gpui::Div> {
+    let t = *t;
     div()
         .id(id)
         .px(px(8.))
         .py(px(2.))
         .rounded(px(6.))
         .text_size(px(12.))
-        .bg(rgba(0xffffff12))
-        .hover(|s| s.bg(rgba(0xffffff1f)))
+        .bg(theme::c(t.hover))
+        .hover(|s| s.bg(theme::c(t.pressed)))
         .child(label.into())
 }
 
 /// A group's heading: its name and total.
-fn heading(name: String, cpu: f64, memory: Option<u64>) -> gpui::Div {
+fn heading(name: String, cpu: f64, memory: Option<u64>, t: &Tokens) -> gpui::Div {
     div()
         .flex()
         .flex_none()
@@ -189,7 +198,7 @@ fn heading(name: String, cpu: f64, memory: Option<u64>) -> gpui::Div {
         .pt(px(10.))
         .px(px(10.))
         .text_size(px(12.))
-        .text_color(rgb(0x9a9ca3))
+        .text_color(theme::c(t.text_tertiary))
         .child(title(name).font_weight(FontWeight::SEMIBOLD))
         .child(cell(String::new(), 150.))
         .child(cell(percent(cpu), 60.))
@@ -199,10 +208,11 @@ fn heading(name: String, cpu: f64, memory: Option<u64>) -> gpui::Div {
 
 impl Render for ResourceView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme::tokens(cx);
         let mut rows: Vec<AnyElement> = Vec::new();
         for group in &self.snapshot.profiles {
             rows.push(
-                heading(group.name.clone(), group.cpu, Some(group.memory)).into_any_element(),
+                heading(group.name.clone(), group.cpu, Some(group.memory), &t).into_any_element(),
             );
             for tab in &group.tabs {
                 rows.push(self.tab_row(tab, cx));
@@ -219,10 +229,10 @@ impl Render for ResourceView {
                 }
             }
             let name = "Aeri, GPU and extensions".to_owned();
-            rows.push(heading(name, cpu, Some(memory)).into_any_element());
+            rows.push(heading(name, cpu, Some(memory), &t).into_any_element());
             for (ix, other) in self.snapshot.others.iter().enumerate() {
                 rows.push(
-                    line(("other", ix))
+                    line(("other", ix), &t)
                         .child(title(other.title.clone()))
                         .child(cell(String::new(), 150.))
                         .child(cell(percent(other.cpu), 60.))
@@ -240,7 +250,7 @@ impl Render for ResourceView {
             .gap(px(6.))
             .child(div().flex_1().text_size(px(15.)).child("Resources"))
             .child(
-                button("rest-after", period)
+                button("rest-after", period, &t)
                     .px(px(12.))
                     .py(px(4.))
                     .text_size(px(13.))
@@ -259,8 +269,8 @@ impl Render for ResourceView {
             .pt(px(36.))
             .px(px(16.))
             .pb(px(12.))
-            .bg(rgb(0x1d1e22))
-            .text_color(rgb(0xf2f3f5))
+            .bg(theme::c(t.panel))
+            .text_color(theme::c(t.text))
             .child(header)
             .child(
                 div()

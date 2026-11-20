@@ -8,15 +8,17 @@
 
 mod sidebar;
 
+use aeri_core::appearance::Rgba;
 use aeri_core::ids::{SpaceId, TabId};
 use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, Pixels, SharedString, Window,
-    div, point, prelude::*, px, rgb, rgba,
+    div, point, prelude::*, px, rgb,
 };
 
 use crate::shell::{AppMsg, Nav};
+use crate::theme;
 
 /// Height of the strip, in points; `mac::Frame` insets the page below it.
 pub const STRIP_HEIGHT: f64 = 44.0;
@@ -161,6 +163,7 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
+        let t = theme::tokens(cx);
         div()
             .id(id)
             .flex()
@@ -170,9 +173,9 @@ impl WindowFrame {
             .px(px(10.))
             .rounded(px(8.))
             .text_size(px(13.))
-            .text_color(rgb(0xc9cbd1))
-            .hover(|style| style.bg(rgba(0xffffff14)))
-            .active(|style| style.bg(rgba(0xffffff22)))
+            .text_color(theme::c(t.icon))
+            .hover(move |style| style.bg(theme::c(t.hover)))
+            .active(move |style| style.bg(theme::c(t.pressed)))
             .on_click(cx.listener(move |this, event: &ClickEvent, _, _| {
                 let x = f32::from(event.position().x);
                 this.send(msg(window, x, STRIP_HEIGHT as f32 - 6.));
@@ -203,6 +206,7 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
+        let t = theme::tokens(cx);
         div()
             .id(id)
             .flex()
@@ -212,15 +216,15 @@ impl WindowFrame {
             .rounded(px(7.))
             .text_size(px(16.))
             .text_color(if enabled {
-                rgb(0xc9cbd1)
+                theme::c(t.icon)
             } else {
-                rgb(0x56585e)
+                theme::c(t.text_disabled)
             })
             .child(SharedString::from(glyph))
             .when(enabled, |button| {
                 button
-                    .hover(|style| style.bg(rgba(0xffffff14)))
-                    .active(|style| style.bg(rgba(0xffffff22)))
+                    .hover(move |style| style.bg(theme::c(t.hover)))
+                    .active(move |style| style.bg(theme::c(t.pressed)))
                     .on_click(cx.listener(move |this, _, _, _| {
                         let _ = this.tx.unbounded_send(AppMsg::Nav { window, nav });
                     }))
@@ -231,6 +235,7 @@ impl WindowFrame {
     /// menu under it.
     fn profile_badge(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
+        let t = theme::tokens(cx);
         div()
             .id("profile")
             .flex()
@@ -242,8 +247,8 @@ impl WindowFrame {
             .pl(px(4.))
             .pr(px(10.))
             .rounded(px(8.))
-            .hover(|style| style.bg(rgba(0xffffff14)))
-            .active(|style| style.bg(rgba(0xffffff22)))
+            .hover(move |style| style.bg(theme::c(t.hover)))
+            .active(move |style| style.bg(theme::c(t.pressed)))
             .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
                 // The menu hangs from the badge, right edges aligned.
                 let _ = this.tx.unbounded_send(AppMsg::ProfileMenu {
@@ -260,7 +265,7 @@ impl WindowFrame {
                     .text_ellipsis()
                     .whitespace_nowrap()
                     .text_size(px(13.))
-                    .text_color(rgb(0xc9cbd1))
+                    .text_color(theme::c(t.text_secondary))
                     .child(SharedString::from(self.profile.name.clone())),
             )
     }
@@ -282,7 +287,7 @@ pub fn avatar(profile: &Profile, size: f32) -> impl IntoElement {
         .bg(rgb(profile.accent))
         .text_size(px(size * 0.55))
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(0xffffff))
+        .text_color(theme::c(Rgba::WHITE))
         .child(SharedString::from(profile.monogram()))
 }
 
@@ -338,11 +343,7 @@ impl Render for WindowFrame {
             })
             .child(self.profile_badge(cx))
             .child(drag().w(px(PAGE_EDGE)));
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(rgb(0x1d1e22))
+        theme::backdrop(div().size_full().flex().flex_col(), cx)
             .child(strip)
             .when(self.sidebar_shown, |frame| frame.child(self.sidebar(cx)))
     }

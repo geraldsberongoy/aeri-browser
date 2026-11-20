@@ -2,6 +2,7 @@
 //! persistence. Nothing here knows about GPUI or CEF; the engine is reached
 //! only through [`engine`]'s commands and events.
 
+pub mod appearance;
 pub mod credentials;
 pub mod engine;
 pub mod ids;

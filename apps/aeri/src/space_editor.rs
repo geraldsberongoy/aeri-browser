@@ -8,11 +8,13 @@ use aeri_core::store::ACCENTS;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     Context, Entity, FocusHandle, Focusable, FontWeight, SharedString, Window, div, prelude::*, px,
-    rgb, rgba,
+    rgb,
 };
 
 use crate::shell::{AppMsg, SPACE_ICONS};
 use crate::text_input::{InputEvent, TextInput};
+use crate::theme;
+use aeri_core::appearance::Tokens;
 
 pub struct SpaceEditor {
     tx: UnboundedSender<AppMsg>,
@@ -94,7 +96,8 @@ impl SpaceEditor {
     }
 }
 
-fn button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+fn button(id: &'static str, label: &'static str, t: &Tokens) -> gpui::Stateful<gpui::Div> {
+    let t = *t;
     div()
         .id(id)
         .h(px(28.))
@@ -102,11 +105,11 @@ fn button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
         .flex()
         .items_center()
         .rounded(px(7.))
-        .bg(rgba(0xffffff12))
+        .bg(theme::c(t.hover))
         .text_size(px(13.))
-        .text_color(rgb(0xe4e5e9))
-        .hover(|style| style.bg(rgba(0xffffff1f)))
-        .active(|style| style.bg(rgba(0xffffff2b)))
+        .text_color(theme::c(t.text))
+        .hover(|style| style.bg(theme::c(t.pressed)))
+        .active(|style| style.bg(theme::c(t.pressed)))
         .child(SharedString::from(label))
 }
 
@@ -118,6 +121,7 @@ impl Focusable for SpaceEditor {
 
 impl Render for SpaceEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme::tokens(cx);
         let colours = div()
             .flex()
             .gap(px(6.))
@@ -128,9 +132,9 @@ impl Render for SpaceEditor {
                     .rounded_full()
                     .border_2()
                     .border_color(if colour == self.colour {
-                        rgb(0xf2f3f5)
+                        theme::c(t.text)
                     } else {
-                        rgba(0x00000000)
+                        theme::ca(t.text, 0.)
                     })
                     .p(px(2.))
                     .cursor_pointer()
@@ -153,9 +157,9 @@ impl Render for SpaceEditor {
                     .justify_center()
                     .rounded(px(6.))
                     .text_size(px(14.))
-                    .text_color(rgb(0xe4e5e9))
-                    .when(selected, |d| d.bg(rgba(0xffffff26)))
-                    .when(!selected, |d| d.hover(|s| s.bg(rgba(0xffffff12))))
+                    .text_color(theme::c(t.text))
+                    .when(selected, |d| d.bg(theme::c(t.pressed)))
+                    .when(!selected, |d| d.hover(|s| s.bg(theme::c(t.hover))))
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.icon = icon.to_owned();
@@ -171,7 +175,7 @@ impl Render for SpaceEditor {
             div()
                 .text_size(px(12.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0x9a9ca3))
+                .text_color(theme::c(t.text_tertiary))
                 .child(text)
         };
         div()
@@ -182,8 +186,8 @@ impl Render for SpaceEditor {
             .pt(px(40.))
             .px(px(20.))
             .pb(px(16.))
-            .bg(rgb(0x1d1e22))
-            .text_color(rgb(0xf2f3f5))
+            .bg(theme::c(t.panel))
+            .text_color(theme::c(t.text))
             .child(label("Name"))
             .child(
                 div()
@@ -192,9 +196,9 @@ impl Render for SpaceEditor {
                     .flex()
                     .items_center()
                     .rounded(px(7.))
-                    .bg(rgba(0xffffff0d))
+                    .bg(theme::c(t.field))
                     .border_1()
-                    .border_color(rgba(0xffffff14))
+                    .border_color(theme::c(t.separator))
                     .text_size(px(14.))
                     .line_height(px(20.))
                     .child(self.name.clone()),
@@ -210,7 +214,7 @@ impl Render for SpaceEditor {
                     .justify_end()
                     .gap(px(8.))
                     .child(
-                        button("cancel", "Cancel")
+                        button("cancel", "Cancel", &t)
                             .on_click(cx.listener(|this, _, window, _| this.close(window))),
                     )
                     .child(
@@ -221,6 +225,7 @@ impl Render for SpaceEditor {
                             } else {
                                 "Create"
                             },
+                            &t,
                         )
                         .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),

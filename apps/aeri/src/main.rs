@@ -13,6 +13,7 @@ mod resource_view;
 mod shell;
 mod space_editor;
 mod text_input;
+mod theme;
 mod window_frame;
 
 use std::path::PathBuf;

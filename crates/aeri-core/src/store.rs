@@ -310,14 +310,9 @@ impl AppDb {
     /// default until the Person chooses is
     /// [`DEFAULT_REST_AFTER`](crate::resources::DEFAULT_REST_AFTER).
     pub fn rest_after(&self) -> Result<Option<Duration>> {
-        let minutes: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT CAST(value AS INTEGER) FROM settings WHERE key = ?1",
-                [REST_AFTER],
-                |row| row.get(0),
-            )
-            .optional()?;
+        let minutes = self
+            .setting(REST_AFTER)?
+            .map(|value| value.parse::<i64>().unwrap_or(0));
         Ok(match minutes {
             None => crate::resources::DEFAULT_REST_AFTER,
             Some(minutes) if minutes <= 0 => None,
@@ -327,10 +322,24 @@ impl AppDb {
 
     pub fn set_rest_after(&self, after: Option<Duration>) -> Result<()> {
         let minutes = after.map_or(0, |after| after.as_secs() / 60);
+        self.set_setting(REST_AFTER, &minutes.to_string())
+    }
+
+    /// An app-wide setting (`settings` table), if set.
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
              ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            params![REST_AFTER, minutes.to_string()],
+            params![key, value],
         )?;
         Ok(())
     }

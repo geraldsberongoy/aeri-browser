@@ -2,11 +2,12 @@
 
 use gpui::{
     App, Bounds, ElementId, ElementInputHandler, Entity, GlobalElementId, LayoutId, PaintQuad,
-    Pixels, ShapedLine, Style, TextRun, UnderlineStyle, Window, fill, hsla, point, prelude::*, px,
-    relative, rgba, size,
+    Pixels, ShapedLine, Style, TextRun, UnderlineStyle, Window, fill, point, prelude::*, px,
+    relative, size,
 };
 
 use super::TextInput;
+use crate::theme;
 
 pub(super) struct TextElement {
     pub(super) input: Entity<TextInput>,
@@ -52,6 +53,7 @@ impl Element for TextElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        let t = theme::tokens(cx);
         let input = self.input.read(cx);
         let content = input.content.clone();
         let selected_range = input.selected_range.clone();
@@ -59,7 +61,7 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 1., 0.45))
+            (input.placeholder.clone(), theme::c(t.text_tertiary).into())
         } else {
             (content, style.color)
         };
@@ -113,7 +115,7 @@ impl Element for TextElement {
                         point(bounds.left() + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
-                    gpui::blue(),
+                    theme::c(t.accent),
                 )),
             )
         } else {
@@ -129,7 +131,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x3311ff30),
+                    theme::ca(t.accent, 0.3),
                 )),
                 None,
             )
