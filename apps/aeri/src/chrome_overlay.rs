@@ -35,7 +35,7 @@ impl Render for ChromeOverlay {
         match edge {
             // A card floating over the page's left edge.
             Edge::Side => div().size_full().p(px(MARGIN)).pr(px(12.)).child(
-                theme::backdrop_in(
+                theme::opaque_backdrop_in(
                     div()
                         .size_full()
                         .flex()
@@ -51,7 +51,7 @@ impl Render for ChromeOverlay {
                 .child(part),
             ),
             // A bar across the top, its lower edge marked.
-            Edge::Top => theme::backdrop_in(div().size_full().flex(), window, cx)
+            Edge::Top => theme::opaque_backdrop_in(div().size_full().flex(), window, cx)
                 .border_b_1()
                 .border_color(theme::c(t.separator))
                 .child(part),

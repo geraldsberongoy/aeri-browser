@@ -70,7 +70,8 @@
 | 2 | done (slide motion lands in slice 8) |
 | 3 | done (toolbar slot editor moves to slice 6; floating bar offers Page Centre and Upper Centre, not Attached) |
 | 4 | done (the editor reverts with Cancel; it has no step-by-step undo) |
-| 5–8 | pending |
+| 5 | done (export written but not driven live: the save panel run was stopped when keystrokes reached another app) |
+| 6–8 | pending |
 
 ## Evidence ledger
 
@@ -102,12 +103,17 @@
 | Space over profile over app: each window paints with its nearest theme | Observed | Home (own theme) showed its gradient while new Space 2 showed the app theme; a profile preview reached Space 2 only |
 | The editor previews live and Cancel restores the previous look | Observed | Triadic and Tweed strength 6 appeared in the window before Save; profile Solid preview vanished on Cancel |
 | Textures (grain, sand, denim, tweed) draw over the backdrop | Observed | Tweed at strength 6 visible as a weave in a 2× crop of the sidebar |
+| Library files round-trip, replace by name, and get safe file names | Tested | `library::themes_round_trip_through_files_and_replace_by_name`, `library::file_names_are_safe_and_never_empty` |
+| Malformed or newer theme files are refused with the reason | Tested + Observed | `library::imports_refuse_bad_files_with_the_reason`; live import of `{"density":"roomy"}` showed a sheet with the reason; an unknown value now names the allowed ones (`recipe` test) |
+| A good file imports into `<data>/Themes` and can be used for the space at once | Observed | open panel import of Glass: `theme imported`, `Themes/Glass.aeritheme`, sheet "Use for This Space" applied it |
+| The macOS material shows the desktop through a blurred, tinted window | Observed | Glass (85%) over a light page behind the window showed through at the window's upper right; overlays stay opaque |
 
 ## Residual risks
 
 - Pages follow only an app-wide colour scheme unless CEF allows per-browser
   emulation (design §3.7); per-space page scheme may not ship.
-- Window translucency behind GPUI needs a spike (slice 5).
+- Window translucency uses GPUI's blurred window background (the whole
+  frame window, tinted by the theme); sliding chrome stays opaque.
 - Proxy window buttons lack AppKit's tiling menu on the green button; the
   Window menu still has it.
 - With nothing pinned the page reaches the window edge, so the inner few

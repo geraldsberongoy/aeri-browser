@@ -4,6 +4,7 @@
 
 pub mod color;
 pub mod harmony;
+pub mod library;
 pub mod recipe;
 pub mod tokens;
 

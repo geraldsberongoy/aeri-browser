@@ -6,8 +6,8 @@
 use aeri_core::appearance::Recipe;
 use aeri_core::ids::{ProfileId, SpaceId};
 use gpui::{
-    App, AppContext, BorrowAppContext, Bounds, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, px, size,
+    App, AppContext, BorrowAppContext, Bounds, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowHandle, WindowOptions, px, size,
 };
 
 use super::appearance::show_app_theme;
@@ -52,10 +52,43 @@ impl Shell {
             .or_else(|| open.theme.clone())
     }
 
+    /// The theme window `window_id` shows now, whichever scope it is from.
+    pub(super) fn shown_theme(&self, window_id: u64, cx: &App) -> Option<Recipe> {
+        let w = self.window(window_id)?;
+        Some(
+            self.window_theme(w)
+                .unwrap_or_else(|| cx.global::<Theme>().recipe.clone()),
+        )
+    }
+
+    /// Makes `recipe` the theme `target` names for `window_id`, and keeps
+    /// it.
+    pub(super) fn set_target_theme(
+        &mut self,
+        window_id: u64,
+        target: ThemeTarget,
+        recipe: Recipe,
+        cx: &mut App,
+    ) {
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        let scope = match target {
+            ThemeTarget::Space => Scope::Space(w.profile, w.space),
+            ThemeTarget::Profile => Scope::Profile(w.profile),
+            ThemeTarget::App => Scope::App,
+        };
+        // An open editor would put its scope's old theme back later.
+        self.close_theme_editor(cx);
+        tracing::info!(?scope, theme = recipe.name, "theme chosen");
+        self.keep_scope_theme(scope, Some(recipe), cx);
+    }
+
     /// Gives every window the theme of its space or profile; repaints if
     /// any changed. Called whenever a window opens, changes space, or a
-    /// scope's theme changes.
-    pub(super) fn apply_window_themes(&self, cx: &mut App) {
+    /// scope's theme changes. A theme with the macOS material turns its
+    /// window see-through over the desktop's blur.
+    pub(super) fn apply_window_themes(&mut self, cx: &mut App) {
         let themes: Vec<(u64, Option<Recipe>)> = self
             .windows
             .iter()
@@ -66,6 +99,25 @@ impl Shell {
                 theme.set_window(id, recipe) | changed
             })
         });
+        for w in &self.windows {
+            let material = cx.global::<Theme>().resolved_in(w.id).material.is_some();
+            if material == self.see_through.contains(&w.id) {
+                continue;
+            }
+            if material {
+                self.see_through.insert(w.id);
+            } else {
+                self.see_through.remove(&w.id);
+            }
+            let background = if material {
+                WindowBackgroundAppearance::Blurred
+            } else {
+                WindowBackgroundAppearance::Opaque
+            };
+            let _ = w.frame_window.update(cx, |_, window, _| {
+                window.set_background_appearance(background);
+            });
+        }
         if changed {
             cx.refresh_windows();
         }

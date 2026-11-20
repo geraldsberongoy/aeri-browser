@@ -32,8 +32,11 @@ pub enum Pick {
     Profile(ProfileId),
     /// Light, dark, system or the theme's own.
     Appearance(AppAppearance),
-    /// A bundled theme, by its place in `appearance::presets()`.
-    Theme(usize),
+    /// A bundled or saved theme for a window's space, its profile, or all
+    /// windows.
+    UseTheme(super::themes::ThemeTarget, super::theme_files::ThemeSource),
+    /// Saves, imports, exports or removes a theme file.
+    ThemeFile(super::theme_files::ThemeFileOp),
     /// A layout preset or option.
     Layout(super::chrome::LayoutChoice),
     Density(aeri_core::appearance::Density),
@@ -305,9 +308,13 @@ impl Shell {
                 self.hide_bar(window_id, cx);
                 self.set_app_appearance(appearance, cx);
             }
-            Pick::Theme(index) => {
+            Pick::UseTheme(target, source) => {
                 self.hide_bar(window_id, cx);
-                self.use_preset(index, cx);
+                self.use_theme(window_id, target, source, cx);
+            }
+            Pick::ThemeFile(op) => {
+                self.hide_bar(window_id, cx);
+                self.theme_file(window_id, op, cx);
             }
             Pick::Layout(choice) => {
                 self.hide_bar(window_id, cx);

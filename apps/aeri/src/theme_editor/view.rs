@@ -1,8 +1,8 @@
 //! The theme editor's drawing: the controls and the scrollable column.
 
 use aeri_core::appearance::{
-    Accessibility, Background, Base, Density, Harmony, Headings, Hex, Mode, Motion, Recipe, Rgba,
-    Tokens, UiSize, resolve,
+    Accessibility, Background, Base, Density, Harmony, Headings, Hex, Material, Mode, Motion,
+    Recipe, Rgba, Tokens, UiSize, resolve,
 };
 use gpui::{
     Context, Div, FocusHandle, Focusable, FontWeight, KeyDownEvent, SharedString, Window, div,
@@ -408,6 +408,34 @@ impl Render for ThemeEditor {
                     },
                 ),
             ))
+            .child(labelled(
+                "Window",
+                Self::choice(
+                    "material",
+                    &["Solid", "See-Through"],
+                    &[Material::None, Material::Sidebar],
+                    r.material,
+                    |r, v| r.material = v,
+                    &t,
+                    cx,
+                ),
+            ))
+            .when(r.material == Material::Sidebar, |d| {
+                d.child(labelled(
+                    "Tint",
+                    Self::stepper(
+                        "opacity",
+                        format!("{}%", r.opacity),
+                        &t,
+                        cx,
+                        |this, dir, cx| {
+                            this.edit(cx, |r| {
+                                r.opacity = (i32::from(r.opacity) + dir * 5).clamp(85, 100) as u8
+                            })
+                        },
+                    ),
+                ))
+            })
             .child(labelled(
                 "Density",
                 Self::choice(

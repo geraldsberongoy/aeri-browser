@@ -1,7 +1,7 @@
 //! Appearance (Phase 12): the app's theme and light/dark choice, kept in
 //! `app.db`, applied to every window at once, and following macOS.
 
-use aeri_core::appearance::{AppAppearance, Base, Density, Recipe, UiSize, presets};
+use aeri_core::appearance::{AppAppearance, Base, Density, Recipe, UiSize};
 use aeri_core::store::AppDb;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{App, BorrowAppContext};
@@ -79,6 +79,8 @@ impl Shell {
             tracing::info!("appearance followed macOS");
             cx.refresh_windows();
         }
+        // Reduce Transparency turns the material off and on.
+        self.apply_window_themes(cx);
     }
 
     pub(super) fn set_app_appearance(&mut self, app: AppAppearance, cx: &mut App) {
@@ -95,13 +97,6 @@ impl Shell {
         cx.refresh_windows();
     }
 
-    /// Makes a bundled theme the app's theme.
-    pub(super) fn use_preset(&mut self, index: usize, cx: &mut App) {
-        if let Some(recipe) = presets().into_iter().nth(index) {
-            self.set_app_theme(recipe, cx);
-        }
-    }
-
     /// The app theme with one look choice changed (density, text size).
     pub(super) fn adjust_theme(&mut self, change: impl FnOnce(&mut Recipe), cx: &mut App) {
         let mut recipe = cx.global::<Theme>().recipe.clone();
@@ -115,6 +110,7 @@ impl Shell {
         }
         tracing::info!(theme = recipe.name, "theme chosen");
         show_app_theme(recipe, cx);
+        self.apply_window_themes(cx);
     }
 }
 
@@ -131,8 +127,8 @@ pub(super) fn show_app_theme(recipe: Recipe, cx: &mut App) {
 }
 
 impl Shell {
-    /// Palette rows for the appearance choices and bundled themes matching
-    /// `words`; the current ones are ticked.
+    /// Palette rows for the appearance, density and text-size choices
+    /// matching `words`; the current ones are ticked.
     pub(super) fn appearance_rows(&self, words: &[String], cx: &App) -> Vec<BarRow> {
         let theme = cx.global::<Theme>();
         let tick = |on: bool| if on { "✓" } else { "" }.to_owned();
@@ -146,19 +142,6 @@ impl Shell {
                 pick: Pick::Appearance(app),
             })
             .collect();
-        rows.extend(
-            presets()
-                .into_iter()
-                .enumerate()
-                .map(|(ix, recipe)| (ix, format!("Theme: {}", recipe.name), recipe))
-                .filter(|(_, title, _)| matches(words, title))
-                .map(|(ix, title, recipe)| BarRow {
-                    title,
-                    detail: "Theme".to_owned(),
-                    hint: tick(recipe.name == theme.recipe.name),
-                    pick: Pick::Theme(ix),
-                }),
-        );
         let densities = [
             (Density::Compact, "Density: Compact"),
             (Density::Standard, "Density: Standard"),

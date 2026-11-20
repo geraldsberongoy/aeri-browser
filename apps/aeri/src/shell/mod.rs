@@ -43,6 +43,7 @@ mod space_settings;
 mod spaces;
 mod tab_menu;
 mod tabs;
+mod theme_files;
 mod themes;
 mod trust;
 mod windows;
@@ -170,6 +171,11 @@ struct Shell {
     manager: Option<WindowHandle<ProfileManager>>,
     space_editor: Option<WindowHandle<SpaceEditor>>,
     theme_editor: Option<themes::Editing>,
+    /// Windows drawn see-through over the desktop's blur (the macOS
+    /// material).
+    see_through: HashSet<u64>,
+    /// The Person's own themes, by name (`<data>/Themes`).
+    user_themes: Vec<aeri_core::appearance::library::Saved>,
     /// The library window and the profile it shows.
     library: Option<(WindowHandle<Library>, ProfileId)>,
     /// Resting tabs and the resource view.
@@ -282,6 +288,8 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         manager: None,
         space_editor: None,
         theme_editor: None,
+        see_through: HashSet::new(),
+        user_themes: Vec::new(),
         library: None,
         resting,
         chrome,
@@ -290,6 +298,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         effects: RefCell::default(),
     };
     cx.set_menus(menus(&shell.profiles));
+    shell.load_user_themes();
     cx.spawn(async move |cx| {
         while let Some(msg) = rx.next().await {
             let done = cx.update(|cx| shell.handle(msg, cx));
@@ -461,6 +470,13 @@ impl Shell {
             AppMsg::SystemAppearanceChanged => self.system_appearance_changed(cx),
             AppMsg::Chrome(msg) => self.chrome_msg(msg, cx),
             AppMsg::ThemeEditor(msg) => self.theme_editor_msg(msg, cx),
+            AppMsg::ImportTheme { window, path } => self.import_theme(window, &path, cx),
+            AppMsg::ExportTheme { window, path } => self.export_theme(window, &path, cx),
+            AppMsg::UseTheme {
+                window,
+                target,
+                recipe,
+            } => self.set_target_theme(window, target, recipe, cx),
             AppMsg::Quit => self.quit(cx),
         }
         self.quitting && self.windows.is_empty()

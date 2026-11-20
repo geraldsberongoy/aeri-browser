@@ -347,8 +347,8 @@ fn classify(path: &str, err: &serde_json::Error) -> ThemeError {
         .next()
         .unwrap_or(&message)
         .to_owned();
-    if reason.starts_with("unknown field") || reason.starts_with("unknown variant") {
-        // The path already ends at the unknown key or variant.
+    if reason.starts_with("unknown field") {
+        // The path already ends at the unknown key.
         return ThemeError::UnknownKey(path.to_owned());
     }
     if reason.starts_with("missing field `version`") {
@@ -445,6 +445,11 @@ mod tests {
         assert_eq!(
             refused(&with("\"grain\": 13")),
             "`grain` must be a whole number 0–12."
+        );
+        assert_eq!(
+            refused(&with("\"grain\": 2, \"density\": \"roomy\"")),
+            "`density` is not valid: unknown variant `roomy`, expected one of `compact`, \
+             `standard`, `spacious`."
         );
         assert!(refused(&TIDE.replace("#30AEA2", "red")).contains("#4C71D9"));
         assert_eq!(

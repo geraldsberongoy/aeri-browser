@@ -177,6 +177,22 @@ pub enum AppMsg {
     SystemAppearanceChanged,
     Chrome(ChromeMsg),
     ThemeEditor(ThemeEditorMsg),
+    /// The open panel chose a theme file to add to the library.
+    ImportTheme {
+        window: u64,
+        path: std::path::PathBuf,
+    },
+    /// The save panel chose where to write the window's theme.
+    ExportTheme {
+        window: u64,
+        path: std::path::PathBuf,
+    },
+    /// An imported theme's sheet chose where it goes.
+    UseTheme {
+        window: u64,
+        target: super::themes::ThemeTarget,
+        recipe: Recipe,
+    },
     Quit,
 }
 

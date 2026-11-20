@@ -110,33 +110,51 @@ pub fn ca(color: Rgba, alpha: f32) -> gpui::Rgba {
     c(color.with_alpha(alpha))
 }
 
-/// Paints browser window `window`'s backdrop behind `frame`'s children.
+/// Paints browser window `window`'s backdrop behind `frame`'s children:
+/// see-through over the desktop's blur when its theme asks for the macOS
+/// material.
 pub fn backdrop_in(frame: Div, window: u64, cx: &App) -> Div {
-    paint_backdrop(frame, cx.global::<Theme>().resolved_in(window))
+    let resolved = cx.global::<Theme>().resolved_in(window);
+    paint_backdrop(frame, resolved, resolved.material.unwrap_or(1.))
+}
+
+/// Paints window `window`'s backdrop, always opaque (chrome floating over
+/// the page).
+pub fn opaque_backdrop_in(frame: Div, window: u64, cx: &App) -> Div {
+    paint_backdrop(frame, cx.global::<Theme>().resolved_in(window), 1.)
 }
 
 /// A solid fill, or a gradient of any number of stops, then the texture.
 /// GPUI gradients take two stops, so each further stop is a layer fading
 /// its colour in over its span on top of the one before (exact linear
-/// blending between neighbours).
-fn paint_backdrop(frame: Div, resolved: &Resolved) -> Div {
+/// blending between neighbours); a see-through gradient fades as a whole.
+fn paint_backdrop(frame: Div, resolved: &Resolved, opacity: f32) -> Div {
     let frame = match &resolved.backdrop {
-        Backdrop::Plain => frame.bg(c(resolved.tokens.frame)),
-        Backdrop::Solid(color) => frame.bg(c(*color)),
+        Backdrop::Plain => frame.bg(ca(resolved.tokens.frame, opacity)),
+        Backdrop::Solid(color) => frame.bg(ca(*color, opacity)),
         Backdrop::Gradient { angle, stops } => {
             let angle = f32::from(*angle);
             let base = stops.first().map_or(resolved.tokens.frame, |stop| stop.1);
-            frame
-                .relative()
-                .bg(c(base))
-                .children(stops.windows(2).map(|pair| {
-                    let ((from, _), (to, color)) = (pair[0], pair[1]);
-                    div().absolute().size_full().bg(linear_gradient(
-                        angle,
-                        linear_color_stop(ca(color, 0.), from),
-                        linear_color_stop(c(color), to),
-                    ))
-                }))
+            let layers = stops.windows(2).map(|pair| {
+                let ((from, _), (to, color)) = (pair[0], pair[1]);
+                div().absolute().size_full().bg(linear_gradient(
+                    angle,
+                    linear_color_stop(ca(color, 0.), from),
+                    linear_color_stop(c(color), to),
+                ))
+            });
+            if opacity < 1. {
+                frame.relative().child(
+                    div()
+                        .absolute()
+                        .size_full()
+                        .opacity(opacity)
+                        .bg(c(base))
+                        .children(layers),
+                )
+            } else {
+                frame.relative().bg(c(base)).children(layers)
+            }
         }
     };
     if resolved.grain == 0 {
