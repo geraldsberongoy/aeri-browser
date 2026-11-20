@@ -100,10 +100,10 @@
 | Unseen tabs rest after the period | Observed | `AERI_REST_AFTER_SECS=20`: log "tab rests" for each unseen tab about 20–40 s after it was last shown; its page left the DevTools target list; the sidebar kept its row and title |
 | A rested tab wakes with its page and keeps following events | Observed | Click on the rested Target row: `target.html` loaded again; `document.title` set afterwards showed in the sidebar ("Woken and retitled"): before, a put-away tab's model went `Closed` and ignored later events |
 | Typed and kept-awake tabs stay | Observed | After typing "bob" into `/login` and keeping `http://127.0.0.1:8766` awake, 55 s unseen: only the Chrome Web Store tab rested; the view showed "Has typed input" and "Kept awake" |
-| Audible tabs stay | Tested | `resources` tests. Live, a WebAudio tone (log `activity … audible: true`) showed "Playing sound" and stayed awake over a minute unseen, but its site was also kept awake, so this does not isolate the rule |
+| Audible tabs stay, and rest once silent | Observed | Fresh profile, nothing kept awake, `AERI_REST_AFTER_SECS=20`: a WebAudio tone tab (log `activity … audible: true`) and the Chrome Web Store tab both unseen; after 50 s only the Web Store tab rested. After the tone page reloaded (log `audible: false`), it rested at the next check (11 s later) |
 | Resource view figures and actions | Observed | Per tab memory and CPU (e.g. Sign in 30 MB, 0.2%), profile total, Aeri 298 MB, GPU 177 MB, network/storage utilities, extension service workers; Rest rested the Tone tab (log "tab rests tab=tab-1", state "Resting"); Close removed the Chrome Web Store row; the period menu's Never saved `rest_after_minutes = 0`; Keep … Awake saved `keep_awake_sites` = `http://127.0.0.1:8766` |
 | Figures need a live sampler | Observed | Reading through a fresh `CefTaskManager` each time gave 0 for every task: CEF's manager samples (every 2 s on macOS) only while referenced, so the view holds one while open |
-| Memory pressure rests tabs | Inferred | Source registered on the main queue (`mac::pressure`); `memory_pressure -S` needs root here ("kern.memorypressure_manual_trigger … Operation not permitted"); selection is unit-tested |
+| Memory pressure rests tabs | Observed | Period 1 h, two background tabs unseen 66 s; the owner ran `sudo memory_pressure -S -l warn`: log "memory pressure level=Warning" then "tab rests tab=tab-1" (the longer-unseen of the two; half of two is one), the other stayed; `-l normal` logged "level=Normal" |
 | Profiles stay isolated | Tested | `cargo xtask isolation`: 13 checks, 0 failed |
 | Change size vs budget (~1,020) | Observed | ~1,200 lines: new files 1,166 (tests included), +246 / −210 in existing code, of which ~190 is `AppMsg` moving to `shell/msg.rs` to keep `shell/mod.rs` at 476 lines |
 
@@ -116,7 +116,7 @@
   made without keys (paste by menu, drag) is not seen.
 - Memory is per process: tabs sharing a renderer show the same figure, and
   totals count equal figures once (a heuristic; Inferred).
-- The memory-pressure path is not exercised live (needs root to simulate).
+- Critical memory pressure (rest every eligible tab) is unit-tested only.
 - Waking a tab within moments of resting it can see the old page's late
   close; the shell ignores that close for resting tabs, but a woken page's
   model could briefly take the old page's last events (Inferred, unseen).
