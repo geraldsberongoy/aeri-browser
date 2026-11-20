@@ -47,8 +47,8 @@ drive live: rename, recolour, delete, Dock reopen. Evidence:
 session) is built: `TabList` and `ProfileDb` in `aeri-core`, the shell's
 window/tab module (`apps/aeri/src/shell/windows.rs`), a plain sidebar, ⌘S,
 ⌘1–9, ⌘⇧T, session restore with lazy tabs, history, "Open in <profile>"
-from the tab menu; `cargo xtask isolation` 13/13. Sidebar mouse actions not
-driven live yet. Evidence:
+from the tab menu; `cargo xtask isolation` 13/13; sidebar mouse actions
+driven live. Evidence:
 `.monozukuri/specifications/phase-6-tabs-and-session.md`. Next: Phase 7
 (spaces and favourites).
 

@@ -83,7 +83,7 @@
 | --- | --- |
 | 1 | done |
 | 2 | done |
-| 3 | done; mouse interactions not driven live (below) |
+| 3 | done; mouse interactions driven live (below) |
 | 4 | done |
 | 5 | done |
 
@@ -107,4 +107,6 @@ and the shell's window/tab module; no part was cut.
 | A session save costs 50–450 µs | Observed | `session saved us=` debug lines in the harness log |
 | The last-active profile never went dormant: Chromium kept it as its startup profile (`Local State` `profile.last_used`); its tab-signals worker outlived its window | Observed | Live over CDP: closing that profile's page left its `service_worker` target past a 20 s wait (4/4) and past 120 s in the harness; the other profile's went in 0.6 s; harness failed 4 of 5 runs |
 | `--profile-directory=Default` fixes it | Tested | Same live repro: 0.6–0.7 s, nothing left (3/3); `cargo xtask isolation` 13/13 on 4 runs in a row; a third tab-signals worker now runs in `Default` |
-| Sidebar mouse actions (click, middle click, ×, context menu, drag) and "Open in <profile>" | Inferred | Built on the tested tab list and `TabCommand`; not driven with the mouse (owner's OK needed) |
+| Sidebar mouse actions: click selects, middle click and × close, ⌘⇧T puts the tab back in place, menu Duplicate / Pin (moves to the pinned group above a divider) / Close Other Tabs (keeps pinned), New Tab row, drag to reorder (a drop on the pinned group is clamped to the first regular place), "Open in B" adds the tab to B's window | Observed | Live, driven with posted mouse events (owner's OK, 2026-11-20); `profile.db` and screenshots after each step |
+| Pages that paint no background showed Chrome's dark-mode grey, not white | Observed | Screenshots; the renderer's own output had alpha 0. Fixed: the tab's CEF window and browser view get a white background, set again on theme changes; screenshot then shows a white card |
+| A blank tab was labelled "about:blank" after restore (Chromium's title) | Observed | Screenshot; label now "New Tab" for `about:blank` whatever the title |

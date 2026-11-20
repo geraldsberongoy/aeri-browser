@@ -102,6 +102,12 @@ pub struct TabWindow {
     state: Rc<State>,
 }
 
+/// What shows behind a page that paints no background of its own: white, as
+/// in other browsers. Chrome's views follow the system theme otherwise (a dark
+/// grey in dark mode, Observed), and CEF resets a view's colour whenever the
+/// theme changes, so the delegates set it again then.
+const PAGE_BACKGROUND: u32 = 0xFFFF_FFFF;
+
 impl TabWindow {
     /// Creates the tab's window and starts loading `url`. The browser exists
     /// as soon as the window does, whether or not it is shown.
@@ -297,6 +303,12 @@ wrap_window_delegate! {
                 place_toolbar(toolbar, bounds);
             }
         }
+
+        fn on_theme_changed(&self, view: Option<&mut View>) {
+            if let Some(view) = view {
+                view.set_background_color(PAGE_BACKGROUND);
+            }
+        }
     }
 
     impl PanelDelegate {}
@@ -309,6 +321,8 @@ wrap_window_delegate! {
             // Adding the view to the window creates the browser and Chrome's
             // toolbar (ADR 0006).
             window.add_child_view(Some(&mut view));
+            window.set_background_color(PAGE_BACKGROUND);
+            view.set_background_color(PAGE_BACKGROUND);
             if let Some(mut toolbar) = self.state.view.chrome_toolbar() {
                 window.add_child_view(Some(&mut toolbar));
                 // Never drawn and outside the layout: the page keeps the whole
@@ -377,7 +391,13 @@ wrap_window_delegate! {
 wrap_browser_view_delegate! {
     struct AeriBrowserViewDelegate {}
 
-    impl ViewDelegate {}
+    impl ViewDelegate {
+        fn on_theme_changed(&self, view: Option<&mut View>) {
+            if let Some(view) = view {
+                view.set_background_color(PAGE_BACKGROUND);
+            }
+        }
+    }
 
     impl BrowserViewDelegate {
         fn chrome_toolbar_type(&self, _browser_view: Option<&mut BrowserView>) -> ChromeToolbarType {

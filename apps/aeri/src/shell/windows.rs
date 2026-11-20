@@ -51,7 +51,8 @@ impl TabEntry {
     }
 
     fn label(&self) -> String {
-        if self.model.title.is_empty() && self.url() == NEW_TAB_URL {
+        // Chromium titles a blank page "about:blank".
+        if self.url() == NEW_TAB_URL {
             "New Tab".to_owned()
         } else if self.model.title.is_empty() {
             self.url().to_owned()
