@@ -6,13 +6,14 @@ use aeri_core::appearance::AppAppearance;
 use aeri_core::engine::Command;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
 use aeri_core::internal::InternalPage;
-use aeri_core::omnibox::{self, Destination};
-use aeri_core::prefs::Engine;
+use aeri_core::omnibox::{self, AddressCommand, Destination};
+use aeri_core::prefs::Browsing;
 use aeri_core::suggest::{self, Candidate, Source};
 use gpui::App;
 
-use super::palette::PaletteCommand;
+use super::palette::{PaletteCommand, shortcut_of};
 use super::session::now;
+use super::suggest::{engine_rows, stop as stop_asking_engine};
 use super::tabs::{Place, TabEntry, TabStart};
 use super::windows::Spot;
 use super::{NEW_TAB_URL, Shell};
@@ -20,6 +21,10 @@ use crate::address_bar::{AddressBar, BarMode};
 
 /// History rows read per keystroke, before ranking.
 const HISTORY_CANDIDATES: usize = 200;
+/// Recent places in the new tab: how many show, and how many are read to
+/// find them among those already open.
+const RECENT_PLACES: usize = 3;
+const RECENT_CANDIDATES: usize = 30;
 
 /// What a bar row does when picked.
 #[derive(Clone, Debug, PartialEq)]
@@ -28,6 +33,14 @@ pub enum Pick {
     Text(String),
     /// A bookmark's or history entry's address.
     Open(String),
+    /// What the engine suggested: those words, searched with the engine.
+    Search(String),
+    /// Shift-Return: the typed text searched with the Shift engine; with
+    /// none chosen, `otherwise`, what Return would have done.
+    Shift {
+        text: String,
+        otherwise: Box<Pick>,
+    },
     /// An open tab of the profile: switch to it.
     Tab(TabId),
     Command(PaletteCommand),
@@ -72,12 +85,18 @@ pub(super) fn display_address(url: &str) -> String {
     bare.strip_suffix('/').unwrap_or(bare).to_owned()
 }
 
-/// The row for what the Person typed, if it is anything; words that are not
-/// an address are searched with `engine`.
-pub(super) fn typed_row(text: &str, engine: &Engine) -> Option<BarRow> {
-    let (title, hint) = match omnibox::classify(text, &engine.omnibox_template())? {
+/// The row for what the Person typed, if it is anything: an address, a
+/// site shortcut's search, or words searched with the engine.
+pub(super) fn typed_row(text: &str, browsing: &Browsing) -> Option<BarRow> {
+    let (title, hint) = match omnibox::destination(text, browsing)? {
         Destination::Address(url) => (display_address(url.as_str()), "Go to address".to_owned()),
-        Destination::Search(_) => (text.trim().to_owned(), format!("Search {}", engine.name())),
+        Destination::Search(_) => {
+            let site = omnibox::keyword_match(text, &browsing.keywords).map_or_else(
+                || browsing.engine.name().to_owned(),
+                |(k, _)| omnibox::keyword_site(&k.template),
+            );
+            (text.trim().to_owned(), format!("Search {site}"))
+        }
     };
     Some(BarRow {
         title,
@@ -140,7 +159,8 @@ impl Shell {
             let typed = self
                 .window(window_id)
                 .and_then(|w| w.bar.read(cx).ok().map(|bar| bar.typed(cx)));
-            if let Some(text) = typed.filter(|text| !text.is_empty()) {
+            let text = typed.unwrap_or_default();
+            if !text.is_empty() || self.prefs().spaces.newtab_recent {
                 self.bar_query(window_id, text, cx);
             }
         }
@@ -188,6 +208,7 @@ impl Shell {
         };
         let was_shown = std::mem::replace(&mut w.bar_shown, false);
         w.palette = false;
+        stop_asking_engine();
         let _ = w.bar.update(cx, |bar, _, cx| bar.dismissed(cx));
         let frame = w.frame.clone();
         self.refresh_window(window_id, cx);
@@ -216,7 +237,7 @@ impl Shell {
         }
         // A tab that has no web page to navigate leaves it where it is.
         let on_internal = target.is_some_and(|tab| self.internal_of(window_id, tab).is_some());
-        let Some(destination) = omnibox::classify(text, &self.engine().omnibox_template()) else {
+        let Some(destination) = omnibox::destination(text, &self.prefs().browsing) else {
             return;
         };
         let url = destination.url().to_string();
@@ -238,22 +259,74 @@ impl Shell {
     }
 
     /// The Person typed in the bar: rows for `text`, sent back to the bar,
-    /// which grows to fit them.
+    /// which grows to fit them. With Suggestions from the engine on, the
+    /// engine is asked too, and its words follow in `bar_suggested`.
     pub(super) fn bar_query(&mut self, window_id: u64, text: String, cx: &mut App) {
-        let Some(palette) = self.window(window_id).map(|w| w.palette) else {
+        let Some(w) = self.window(window_id) else {
             return;
         };
-        let rows = if palette {
-            self.palette_rows(window_id, &text, cx)
-        } else {
-            self.address_rows(window_id, &text)
-        };
+        let palette = w.palette;
+        let new_tab = w
+            .bar
+            .read(cx)
+            .is_ok_and(|bar| bar.mode() == BarMode::NewTab);
+        if palette {
+            stop_asking_engine();
+            let rows = self.palette_rows(window_id, &text, cx);
+            self.show_rows(window_id, &text, rows, cx);
+            return;
+        }
+        if text.is_empty() && new_tab && self.prefs().spaces.newtab_recent {
+            stop_asking_engine();
+            let rows = self.recent_rows(window_id);
+            if let Some(w) = self.window(window_id) {
+                let _ = w.bar.update(cx, |bar, _, cx| bar.set_recent(rows, cx));
+            }
+            return;
+        }
+        let words = self.ask_engine(window_id, &text);
+        let rows = self.address_rows(window_id, &text, &words);
+        self.show_rows(window_id, &text, rows, cx);
+    }
+
+    fn show_rows(&self, window_id: u64, text: &str, rows: Vec<BarRow>, cx: &mut App) {
         let Some(w) = self.window(window_id) else {
             return;
         };
         let _ = w
             .bar
-            .update(cx, |bar, _, cx| bar.set_rows(&text, rows, 0, cx));
+            .update(cx, |bar, _, cx| bar.set_rows(text, rows, 0, cx));
+    }
+
+    /// Recent places in the new tab: before anything is typed, the last
+    /// three places visited that are not open in this window.
+    fn recent_rows(&self, window_id: u64) -> Vec<BarRow> {
+        let Some(w) = self.window(window_id) else {
+            return Vec::new();
+        };
+        let Some(db) = self.open.get(&w.profile).and_then(|open| open.db.as_ref()) else {
+            return Vec::new();
+        };
+        let open: Vec<&str> = w.tabs.iter().map(|item| item.value.url()).collect();
+        let recent = match db.recent_history(RECENT_CANDIDATES) {
+            Ok(recent) => recent,
+            Err(err) => {
+                tracing::warn!(%err, "could not read recent history");
+                return Vec::new();
+            }
+        };
+        recent
+            .into_iter()
+            .filter(|e| e.url != NEW_TAB_URL && !open.contains(&e.url.as_str()))
+            .take(RECENT_PLACES)
+            .map(|e| {
+                suggestion_row(&suggest::Suggestion {
+                    url: e.url,
+                    title: e.title,
+                    source: Source::History,
+                })
+            })
+            .collect()
     }
 
     /// Everything the profile knows that could match: its open tabs (not
@@ -304,9 +377,17 @@ impl Shell {
     }
 
     /// The typed text first, unless a known address starts with it
-    /// (decision 3), then the ranked suggestions.
-    fn address_rows(&self, window_id: u64, text: &str) -> Vec<BarRow> {
-        let Some(typed) = typed_row(text, self.engine()) else {
+    /// (decision 3), then the ranked suggestions; an address bar command
+    /// whose words are all that was typed goes before them all, a partial
+    /// one after them; the engine's `engine_words` come last.
+    pub(super) fn address_rows(
+        &self,
+        window_id: u64,
+        text: &str,
+        engine_words: &[String],
+    ) -> Vec<BarRow> {
+        let browsing = &self.prefs().browsing;
+        let Some(typed) = typed_row(text, browsing) else {
             return Vec::new();
         };
         let ranked = suggest::rank(text, self.candidates(window_id, text), now());
@@ -319,7 +400,38 @@ impl Shell {
             }
             None => rows.insert(0, typed),
         }
+        if self.prefs().spaces.address_commands {
+            if let Some(command) = AddressCommand::matching(text) {
+                rows.insert(0, self.command_row(command));
+            } else if let Some(near) = AddressCommand::near(text) {
+                rows.push(self.command_row(near));
+            }
+        }
+        let more = engine_rows(engine_words, &browsing.engine, &rows);
+        rows.extend(more);
         rows
+    }
+
+    fn command_row(&self, command: AddressCommand) -> BarRow {
+        let palette = match command {
+            AddressCommand::Settings => PaletteCommand::Settings,
+            AddressCommand::NewTab => PaletteCommand::NewTab,
+            AddressCommand::NewSpace => PaletteCommand::NewSpace,
+            AddressCommand::Bookmarks => PaletteCommand::ShowBookmarks,
+            AddressCommand::History => PaletteCommand::ShowHistory,
+            AddressCommand::Downloads => PaletteCommand::ShowDownloads,
+            AddressCommand::Passwords => PaletteCommand::ManagePasswords,
+            AddressCommand::ToggleSidebar => PaletteCommand::ToggleSidebar,
+        };
+        BarRow {
+            title: command.title().to_owned(),
+            detail: String::new(),
+            hint: shortcut_of(palette)
+                .and_then(|s| self.keymap.chord(s))
+                .map(|chord| chord.label())
+                .unwrap_or_default(),
+            pick: Pick::Command(palette),
+        }
     }
 
     /// Return or a click on a row.
@@ -332,6 +444,18 @@ impl Shell {
         };
         match pick {
             Pick::Text(text) | Pick::Open(text) => self.go(window_id, &text, new_tab, cx),
+            Pick::Search(words) => {
+                let url = self.engine().search_url(&words);
+                self.go(window_id, &url, new_tab, cx);
+            }
+            Pick::Shift { text, otherwise } => {
+                let palette = self.window(window_id).is_some_and(|w| w.palette);
+                if palette || self.prefs().browsing.shift_engine.is_none() {
+                    self.bar_pick(window_id, *otherwise, cx);
+                } else if let Some(url) = omnibox::shift_url(&text, &self.prefs().browsing) {
+                    self.go(window_id, url.as_str(), new_tab, cx);
+                }
+            }
             Pick::Tab(tab) => {
                 self.hide_bar(window_id, cx);
                 self.show_tab_anywhere(window_id, tab, cx);

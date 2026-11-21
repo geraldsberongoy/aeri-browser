@@ -38,6 +38,20 @@ pub enum Shortcut {
     Settings,
     ToggleFullScreen,
     Quit,
+    /// Find on Page…: the find bar over the shown page.
+    Find,
+    FindNext,
+    FindPrevious,
+    /// Zoom In, ⌘+ (and ⌘=): a tenth bigger, kept for the site.
+    ZoomIn,
+    ZoomOut,
+    /// Back to the size every site starts at (Settings › Page zoom).
+    ActualSize,
+    /// Dusk (Settings › Appearance › Darken pages that stay light): turns
+    /// it off, or on, for the site you are on.
+    DarkenSite,
+    /// Dusk paused everywhere until pressed again or Aeri quits.
+    PauseDarkening,
 }
 
 impl Shortcut {
@@ -64,6 +78,14 @@ impl Shortcut {
             Self::Settings,
             Self::ToggleFullScreen,
             Self::Quit,
+            Self::Find,
+            Self::FindNext,
+            Self::FindPrevious,
+            Self::ZoomIn,
+            Self::ZoomOut,
+            Self::ActualSize,
+            Self::DarkenSite,
+            Self::PauseDarkening,
         ]);
         all
     }
@@ -90,6 +112,14 @@ impl Shortcut {
             Self::Settings => "Settings".into(),
             Self::ToggleFullScreen => "Full Screen".into(),
             Self::Quit => "Quit Aeri".into(),
+            Self::Find => "Find on Page…".into(),
+            Self::FindNext => "Find Next".into(),
+            Self::FindPrevious => "Find Previous".into(),
+            Self::ZoomIn => "Zoom In".into(),
+            Self::ZoomOut => "Zoom Out".into(),
+            Self::ActualSize => "Actual Size".into(),
+            Self::DarkenSite => "Darken This Site".into(),
+            Self::PauseDarkening => "Pause Darkening".into(),
         }
     }
 
@@ -115,6 +145,14 @@ impl Shortcut {
             Self::Settings => "settings".into(),
             Self::ToggleFullScreen => "full-screen".into(),
             Self::Quit => "quit".into(),
+            Self::Find => "find".into(),
+            Self::FindNext => "find-next".into(),
+            Self::FindPrevious => "find-previous".into(),
+            Self::ZoomIn => "zoom-in".into(),
+            Self::ZoomOut => "zoom-out".into(),
+            Self::ActualSize => "actual-size".into(),
+            Self::DarkenSite => "darken-site".into(),
+            Self::PauseDarkening => "pause-darkening".into(),
         }
     }
 
@@ -144,8 +182,29 @@ impl Shortcut {
             Self::Settings => "cmd-,".into(),
             Self::ToggleFullScreen => "ctrl-cmd-f".into(),
             Self::Quit => "cmd-q".into(),
+            Self::Find => "cmd-f".into(),
+            Self::FindNext => "cmd-g".into(),
+            Self::FindPrevious => "shift-cmd-g".into(),
+            Self::ZoomIn => "cmd-+".into(),
+            Self::ZoomOut => "cmd--".into(),
+            Self::ActualSize => "cmd-0".into(),
+            Self::DarkenSite => "shift-cmd-d".into(),
+            Self::PauseDarkening => "alt-shift-cmd-d".into(),
         };
         Chord::parse(&keys).expect("default keys parse")
+    }
+
+    /// Keys that run the command besides its own, while it keeps its
+    /// default: ⌘+ is ⇧⌘= on a US keyboard, and ⌘= is what is typed for it
+    /// without Shift.
+    pub fn aliases(self) -> Vec<Chord> {
+        match self {
+            Self::ZoomIn => ["cmd-=", "shift-cmd-="]
+                .into_iter()
+                .filter_map(Chord::parse)
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -162,7 +221,7 @@ pub struct Chord {
 }
 
 const NAMED: [&str; 7] = ["tab", "space", "backspace", "left", "right", "up", "down"];
-const MARKS: &str = ",.;'/[]\\-=`";
+const MARKS: &str = ",.;'/[]\\-=`+";
 
 fn known_key(key: &str) -> bool {
     let mut chars = key.chars();
@@ -231,7 +290,10 @@ impl Chord {
             0x27 => "right".into(),
             0x28 => "down".into(),
             0xBA => ";".into(),
+            0xBB if shift => "+".into(),
+            0x6B => "+".into(),
             0xBB => "=".into(),
+            0x6D => "-".into(),
             0xBC => ",".into(),
             0xBD => "-".into(),
             0xBE => ".".into(),
@@ -243,6 +305,9 @@ impl Chord {
             0xDE => "'".into(),
             _ => return None,
         };
+        // ⌘+ is ⇧⌘= on a US keyboard: the plus is the key, Shift is how it
+        // is reached.
+        let shift = shift && !(code == 0xBB || code == 0x6B);
         Some(Chord {
             ctrl,
             alt,
@@ -365,6 +430,21 @@ impl Keymap {
                 (self.undo_close && *chord == Shortcut::UndoCloseTab.default_chord())
                     .then_some(Shortcut::UndoCloseTab)
             })
+            .or_else(|| {
+                Shortcut::all().into_iter().find(|&s| {
+                    self.chord(s) == Some(s.default_chord()) && s.aliases().contains(chord)
+                })
+            })
+    }
+
+    /// The extra keys the page and GPUI also hand to commands that keep
+    /// their default keys ([`Shortcut::aliases`]).
+    pub fn alias_bindings(&self) -> Vec<(Shortcut, Chord)> {
+        Shortcut::all()
+            .into_iter()
+            .filter(|&s| self.chord(s) == Some(s.default_chord()))
+            .flat_map(|s| s.aliases().into_iter().map(move |chord| (s, chord)))
+            .collect()
     }
 
     /// The same keys, with ⌘Z reaching [`Shortcut::UndoCloseTab`] or not.
@@ -489,6 +569,11 @@ fn allowed(chord: &Chord) -> Result<(), BindError> {
     Ok(())
 }
 
+/// Whether macOS or text editing owns `chord` (⌘C, ⌘Space and the like).
+pub fn is_reserved(chord: &Chord) -> bool {
+    RESERVED.contains(&chord.to_string().as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,6 +611,31 @@ mod tests {
             Some(chord("cmd-,"))
         );
         assert_eq!(Chord::from_key_code(0x0D, false, false, false, true), None);
+    }
+
+    #[test]
+    fn find_and_zoom_keys_reach_their_commands() {
+        let keymap = Keymap::default();
+        for (keys, shortcut) in [
+            ("cmd-f", Shortcut::Find),
+            ("cmd-g", Shortcut::FindNext),
+            ("shift-cmd-g", Shortcut::FindPrevious),
+            ("cmd-0", Shortcut::ActualSize),
+            ("cmd--", Shortcut::ZoomOut),
+        ] {
+            assert_eq!(keymap.shortcut(&chord(keys)), Some(shortcut), "{keys}");
+        }
+        // ⌘+ as pages report it: the = key with Shift, and without.
+        for (code, shift) in [(0xBB, true), (0xBB, false), (0x6B, false)] {
+            let pressed = Chord::from_key_code(code, false, false, shift, true).unwrap();
+            assert_eq!(keymap.shortcut(&pressed), Some(Shortcut::ZoomIn));
+        }
+        assert_eq!(Shortcut::ZoomIn.default_chord().label(), "⌘+");
+        let mut moved = Keymap::default();
+        moved
+            .bind(Shortcut::ZoomIn, chord("cmd-9"), OnConflict::Replace)
+            .unwrap();
+        assert_eq!(moved.shortcut(&chord("cmd-=")), None);
     }
 
     #[test]

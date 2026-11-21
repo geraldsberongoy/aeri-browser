@@ -80,6 +80,7 @@ impl Shell {
         }
         // Reduce Transparency turns the material off and on.
         self.apply_window_themes(cx);
+        self.apply_dusk(cx);
     }
 
     pub(super) fn set_app_appearance(&mut self, app: AppAppearance, cx: &mut App) {
@@ -94,6 +95,7 @@ impl Shell {
         apply_app_appearance(app, base);
         tracing::info!(appearance = app.key(), "appearance chosen");
         cx.refresh_windows();
+        self.apply_dusk(cx);
     }
 
     /// The app theme with one look choice changed (density, text size).
@@ -110,6 +112,7 @@ impl Shell {
         tracing::info!(theme = recipe.name, "theme chosen");
         show_app_theme(recipe, cx);
         self.apply_window_themes(cx);
+        self.apply_dusk(cx);
     }
 }
 

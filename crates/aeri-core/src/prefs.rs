@@ -226,10 +226,10 @@ impl Engine {
             Self::DuckDuckGo => "https://duckduckgo.com/ac/?type=list&q=%s",
             Self::Bing => "https://api.bing.com/osjson.aspx?query=%s",
             Self::Ecosia => "https://ac.ecosia.org/autocomplete?type=list&q=%s",
-            Self::Startpage => "https://www.startpage.com/suggestions?q=%s&format=opensearch",
+            Self::Startpage => "https://www.startpage.com/osuggestions?q=%s",
             Self::Kagi => "https://kagi.com/api/autosuggest?q=%s",
             Self::Brave => "https://search.brave.com/api/suggest?q=%s",
-            Self::Qwant => "https://api.qwant.com/v3/suggest?q=%s",
+            Self::Qwant => "https://api.qwant.com/api/suggest/?q=%s&client=opensearch",
             Self::Custom(_) => return None,
         };
         Some(fill(template, query))
@@ -504,6 +504,8 @@ pub struct AppPrefs {
     pub mouse: Mouse,
     pub launcher: Launcher,
     pub appearance: AppearanceExtras,
+    /// Privacy › Proxy; the password is in the keychain.
+    pub proxy: crate::proxy::Proxy,
 }
 
 fn group<T: DeserializeOwned + Default>(root: &Value, key: &str) -> T {
@@ -533,6 +535,7 @@ impl AppPrefs {
             mouse: group(&root, "mouse"),
             launcher: group(&root, "launcher"),
             appearance: group(&root, "appearance"),
+            proxy: group(&root, "proxy"),
         };
         prefs.browsing.page_zoom_percent = clamp_zoom(prefs.browsing.page_zoom_percent);
         prefs

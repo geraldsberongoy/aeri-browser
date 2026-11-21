@@ -29,3 +29,4 @@ objc2.workspace = true
 dispatch2 = { version = "0.3", default-features = false, features = ["std"] }
 objc2-foundation.workspace = true
 objc2-app-kit.workspace = true
+security-framework = "3"

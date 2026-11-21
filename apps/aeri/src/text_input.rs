@@ -36,6 +36,7 @@ actions!(
         Cut,
         Copy,
         Submit,
+        SubmitShifted,
         Cancel,
         Up,
         Down,
@@ -62,6 +63,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-right", End, context),
         KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, context),
         KeyBinding::new("enter", Submit, context),
+        KeyBinding::new("shift-enter", SubmitShifted, context),
         KeyBinding::new("escape", Cancel, context),
         KeyBinding::new("up", Up, context),
         KeyBinding::new("down", Down, context),
@@ -73,6 +75,8 @@ pub fn bindings() -> Vec<KeyBinding> {
 pub enum InputEvent {
     /// Return was pressed; carries the current text.
     Submitted(String),
+    /// Shift-Return was pressed; carries the current text.
+    SubmittedShifted(String),
     /// Escape was pressed.
     Cancelled,
     /// The Person changed the text (typing, deleting, pasting, an input
@@ -155,6 +159,10 @@ impl TextInput {
 
     fn submit(&mut self, _: &Submit, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(InputEvent::Submitted(self.content.to_string()));
+    }
+
+    fn submit_shifted(&mut self, _: &SubmitShifted, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(InputEvent::SubmittedShifted(self.content.to_string()));
     }
 
     fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -592,6 +600,7 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::submit))
+            .on_action(cx.listener(Self::submit_shifted))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::up))
             .on_action(cx.listener(Self::down))

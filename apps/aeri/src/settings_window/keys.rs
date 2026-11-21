@@ -18,9 +18,10 @@ use crate::shell::{KeyRow, SettingsMsg};
 use crate::theme;
 
 /// Search's sections (Shortcuts.swift:177), as Aeri's commands fall in them.
-const SECTIONS: [&str; 7] = [
+const SECTIONS: [&str; 8] = [
     "Aeri",
     "File",
+    "Edit",
     "View",
     "Tabs",
     "Spaces",
@@ -39,7 +40,14 @@ fn section_of(shortcut: Shortcut) -> &'static str {
         | Shortcut::CloseTab
         | Shortcut::ReopenClosedTab
         | Shortcut::UndoCloseTab => "File",
-        Shortcut::ToggleSidebar | Shortcut::ToggleFullScreen => "View",
+        Shortcut::Find | Shortcut::FindNext | Shortcut::FindPrevious => "Edit",
+        Shortcut::ToggleSidebar
+        | Shortcut::ToggleFullScreen
+        | Shortcut::DarkenSite
+        | Shortcut::PauseDarkening
+        | Shortcut::ZoomIn
+        | Shortcut::ZoomOut
+        | Shortcut::ActualSize => "View",
         Shortcut::NextTab | Shortcut::PreviousTab | Shortcut::SelectTab(_) => "Tabs",
         Shortcut::PreviousSpace | Shortcut::NextSpace => "Spaces",
         Shortcut::ToggleBookmark | Shortcut::ShowBookmarks => "Bookmarks",

@@ -9,7 +9,7 @@ use cef::rc::Rc as _;
 use cef::{
     Browser, CefString, CefStringList, Client, DisplayHandler, DownloadHandler, Errorcode, Frame,
     ImplBrowser, ImplClient, ImplDisplayHandler, ImplFrame, ImplKeyboardHandler,
-    ImplLifeSpanHandler, ImplLoadHandler, ImplRequestHandler, KeyEvent, KeyEventType,
+    ImplLifeSpanHandler, ImplLoadHandler, ImplRequest, ImplRequestHandler, KeyEvent, KeyEventType,
     KeyboardHandler, LifeSpanHandler, LoadHandler, RequestHandler, TerminationStatus, WrapClient,
     WrapDisplayHandler, WrapKeyboardHandler, WrapLifeSpanHandler, WrapLoadHandler,
     WrapRequestHandler, wrap_client, wrap_display_handler, wrap_keyboard_handler,
@@ -21,6 +21,22 @@ use crate::favicon;
 use crate::request_policy::{self, GpcHeader};
 use crate::{Signal, SignalSink};
 use aeri_core::keymap::{Chord, Shortcut};
+
+/// A `mailto:` link opens the chosen webmail's compose page in a tab beside
+/// the page, in front. False when no webmail is chosen or it is another
+/// kind of link.
+fn open_in_webmail(opener: TabId, sink: &SignalSink, url: &str) -> bool {
+    let Some(page) = crate::links::compose_for(url) else {
+        return false;
+    };
+    tracing::debug!(%opener, "email link opens in the webmail");
+    sink(Signal::OpenLink {
+        opener,
+        url: page,
+        foreground: true,
+    });
+    true
+}
 
 pub(crate) fn tab_client(tab: TabId, sink: SignalSink) -> Client {
     TabClient::new(tab, sink)
@@ -75,6 +91,10 @@ wrap_client! {
 
         fn keyboard_handler(&self) -> Option<KeyboardHandler> {
             Some(TabKeyboardHandler::new(self.tab, self.sink.clone()))
+        }
+
+        fn find_handler(&self) -> Option<cef::FindHandler> {
+            Some(crate::find::find_handler(self.tab, self.sink.clone()))
         }
     }
 }
@@ -201,7 +221,32 @@ wrap_request_handler! {
             _user_gesture: ::std::os::raw::c_int,
             _is_redirect: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
+            if let Some(request) = request.as_deref()
+                && open_in_webmail(self.tab, &self.sink, &CefString::from(&request.url()).to_string())
+            {
+                return 1;
+            }
             request_policy::reload_cleaned(frame, request) as _
+        }
+
+        // A proxy that asks for a login is answered by the application,
+        // which holds the keychain. A site's own prompt is Chrome's.
+        fn auth_credentials(
+            &self,
+            _browser: Option<&mut Browser>,
+            _origin_url: Option<&CefString>,
+            is_proxy: ::std::os::raw::c_int,
+            host: Option<&CefString>,
+            port: ::std::os::raw::c_int,
+            _realm: Option<&CefString>,
+            _scheme: Option<&CefString>,
+            callback: Option<&mut cef::AuthCallback>,
+        ) -> ::std::os::raw::c_int {
+            let Some(callback) = callback else { return 0 };
+            if is_proxy == 0 {
+                return 0;
+            }
+            crate::links::ask_proxy(&text(host), port, callback.clone()) as _
         }
 
         // Global Privacy Control rides on every request while it is on.
@@ -231,6 +276,9 @@ wrap_request_handler! {
             _user_gesture: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
             use cef::WindowOpenDisposition as To;
+            if open_in_webmail(self.tab, &self.sink, &text(target_url)) {
+                return 1;
+            }
             let foreground = match target_disposition {
                 To::NEW_BACKGROUND_TAB => false,
                 To::NEW_FOREGROUND_TAB | To::NEW_WINDOW | To::NEW_POPUP => true,
@@ -286,6 +334,9 @@ wrap_life_span_handler! {
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             let url = text(target_url);
+            if open_in_webmail(self.tab, &self.sink, &url) {
+                return 1;
+            }
             let Some(client) = client else { return 1 };
             let tab = TabId::next();
             *client = Some(tab_client(tab, self.sink.clone()));

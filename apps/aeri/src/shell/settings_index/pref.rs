@@ -3,7 +3,8 @@
 //! (`aeri_core::prefs`).
 
 use aeri_core::layout::{Glyph, Layout, Side, TabPlace};
-use aeri_core::prefs::{AppPrefs, CloseAfter, Engine, NewTabPlace};
+use aeri_core::prefs::{AppPrefs, CloseAfter, Engine, NewTabPlace, Webmail, clamp_zoom};
+use aeri_core::proxy::ProxyMode;
 
 use super::Value;
 use crate::shell::settings::SettingsModel;
@@ -53,6 +54,20 @@ pub enum Pref {
     ClickIds,
     Gpc,
     Notifications,
+    /// Your mail app, then [`WEBMAIL`].
+    Webmail,
+    /// Off, HTTP, SOCKS5.
+    ProxyMode,
+    Launcher,
+    /// Off, the named engines, then Custom.
+    ShiftEngine,
+    Suggest,
+    NewtabRecent,
+    AddressCommands,
+    Dusk,
+    Capture,
+    /// The percent every site starts at.
+    PageZoom,
 }
 
 /// Search's `SleepPace` waits, in minutes (Sleep.swift:57-63).
@@ -62,6 +77,18 @@ pub const SLEEP_MINUTES: [Option<u64>; 4] = [None, Some(120), Some(30), Some(10)
 pub const CUSTOM_ENGINE: usize = Engine::NAMED.len();
 
 const NEW_PLACES: [NewTabPlace; 3] = [NewTabPlace::Next, NewTabPlace::Top, NewTabPlace::End];
+
+const WEBMAIL: [Webmail; 5] = [
+    Webmail::None,
+    Webmail::Gmail,
+    Webmail::Outlook,
+    Webmail::Fastmail,
+    Webmail::Proton,
+];
+
+/// The place of Custom in the Shift-Return menu: Off, the named engines,
+/// then Custom.
+pub const CUSTOM_SHIFT: usize = Engine::NAMED.len() + 1;
 
 impl Pref {
     pub fn get(self, m: &SettingsModel) -> Value {
@@ -121,6 +148,32 @@ impl Pref {
             Self::ClickIds => Value::On(p.privacy.strip_click_ids),
             Self::Gpc => Value::On(p.privacy.gpc),
             Self::Notifications => Value::On(p.privacy.notifications_ask),
+            Self::Webmail => Value::Pick(
+                WEBMAIL
+                    .iter()
+                    .position(|w| *w == p.general.webmail)
+                    .unwrap_or(0),
+            ),
+            Self::ProxyMode => Value::Pick(
+                ProxyMode::ALL
+                    .iter()
+                    .position(|m| *m == p.proxy.mode)
+                    .unwrap_or(0),
+            ),
+            Self::Launcher => Value::On(p.launcher.on),
+            Self::ShiftEngine => Value::Pick(match &p.browsing.shift_engine {
+                None => 0,
+                Some(engine) => Engine::NAMED
+                    .iter()
+                    .position(|named| named == engine)
+                    .map_or(CUSTOM_SHIFT, |ix| ix + 1),
+            }),
+            Self::Suggest => Value::On(p.browsing.suggest),
+            Self::NewtabRecent => Value::On(p.spaces.newtab_recent),
+            Self::AddressCommands => Value::On(p.spaces.address_commands),
+            Self::Dusk => Value::On(p.appearance.dusk),
+            Self::Capture => Value::On(p.browsing.capture),
+            Self::PageZoom => Value::Pick(usize::from(p.browsing.page_zoom_percent)),
         }
     }
 
@@ -205,6 +258,30 @@ impl Pref {
             Self::ClickIds => prefs.privacy.strip_click_ids = on,
             Self::Gpc => prefs.privacy.gpc = on,
             Self::Notifications => prefs.privacy.notifications_ask = on,
+            Self::Webmail => prefs.general.webmail = WEBMAIL.get(ix).copied().unwrap_or_default(),
+            Self::ProxyMode => {
+                prefs.proxy.mode = ProxyMode::ALL.get(ix).copied().unwrap_or_default();
+            }
+            Self::Launcher => prefs.launcher.on = on,
+            Self::ShiftEngine => match ix {
+                0 => prefs.browsing.shift_engine = None,
+                CUSTOM_SHIFT => {
+                    if !matches!(prefs.browsing.shift_engine, Some(Engine::Custom(_))) {
+                        prefs.browsing.shift_engine = Some(Engine::Custom(String::new()));
+                    }
+                }
+                _ => {
+                    prefs.browsing.shift_engine = Engine::NAMED.get(ix - 1).cloned();
+                }
+            },
+            Self::Suggest => prefs.browsing.suggest = on,
+            Self::NewtabRecent => prefs.spaces.newtab_recent = on,
+            Self::AddressCommands => prefs.spaces.address_commands = on,
+            Self::Dusk => prefs.appearance.dusk = on,
+            Self::Capture => prefs.browsing.capture = on,
+            Self::PageZoom => {
+                prefs.browsing.page_zoom_percent = clamp_zoom(u16::try_from(ix).unwrap_or(100))
+            }
             _ => return false,
         }
         true

@@ -7,7 +7,9 @@
 
 mod content;
 mod controls;
+mod editor;
 mod extras;
+mod key_box;
 mod keys;
 mod pictures;
 mod rail;
@@ -56,6 +58,10 @@ pub struct SettingsWindow {
     lit: Option<&'static str>,
     /// The text fields under rows, by the id of their row.
     fields: HashMap<&'static str, Entity<TextInput>>,
+    /// The site shortcut being written.
+    draft: Option<editor::Draft>,
+    /// The launcher's key box waits for the next key.
+    launcher_listening: bool,
     lit_epoch: u64,
     focus: FocusHandle,
 }
@@ -136,6 +142,8 @@ impl SettingsWindow {
             lit_epoch: 0,
             focus,
             fields,
+            draft: None,
+            launcher_listening: false,
         }
     }
 
@@ -191,6 +199,7 @@ impl SettingsWindow {
         if self.page != page {
             self.page = page;
             self.recording = None;
+            self.launcher_listening = false;
             self.send(SettingsMsg::Page(page));
         }
         cx.notify();
@@ -248,6 +257,9 @@ impl SettingsWindow {
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = event.keystroke.key.to_lowercase();
         let m = &event.keystroke.modifiers;
+        if self.launcher_listening {
+            return self.launcher_key_down(event, cx);
+        }
         let Some(shortcut) = self.recording else {
             if m.platform && key == "f" {
                 window.focus(&self.find.focus_handle(cx), cx);
@@ -265,19 +277,7 @@ impl SettingsWindow {
             cx.notify();
             return;
         }
-        if matches!(
-            key.as_str(),
-            "shift"
-                | "control"
-                | "ctrl"
-                | "alt"
-                | "option"
-                | "platform"
-                | "cmd"
-                | "command"
-                | "function"
-                | "fn"
-        ) {
+        if key_box::is_modifier(&key) {
             return;
         }
         if matches!(key.as_str(), "backspace" | "delete") && !(m.platform || m.alt || m.control) {
@@ -292,21 +292,7 @@ impl SettingsWindow {
             cx.notify();
             return;
         }
-        let mut parts: Vec<&str> = Vec::new();
-        if m.control {
-            parts.push("ctrl");
-        }
-        if m.alt {
-            parts.push("alt");
-        }
-        if m.shift {
-            parts.push("shift");
-        }
-        if m.platform {
-            parts.push("cmd");
-        }
-        parts.push(&key);
-        let keys = parts.join("-");
+        let keys = key_box::keys_of(&key, m);
         self.key_hint = None;
         let again = self.model.conflict.is_some()
             && self.last_keys.as_ref() == Some(&(shortcut, keys.clone()));

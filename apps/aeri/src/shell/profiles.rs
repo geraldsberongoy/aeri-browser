@@ -140,6 +140,8 @@ impl Shell {
         open.extensions = open.context.extensions();
         apply_password_provider(profile, open);
         self.apply_profile_privacy(profile);
+        self.apply_profile_links(profile);
+        self.apply_profile_zoom(profile);
         self.load_workspace(profile);
         let Some(open) = self.open.get_mut(&profile) else {
             return;

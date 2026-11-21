@@ -118,6 +118,28 @@ fn bundle(release: bool) -> Result<()> {
             bail!("could not set {key}: {status}");
         }
     }
+    // The links Aeri can be sent (http, https, mailto) and the pages it can
+    // open (Finder's .html): without these macOS never offers Aeri as the
+    // default browser or email app, and Settings' "Make default" cannot
+    // work. Documents are an alternate, so Aeri never takes .html over.
+    for (key, json) in [
+        (
+            "CFBundleURLTypes",
+            r#"[{"CFBundleURLName":"Web site URL","CFBundleTypeRole":"Viewer","CFBundleURLSchemes":["http","https"]},{"CFBundleURLName":"Email URL","CFBundleTypeRole":"Viewer","CFBundleURLSchemes":["mailto"]}]"#,
+        ),
+        (
+            "CFBundleDocumentTypes",
+            r#"[{"CFBundleTypeName":"HTML document","CFBundleTypeRole":"Viewer","LSHandlerRank":"Alternate","LSItemContentTypes":["public.html","public.xhtml"]}]"#,
+        ),
+    ] {
+        let status = std::process::Command::new("plutil")
+            .args(["-replace", key, "-json", json])
+            .arg(&plist)
+            .status()?;
+        if !status.success() {
+            bail!("could not set {key}: {status}");
+        }
+    }
     // App icon (Light/Dark/Tinted): the Icon Composer document is compiled
     // by actool into Assets.car + AppIcon.icns inside the bundle; the two
     // Info.plist keys point macOS at them. Regenerate the glyph asset with

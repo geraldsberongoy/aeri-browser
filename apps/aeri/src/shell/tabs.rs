@@ -420,6 +420,9 @@ impl Shell {
     }
 
     pub(super) fn engine_event(&mut self, event: Event, cx: &mut App) {
+        self.dusk_event(&event, cx);
+        self.find_event(&event, cx);
+        self.zoom_event(&event);
         let tab_id = event.tab();
         let Some(spot) = self.spot(tab_id) else {
             return;

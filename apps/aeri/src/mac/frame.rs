@@ -224,6 +224,15 @@ impl Frame {
     /// The frame has nothing to type into: when it becomes key (after a
     /// restore or a Space switch), hand the keyboard to what the Person sees.
     fn forward_key(&self) {
+        // The find bar is up: the keyboard is the page's if it is there
+        // (the Person clicked it), else the bar's. Taking it for the page
+        // whenever the frame turns main sent the first ⌘F's typing away.
+        if let Some(find) = self.find_window() {
+            if !self.active_window().is_some_and(|tab| tab.isKeyWindow()) && !find.isKeyWindow() {
+                find.makeKeyWindow();
+            }
+            return;
+        }
         if self.bar_visible.get() {
             if let Some(bar) = self.bar.borrow().as_ref() {
                 bar.makeKeyWindow();
@@ -258,7 +267,7 @@ impl Frame {
     /// Where the active tab's window goes, in screen coordinates: the whole
     /// window with nothing pinned, else a card, or the page edge to edge,
     /// beside the pinned chrome.
-    fn page_rect(&self, frame: &NSWindow) -> NSRect {
+    pub(super) fn page_rect(&self, frame: &NSWindow) -> NSRect {
         let rect = frame.frame();
         let i = self.insets(frame);
         NSRect::new(
@@ -342,7 +351,7 @@ impl Frame {
         self.motion.set(motion);
     }
 
-    fn active_window(&self) -> Option<Retained<NSWindow>> {
+    pub(super) fn active_window(&self) -> Option<Retained<NSWindow>> {
         let active = self.active.get()?;
         self.tabs
             .borrow()
@@ -419,6 +428,7 @@ impl Frame {
                 bar.setFrame_display(page, self.bar_visible.get());
             }
         }
+        self.place_find(page);
     }
 
     /// Shows `tab`'s window over the frame and hides the previous one.
@@ -445,13 +455,18 @@ impl Frame {
 
     /// Keeps the overlays and then the address bar above whichever tab
     /// window is in front.
-    fn raise_children(&self) {
+    pub(super) fn raise_children(&self) {
         let Some(frame) = self.frame.borrow().clone() else {
             return;
         };
         let overlays = self.overlays.borrow().clone();
         let bar = self.bar.borrow().clone();
-        for child in overlays.iter().flatten().chain(bar.iter()) {
+        let find = self.find_window();
+        for child in find
+            .iter()
+            .chain(overlays.iter().flatten())
+            .chain(bar.iter())
+        {
             frame.removeChildWindow(child);
             // SAFETY: AppKit call on the main thread.
             unsafe { frame.addChildWindow_ordered(child, NSWindowOrderingMode::Above) };
@@ -508,9 +523,13 @@ impl Frame {
         window.orderOut(None);
     }
 
-    /// Brings the window to the front and gives it the keyboard.
+    /// Brings the window to the front and gives it the keyboard, out of the
+    /// Dock if it was in it.
     pub fn bring_forward(&self) {
         if let Some(frame) = self.frame.borrow().as_ref() {
+            if frame.isMiniaturized() {
+                frame.deminiaturize(None);
+            }
             frame.makeKeyAndOrderFront(None);
         }
     }
@@ -672,7 +691,7 @@ extern "C-unwind" fn shares_parent_key_state(
 /// stay coloured. Overrides AppKit's private `_sharesParentKeyState` (NO by
 /// default; Chromium uses the same hook for its child widgets) once per
 /// class; windows without a parent are unaffected.
-fn share_parent_key_state(window: &NSWindow) {
+pub(super) fn share_parent_key_state(window: &NSWindow) {
     // SAFETY: objc runtime calls on the main thread; the IMP matches the
     // `B@:` encoding (BOOL return, id self, SEL).
     unsafe {

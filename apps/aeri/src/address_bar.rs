@@ -42,7 +42,15 @@ actions!(
         CommandPalette,
         Settings,
         Quit,
-        ToggleFullScreen
+        ToggleFullScreen,
+        Find,
+        FindNext,
+        FindPrevious,
+        ZoomIn,
+        ZoomOut,
+        ActualSize,
+        DarkenSite,
+        PauseDarkening
     ]
 );
 
@@ -57,6 +65,7 @@ pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
     keymap
         .bindings()
         .into_iter()
+        .chain(keymap.alias_bindings())
         .filter_map(|(shortcut, chord)| {
             let action: Box<dyn Action> = match shortcut {
                 Shortcut::FocusAddressBar => Box::new(FocusAddressBar),
@@ -78,6 +87,14 @@ pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
                 Shortcut::Settings => Box::new(Settings),
                 Shortcut::ToggleFullScreen => Box::new(ToggleFullScreen),
                 Shortcut::Quit => Box::new(Quit),
+                Shortcut::DarkenSite => Box::new(DarkenSite),
+                Shortcut::Find => Box::new(Find),
+                Shortcut::FindNext => Box::new(FindNext),
+                Shortcut::FindPrevious => Box::new(FindPrevious),
+                Shortcut::ZoomIn => Box::new(ZoomIn),
+                Shortcut::ZoomOut => Box::new(ZoomOut),
+                Shortcut::ActualSize => Box::new(ActualSize),
+                Shortcut::PauseDarkening => Box::new(PauseDarkening),
             };
             KeyBinding::load(&chord.to_string(), action, None, false, None, cx)
                 .inspect_err(|err| tracing::warn!(%err, keys = %chord, "unusable keys"))
@@ -128,6 +145,9 @@ pub struct AddressBar {
     picked: bool,
     rows: Vec<BarRow>,
     selected: usize,
+    /// A row is chosen: false while Recent places stand under an empty
+    /// field until an arrow key chooses one, so Return opens nothing.
+    chosen: bool,
     list: ScrollHandle,
     /// The frosted backdrop under the card, and where it is placed now.
     blur: Option<Blur>,
@@ -148,11 +168,25 @@ impl AddressBar {
         });
         cx.subscribe(&input, |this, _, event: &InputEvent, cx| match event {
             InputEvent::Submitted(text) => {
+                if !this.chosen {
+                    return;
+                }
                 let pick = this
                     .rows
                     .get(this.selected)
                     .map_or_else(|| Pick::Text(text.clone()), |row| row.pick.clone());
                 this.pick(pick);
+            }
+            InputEvent::SubmittedShifted(text) => {
+                let otherwise = this
+                    .rows
+                    .get(this.selected)
+                    .filter(|_| this.chosen)
+                    .map_or_else(|| Pick::Text(text.clone()), |row| row.pick.clone());
+                this.pick(Pick::Shift {
+                    text: text.clone(),
+                    otherwise: Box::new(otherwise),
+                });
             }
             InputEvent::Cancelled => this.dismiss(),
             InputEvent::Edited(text) => this.send(AppMsg::BarQuery {
@@ -183,6 +217,7 @@ impl AddressBar {
             picked: false,
             rows: Vec::new(),
             selected: 0,
+            chosen: true,
             list: ScrollHandle::new(),
             blur: None,
             blurred: None,
@@ -207,7 +242,13 @@ impl AddressBar {
             return;
         }
         let last = self.rows.len() as isize - 1;
-        self.selected = (self.selected as isize + step).clamp(0, last) as usize;
+        let from = if self.chosen {
+            self.selected as isize
+        } else {
+            -step.signum()
+        };
+        self.chosen = true;
+        self.selected = (from + step).clamp(0, last) as usize;
         self.list.scroll_to_item(self.selected);
         cx.notify();
     }
@@ -262,6 +303,7 @@ impl AddressBar {
         self.picked = false;
         self.rows.clear();
         self.selected = 0;
+        self.chosen = true;
         // A blank tab asks for an address; over a page, the field says it
         // will use this tab.
         let (placeholder, text) = match mode {
@@ -289,6 +331,7 @@ impl AddressBar {
         self.editing = false;
         self.rows.clear();
         self.selected = 0;
+        self.chosen = true;
         let text = self.shown_text();
         self.input.update(cx, |input, cx| {
             input.set_placeholder(BLANK_PLACEHOLDER, cx);
@@ -317,10 +360,28 @@ impl AddressBar {
         if self.input.read(cx).text() != query {
             return;
         }
+        self.chosen = true;
         self.selected = selected.min(rows.len().saturating_sub(1));
         self.rows = rows;
         self.list.scroll_to_item(self.selected);
         cx.notify();
+    }
+
+    /// Recent places under an empty field: listed, none chosen yet.
+    pub fn set_recent(&mut self, rows: Vec<BarRow>, cx: &mut Context<Self>) {
+        if !self.input.read(cx).text().is_empty() {
+            return;
+        }
+        self.selected = 0;
+        self.chosen = rows.is_empty();
+        self.rows = rows;
+        self.list.scroll_to_item(0);
+        cx.notify();
+    }
+
+    /// The row chosen now, for a refresh that keeps it.
+    pub fn chosen_row(&self) -> Option<usize> {
+        self.chosen.then_some(self.selected)
     }
 
     fn shortcut(&mut self, shortcut: Shortcut) {
@@ -391,6 +452,24 @@ impl Render for AddressBar {
             .on_action(cx.listener(|this, _: &ToggleFullScreen, _, _| {
                 this.shortcut(Shortcut::ToggleFullScreen)
             }))
+            .on_action(
+                cx.listener(|this, _: &DarkenSite, _, _| this.shortcut(Shortcut::DarkenSite)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PauseDarkening, _, _| {
+                    this.shortcut(Shortcut::PauseDarkening)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &Find, _, _| this.shortcut(Shortcut::Find)))
+            .on_action(cx.listener(|this, _: &FindNext, _, _| this.shortcut(Shortcut::FindNext)))
+            .on_action(
+                cx.listener(|this, _: &FindPrevious, _, _| this.shortcut(Shortcut::FindPrevious)),
+            )
+            .on_action(cx.listener(|this, _: &ZoomIn, _, _| this.shortcut(Shortcut::ZoomIn)))
+            .on_action(cx.listener(|this, _: &ZoomOut, _, _| this.shortcut(Shortcut::ZoomOut)))
+            .on_action(
+                cx.listener(|this, _: &ActualSize, _, _| this.shortcut(Shortcut::ActualSize)),
+            )
             .children(layers)
     }
 }

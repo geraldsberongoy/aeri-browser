@@ -27,6 +27,7 @@ use cef::{
     wrap_browser_view_delegate, wrap_dev_tools_message_observer, wrap_window_delegate,
 };
 
+use crate::cdp_pages::{self, Capture, Cdp};
 use crate::client::tab_client;
 use crate::profile::popups_allowed;
 use crate::{DevTools, Error, ProfileContext, Signal, SignalSink};
@@ -59,6 +60,8 @@ struct State {
     /// The page's own DevTools session, watched for the tab's life: the
     /// window id answer and popups Chrome refused.
     devtools: RefCell<Option<Registration>>,
+    /// Commands on the page's own session (Dusk, Capture).
+    cdp: Rc<Cdp>,
 }
 
 /// Message ids on a tab's own DevTools session (only Aeri sends on it).
@@ -163,6 +166,7 @@ impl TabWindow {
             chrome_window_id: Cell::default(),
             window_id_request: RefCell::default(),
             devtools: RefCell::default(),
+            cdp: Rc::default(),
         });
         let mut delegate = AeriWindowDelegate::new(state.clone());
         window_create_top_level(Some(&mut delegate)).ok_or(Error::BrowserView)?;
@@ -216,6 +220,73 @@ impl TabWindow {
         self.state.view.request_focus();
         if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             host.set_focus(1);
+        }
+    }
+
+    /// Finds `text` in the page and highlights the matches; the page's
+    /// answers arrive as [`Signal::Find`]. A new search (`next` false)
+    /// starts at the match nearest the top or selection; with `next` it
+    /// continues the last search, `forward` or backward.
+    pub fn find(&self, text: &str, forward: bool, match_case: bool, next: bool) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            host.find(
+                Some(&CefString::from(text)),
+                forward.into(),
+                match_case.into(),
+                next.into(),
+            );
+        }
+    }
+
+    /// Ends the search; `clear_selection` drops the highlight of the active
+    /// match as well.
+    pub fn stop_finding(&self, clear_selection: bool) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            host.stop_finding(clear_selection.into());
+        }
+    }
+
+    /// How big the page is drawn, in percent (100: its own size).
+    pub fn zoom_percent(&self) -> Option<f64> {
+        let host = self.browser()?.host()?;
+        Some(aeri_core::zoom::percent_of(host.zoom_level()))
+    }
+
+    /// Draws the page at `percent`. Chromium keeps it for the page's site.
+    pub fn set_zoom_percent(&self, percent: f64) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            host.set_zoom_level(aeri_core::zoom::level_of(percent));
+        }
+    }
+
+    /// Dusk: darkens the page if it has no dark look of its own (`on`), or
+    /// leaves it as it is. Safe to call as often as the answer changes.
+    pub fn set_dusk(&self, on: bool) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            cdp_pages::set_dark(&self.state.cdp, &host, on);
+        }
+    }
+
+    /// Capture: raises the layer over the page to choose an area, an
+    /// element or the whole page; `done` gets the picture. `accent` is the
+    /// layer's colour as "r, g, b". Runs on the UI thread, inside a CEF
+    /// callback, so it must only enqueue.
+    pub fn capture(&self, accent: &str, done: impl FnOnce(Capture) + 'static) {
+        let Some(host) = self.browser().and_then(|browser| browser.host()) else {
+            return done(Capture::Failed("the page is not ready".into()));
+        };
+        cdp_pages::capture(&self.state.cdp, &host, accent, done);
+    }
+
+    /// Whether the capture layer is up over the page.
+    pub fn capturing(&self) -> bool {
+        self.state.cdp.capturing()
+    }
+
+    /// Puts the capture layer away; nothing is taken.
+    pub fn cancel_capture(&self) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            cdp_pages::cancel_capture(&self.state.cdp, &host);
         }
     }
 
@@ -293,10 +364,13 @@ wrap_dev_tools_message_observer! {
             success: ::std::os::raw::c_int,
             result: Option<&[u8]>,
         ) {
+            let Some(state) = self.state.upgrade() else { return };
+            if state.cdp.answer(message_id, success != 0, result) {
+                return;
+            }
             if message_id != WINDOW_FOR_TARGET {
                 return;
             }
-            let Some(state) = self.state.upgrade() else { return };
             let Some(waiting) = state.window_id_request.borrow_mut().take() else { return };
             let window_id = (success != 0)
                 .then_some(result)

@@ -187,6 +187,12 @@ pub enum Action {
     WebStore,
     /// Choose the folder downloads are saved to.
     ChooseDownloads,
+    /// Ask macOS to send links from other apps to Aeri.
+    MakeDefaultBrowser,
+    /// Ask macOS to send `mailto:` links from other apps to Aeri.
+    MakeDefaultMail,
+    /// The proxy's user name and password, asked for now.
+    ProxyLogin,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -229,14 +235,12 @@ pub enum Control {
     },
     Pills(&'static [Pill]),
     /// A pill that is a check once what it did holds ("Make default").
-    #[allow(dead_code, reason = "no row needs a done state yet")]
     State {
         pill: Pill,
         done: fn(&SettingsModel) -> bool,
     },
     /// A stepper over a range (page zoom): `Value::Pick(value)`; clicking
     /// the value goes `home`.
-    #[allow(dead_code, reason = "page zoom has no effect yet, so no row")]
     Steps {
         pref: Pref,
         min: u16,
@@ -244,6 +248,10 @@ pub enum Control {
         step: u16,
         home: u16,
     },
+    /// A key box for the launcher's key, with its "Use" pill and refusal.
+    Key,
+    /// The site shortcuts: Add, or Cancel and Save while one is written.
+    Keywords,
     /// "Always on": a row about something that has no switch.
     #[allow(dead_code, reason = "no row is only a note yet")]
     Always,
@@ -353,6 +361,7 @@ pub fn find(typed: &str) -> Vec<&'static Item> {
 
 mod data;
 mod pref;
+mod rules;
 pub use data::{GROUPS, ITEMS};
 pub use pref::{Pref, SLEEP_MINUTES};
 
@@ -380,9 +389,9 @@ mod tests {
         let shown: Vec<Page> = Page::blocks().into_iter().flatten().collect();
         assert!(shown.contains(&Page::General));
         assert!(shown.contains(&Page::Browsing));
-        assert!(!shown.contains(&Page::Spaces));
+        assert!(shown.contains(&Page::Spaces));
         assert_eq!(Page::from_key("downloads"), Some(Page::General));
-        assert_eq!(Page::from_key("spaces"), None);
+        assert_eq!(Page::from_key("spaces"), Some(Page::Spaces));
     }
 
     #[test]

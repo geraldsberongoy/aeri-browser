@@ -29,15 +29,20 @@ mod appearance;
 mod bar;
 mod chrome;
 mod favourites;
+mod find;
 mod general_prefs;
 mod internal;
+mod launcher;
 mod library;
+mod links;
 mod msg;
+mod pages;
 mod palette;
 mod passwords;
 mod prefs;
 mod privacy;
 mod profiles;
+mod proxy;
 mod quit;
 mod resources;
 mod resting;
@@ -48,6 +53,7 @@ mod shortcuts;
 mod site_icons;
 mod space_settings;
 mod spaces;
+mod suggest;
 mod tab_look;
 mod tab_menu;
 mod tabs;
@@ -55,6 +61,7 @@ mod theme_files;
 mod themes;
 mod trust;
 mod windows;
+mod zoom;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -76,6 +83,8 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{App, Menu, MenuItem, WindowHandle, actions};
 
 pub use self::bar::{BarRow, Pick};
+pub use self::find::FindMsg;
+pub use self::links::open_urls;
 pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand, ThemeEditorMsg};
 use self::profiles::remove_deleted_profiles;
 use self::quit::quit_on_signals;
@@ -251,6 +260,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     SHELL_TX.with_borrow_mut(|slot| *slot = Some(tx.clone()));
     // Before any window opens: every view paints from the theme.
     appearance::start(&db, tx.clone(), cx);
+    launcher::startup_switches(&prefs);
     let runtime_config = RuntimeConfig {
         root_cache_path: root_cache_path.clone(),
         log_file: Some(config.data_dir.join("chromium.log")),
@@ -268,6 +278,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         })
         .context("starting CEF")?;
     aeri_cef::set_download_ask(prefs.general.downloads_ask);
+    links::start(&prefs, &tx);
 
     let keymap = settings::load_keymap(&db);
     settings::install_keymap(&keymap, cx);
@@ -297,6 +308,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         let _ = command.unbounded_send(AppMsg::CommandHeld(held));
     });
     quit_on_signals(tx.clone());
+    launcher::start(&tx);
     let resting = Resting::start(&db, config.rest_after, tx.clone(), cx);
     let chrome = chrome::Chrome::load(&db);
 
@@ -449,9 +461,20 @@ impl Shell {
                 self.popup_blocked(opener, url, cx)
             }
             AppMsg::Signal(Signal::Download(download)) => self.download_updated(download, cx),
+            AppMsg::Signal(Signal::Find {
+                tab,
+                count,
+                ordinal,
+                done,
+            }) => self.find_result(tab, count, ordinal, done, cx),
             AppMsg::TabClosed { window, tab } => self.tab_closed(window, tab, cx),
             AppMsg::CloseWindow { window } => self.close_window(window, cx),
             AppMsg::BarQuery { window, text } => self.bar_query(window, text, cx),
+            AppMsg::BarSuggestions {
+                window,
+                text,
+                words,
+            } => self.bar_suggested(window, text, words, cx),
             AppMsg::BarPick { window, pick } => self.bar_pick(window, pick, cx),
             AppMsg::Library(msg) => self.library_msg(msg, cx),
             AppMsg::AddressDismissed { window, session } => self.dismiss_bar(window, session, cx),
@@ -542,6 +565,10 @@ impl Shell {
             AppMsg::SetTabLook { tab, name, icon } => self.set_tab_look(tab, name, icon, cx),
             AppMsg::TabEditorClosed => self.tab_editor = None,
             AppMsg::WindowKey { window } => self.window_key(window, cx),
+            AppMsg::OpenExternal(urls) => self.open_external(urls, cx),
+            AppMsg::DefaultsChanged => self.refresh_settings(cx),
+            AppMsg::ProxyLogin => self.proxy_login_prompt(),
+            AppMsg::ProxyUser(name) => self.set_proxy_user(name, cx),
             AppMsg::Reopen => {
                 if self.windows.is_empty() && !self.quitting {
                     match self.db.launch_profile() {
@@ -555,6 +582,8 @@ impl Shell {
             AppMsg::Resources(msg) => self.resources_msg(msg, cx),
             AppMsg::SystemAppearanceChanged => self.system_appearance_changed(cx),
             AppMsg::CommandHeld(held) => self.command_held(held, cx),
+            AppMsg::Launcher(msg) => self.launcher_msg(msg, cx),
+            AppMsg::Find(msg) => self.find_msg(msg, cx),
             AppMsg::Chrome(msg) => self.chrome_msg(msg, cx),
             AppMsg::ThemeEditor(msg) => self.theme_editor_msg(msg, cx),
             AppMsg::ImportTheme { window, path } => self.import_theme(window, &path, cx),

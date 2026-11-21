@@ -15,7 +15,7 @@ use aeri_core::credentials::PasswordProvider;
 use aeri_core::internal::{InternalPage, Kind};
 use aeri_core::keymap::{BindError, Chord, Keymap, OnConflict, Shortcut};
 use aeri_core::layout::Layout;
-use aeri_core::prefs::AppPrefs;
+use aeri_core::prefs::{AppPrefs, Keyword};
 use aeri_core::store::AppDb;
 use gpui::{App, WindowHandle};
 
@@ -62,6 +62,14 @@ pub struct SettingsModel {
     pub conflict: Option<KeyConflict>,
     /// Why the last key change was refused outright.
     pub key_error: Option<String>,
+    /// Aeri is the browser macOS sends http and https links to.
+    pub default_browser: bool,
+    /// Aeri is the mail app macOS sends `mailto:` links to.
+    pub default_mail: bool,
+    /// Why macOS would not give Aeri the launcher's key.
+    pub launcher_refusal: Option<String>,
+    /// Why the key last typed in the launcher's key box was turned down.
+    pub launcher_hint: Option<&'static str>,
 }
 
 /// A theme of the library, as Settings lists it.
@@ -142,6 +150,12 @@ pub enum SettingsMsg {
         x: f32,
         y: f32,
     },
+    /// The site shortcuts, as the editor leaves them.
+    Keywords(Vec<Keyword>),
+    /// Keys recorded for the launcher, in GPUI keystroke form.
+    LauncherKey(String),
+    /// ⌫ in the launcher's key box.
+    LauncherClear,
 }
 
 /// What the Settings tabs wait on: a key change that hit another command's
@@ -152,6 +166,7 @@ pub(super) struct Settings {
     /// A key change waiting for Swap or Replace.
     pending: Option<(Shortcut, Chord)>,
     key_error: Option<String>,
+    launcher_hint: Option<&'static str>,
 }
 
 /// The saved keymap, or the defaults.
@@ -280,6 +295,16 @@ impl Shell {
                 self.key_menu(window_id, shortcut, x, y, cx);
                 return;
             }
+            SettingsMsg::Keywords(keywords) => {
+                self.change_prefs(|prefs| prefs.browsing.keywords = keywords, cx);
+            }
+            SettingsMsg::LauncherKey(keys) => {
+                self.settings.launcher_hint = self.record_launcher_key(&keys, cx).err();
+            }
+            SettingsMsg::LauncherClear => {
+                self.settings.launcher_hint = None;
+                self.clear_launcher_key(cx);
+            }
         }
         self.refresh_settings(cx);
     }
@@ -343,6 +368,9 @@ impl Shell {
             }
             Action::SiteSettings => self.open_page(window_id, SITE_SETTINGS, cx),
             Action::WebStore => self.open_page(window_id, WEB_STORE, cx),
+            Action::MakeDefaultBrowser => self.make_default_browser(),
+            Action::MakeDefaultMail => self.make_default_mail(),
+            Action::ProxyLogin => self.edit_proxy_login(),
             Action::ChooseDownloads => {
                 let current = self
                     .prefs
@@ -578,6 +606,10 @@ impl Shell {
                 })
             }),
             key_error,
+            default_browser: Self::is_default_browser(),
+            default_mail: Self::is_default_mail(),
+            launcher_refusal: super::launcher::refusal(),
+            launcher_hint: self.settings.launcher_hint,
         }
     }
 }

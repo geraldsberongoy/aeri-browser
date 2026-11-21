@@ -42,6 +42,11 @@ pub enum PaletteCommand {
     NewProfile,
     ManageProfiles,
     Settings,
+    /// Settings › Browsing › Capture pages.
+    Capture,
+    /// Settings › Appearance › Darken pages that stay light.
+    DarkenSite,
+    PauseDarkening,
     Quit,
 }
 
@@ -75,11 +80,14 @@ const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand::PreviousSpace,
     PaletteCommand::NewProfile,
     PaletteCommand::ManageProfiles,
+    PaletteCommand::Capture,
+    PaletteCommand::DarkenSite,
+    PaletteCommand::PauseDarkening,
     PaletteCommand::Quit,
 ];
 
 /// The keyboard command a palette command runs, if it is one.
-fn shortcut_of(command: PaletteCommand) -> Option<Shortcut> {
+pub(super) fn shortcut_of(command: PaletteCommand) -> Option<Shortcut> {
     Some(match command {
         PaletteCommand::NewTab => Shortcut::NewTab,
         PaletteCommand::NewWindow => Shortcut::NewWindow,
@@ -94,6 +102,8 @@ fn shortcut_of(command: PaletteCommand) -> Option<Shortcut> {
         PaletteCommand::PreviousSpace => Shortcut::PreviousSpace,
         PaletteCommand::Settings => Shortcut::Settings,
         PaletteCommand::Quit => Shortcut::Quit,
+        PaletteCommand::DarkenSite => Shortcut::DarkenSite,
+        PaletteCommand::PauseDarkening => Shortcut::PauseDarkening,
         _ => return None,
     })
 }
@@ -119,7 +129,9 @@ impl Shell {
         let mut rows: Vec<BarRow> = COMMANDS
             .iter()
             .map(|&command| (command, self.command_title(window_id, command)))
-            .filter(|(_, title)| matches(&words, title))
+            .filter(|(command, title)| {
+                self.pages_command_listed(*command) && matches(&words, title)
+            })
             .map(|(command, title)| BarRow {
                 title,
                 detail: String::new(),
@@ -163,7 +175,7 @@ impl Shell {
         rows.extend(self.layout_rows(&words));
         let ranked = suggest::rank(text, self.candidates(window_id, text), now());
         rows.extend(ranked.suggestions.iter().map(suggestion_row));
-        rows.extend(typed_row(text, self.engine()));
+        rows.extend(typed_row(text, &self.prefs().browsing));
         rows
     }
 
@@ -225,6 +237,10 @@ impl Shell {
             PaletteCommand::ManageProfiles => "Manage Profiles…",
             PaletteCommand::Settings => "Settings…",
             PaletteCommand::Quit => "Quit Aeri",
+            PaletteCommand::Capture => "Capture…",
+            PaletteCommand::DarkenSite => "Darken This Site",
+            PaletteCommand::PauseDarkening if self.dusk_paused() => "Resume Darkening",
+            PaletteCommand::PauseDarkening => "Pause Darkening",
         };
         title.to_owned()
     }
@@ -261,6 +277,7 @@ impl Shell {
             PaletteCommand::ShowDownloads => self.open_page(window_id, DOWNLOADS_PAGE, cx),
             PaletteCommand::ClearBrowsingData => self.open_page(window_id, CLEAR_DATA_PAGE, cx),
             PaletteCommand::ManagePasswords => self.open_page(window_id, PASSWORDS_PAGE, cx),
+            PaletteCommand::Capture => self.capture_page(window_id),
             PaletteCommand::ShowResources => self.show_resources(window_id, cx),
             PaletteCommand::PinSidebar => self.chrome_msg(
                 ChromeMsg::Pin {

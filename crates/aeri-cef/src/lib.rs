@@ -5,11 +5,15 @@
 //! used here runs on the main thread (CEF's UI thread on macOS with
 //! `external_message_pump`).
 
+mod cdp_pages;
 mod client;
 mod devtools;
 mod downloads;
 mod extensions;
 mod favicon;
+mod fetch;
+mod find;
+mod links;
 mod orphan;
 mod preferences;
 mod profile;
@@ -30,9 +34,12 @@ use aeri_core::engine::Event;
 use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::keymap::{Chord, Keymap, Shortcut};
 
+pub use cdp_pages::Capture;
 pub use devtools::DevTools;
 pub use downloads::{cancel_download, set_download_ask, set_download_dir};
 pub use extensions::Extension;
+pub use fetch::{Fetch, fetch_text};
+pub use links::{ProxyLogin, proxy_prefs, set_proxy_login, set_webmail};
 pub use preferences::{PrefSet, PrefValue};
 pub use profile::{ExtensionsWatch, ProfileContext};
 pub use request_policy::set_request_policy;
@@ -92,6 +99,15 @@ pub enum Signal {
         url: String,
     },
     Download(Download),
+    /// What a page counted for Find on Page (`TabWindow::find`): `count`
+    /// matches, `ordinal` the active one (1-based, 0 for none); `done`
+    /// when the page has finished counting.
+    Find {
+        tab: TabId,
+        count: i32,
+        ordinal: i32,
+        done: bool,
+    },
 }
 
 /// A download's progress (Phase 9).

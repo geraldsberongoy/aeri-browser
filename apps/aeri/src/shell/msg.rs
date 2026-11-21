@@ -32,6 +32,12 @@ pub enum AppMsg {
         window: u64,
         text: String,
     },
+    /// The search engine answered for `text`: its suggested `words`.
+    BarSuggestions {
+        window: u64,
+        text: String,
+        words: Vec<String>,
+    },
     /// Return or a click on a bar row.
     BarPick {
         window: u64,
@@ -194,6 +200,14 @@ pub enum AppMsg {
     },
     /// The Dock icon was clicked.
     Reopen,
+    /// Another app handed Aeri links (`shell::open_urls`).
+    OpenExternal(Vec<String>),
+    /// Whether Aeri is the default browser or email app may have changed.
+    DefaultsChanged,
+    /// The proxy asks for a login: the sheet.
+    ProxyLogin,
+    /// The login the Person gave the proxy: its user name.
+    ProxyUser(String),
     /// Once a minute: rest tabs unseen past the Person's period, or while
     /// memory stays short.
     RestCheck,
@@ -204,6 +218,8 @@ pub enum AppMsg {
     SystemAppearanceChanged,
     /// ⌘ went down or up anywhere in the app (tab numbers).
     CommandHeld(bool),
+    Launcher(super::launcher::LauncherMsg),
+    Find(super::find::FindMsg),
     Chrome(ChromeMsg),
     ThemeEditor(ThemeEditorMsg),
     /// The open panel chose a theme file to add to the library.

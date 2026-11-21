@@ -333,7 +333,7 @@ impl AddressBar {
     ) -> AnyElement {
         let pick = row.pick.clone();
         let t = theme::tokens_in(self.window_id, cx);
-        let selected = ix == self.selected;
+        let selected = self.chosen && ix == self.selected;
         // The key text (the address, `www.` dropped) first, the page's
         // title after it.
         let (key, title) = if row.detail.is_empty() {
@@ -343,7 +343,7 @@ impl AddressBar {
         };
         let key = key.strip_prefix("www.").unwrap_or(key);
         let name = match &row.pick {
-            Pick::Text(_) => "magnifyingglass",
+            Pick::Text(_) | Pick::Search(_) => "magnifyingglass",
             Pick::Open(_) => "clock.arrow.circlepath",
             Pick::Tab(_) => "macwindow",
             _ => "command",

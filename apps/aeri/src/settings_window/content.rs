@@ -304,6 +304,11 @@ impl SettingsWindow {
                 .live_detail
                 .map_or_else(|| item.detail.to_owned(), |f| f(&self.model)),
         };
+        let detail = if counts && matches!(item.control, Control::Keywords) {
+            self.keywords_detail(item, cx)
+        } else {
+            detail
+        };
         let (control, note) = self.control(item, t, still, cx);
         let row = Row {
             id: SharedString::from(format!("row-{}-{}", item.id, u8::from(searched))),
@@ -318,7 +323,7 @@ impl SettingsWindow {
             note,
         };
         let row = self.row(row, t, cx);
-        match self.under_field(item, t) {
+        match self.below(item, t, cx) {
             Some(under) => div()
                 .flex()
                 .flex_col()
@@ -433,6 +438,8 @@ impl SettingsWindow {
                 });
                 (control, None)
             }
+            Control::Key => (self.launcher_key(t, cx), None),
+            Control::Keywords => (self.keywords_control(t, cx), None),
             Control::Always => (always_on(t), None),
         }
     }

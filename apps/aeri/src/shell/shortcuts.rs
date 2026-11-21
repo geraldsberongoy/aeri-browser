@@ -76,6 +76,14 @@ impl Shell {
                     self.later(move |_| frame.toggle_fullscreen());
                 }
             }
+            Shortcut::DarkenSite => self.toggle_dusk_site(window_id, cx),
+            Shortcut::PauseDarkening => self.pause_dusk(cx),
+            Shortcut::Find => self.open_find(window_id, cx),
+            Shortcut::FindNext => self.find_step(window_id, true),
+            Shortcut::FindPrevious => self.find_step(window_id, false),
+            Shortcut::ZoomIn => self.zoom_by(window_id, true),
+            Shortcut::ZoomOut => self.zoom_by(window_id, false),
+            Shortcut::ActualSize => self.zoom_reset(window_id),
         }
     }
 }

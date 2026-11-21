@@ -427,6 +427,7 @@ impl Shell {
     /// Mirrors the window's favourites, tabs and spaces in the sidebar and
     /// the shown tab in the address bar and the strip.
     pub(super) fn refresh_window(&self, window_id: u64, cx: &mut App) {
+        self.find_follow_shown(window_id, cx);
         let Some(w) = self.window(window_id) else {
             return;
         };
@@ -611,6 +612,7 @@ impl Shell {
     }
 
     pub(super) fn remove_window(&mut self, window_id: u64, cx: &mut App) {
+        self.close_find_window(window_id, cx);
         let Some(index) = self.windows.iter().position(|w| w.id == window_id) else {
             return;
         };

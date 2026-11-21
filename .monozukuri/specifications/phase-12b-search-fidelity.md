@@ -50,7 +50,7 @@ naming the Search file they come from.
 | 2 | done (`dd9f167`); parity pass against Search.app side by side (below) |
 | 3 | pending |
 | 4 | pending |
-| 5 | wave 0-1 built: Settings tab, prefs store, General/Tabs/Browsing/Privacy rows; waves 2-3 pending |
+| 5 | waves 0-2 built: Settings tab, prefs store; General, Tabs, Browsing (engine, Shift-Return, suggestions, site shortcuts, page zoom, capture), Spaces & Pins (recent places, commands), Privacy (tracking, click IDs, GPC, notifications, proxy), Keyboard (launcher), Appearance (dusk), default browser, webmail; find on page. Wave 3 pending |
 
 ## Evidence ledger
 
@@ -78,6 +78,10 @@ naming the Search file they come from.
 | Double-click on the column's empty band zooms the window and back | Observed | frame 1280×820 → 1800×1130 → 1280×820 |
 | Full column ↔ icons glides with the page | Observed | four captures during ⌘S: page edge between 232 and 60 mid-way |
 | App icon light/dark/tinted in Assets.car | Tested | `assetutil --info`: Aqua, DarkAqua, Tintable |
+| Find on page: capsule top right, live count, ⌘G steps, Esc clears; works on first ⌘F | Observed | "chrome" → "1 of 5" on first use; "browser" → "1 of 178"; ⌘G "2 of 652" |
+| ⌘+ zooms the page | Observed | capture after ⌘+ twice |
+| New rows on General, Browsing, Spaces & Pins, Privacy (Proxy), Keyboard (From any app) | Observed | captures of each page |
+| Launcher key, proxy, default browser, webmail, dusk, capture | Tested (build) | not driven on screen: they change the owner's system state or need a proxy |
 
 ## Residual risks
 

@@ -63,6 +63,10 @@ impl Shell {
     pub(super) fn apply_prefs(&mut self, before: &AppPrefs, cx: &mut App) {
         self.apply_general_prefs(before, cx);
         self.apply_privacy(&before.privacy, cx);
+        self.apply_launcher(before);
+        self.apply_links(before, cx);
+        self.apply_pages(before, cx);
+        self.apply_zoom_prefs(before, cx);
     }
 
     /// New downloads go to the chosen folder, else the default one

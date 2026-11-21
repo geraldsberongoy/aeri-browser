@@ -19,7 +19,7 @@ use crate::shell::AppMsg;
 macro_rules! route {
     ($el:expr, $cx:expr, $($action:ty => $shortcut:expr),* $(,)?) => {
         $el$(.on_action($cx.listener(|this, _: &$action, _, cx| {
-            if this.recording.is_some() {
+            if this.listening() {
                 cx.propagate();
             } else {
                 this.shortcut($shortcut);
@@ -62,7 +62,7 @@ impl SettingsWindow {
             ToggleFullScreen => Shortcut::ToggleFullScreen,
         );
         el.on_action(cx.listener(|this, action: &SelectTab, _, cx| {
-            if this.recording.is_some() {
+            if this.listening() {
                 cx.propagate();
             } else {
                 this.shortcut(Shortcut::SelectTab(action.0));

@@ -6,6 +6,7 @@
 
 mod address_bar;
 mod chrome_overlay;
+mod find_bar;
 mod library;
 mod mac;
 mod motion;
@@ -71,6 +72,7 @@ fn main() -> Result<()> {
 
     let app = gpui_platform::application();
     app.on_reopen(|_| shell::reopen());
+    app.on_open_urls(shell::open_urls);
     app.run(move |cx| {
         if let Err(err) = shell::start(runtime.clone(), config, cx) {
             tracing::error!("{err:#}");

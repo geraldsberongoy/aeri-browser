@@ -8,9 +8,13 @@
 
 mod appearance;
 mod blur;
+mod find;
 mod fold;
 mod frame;
+pub mod hotkey;
 mod lights;
+pub mod links;
+pub mod login;
 mod modifiers;
 mod panels;
 mod power;
@@ -34,6 +38,7 @@ pub use self::appearance::{
     accessibility, set_app_appearance, system_is_dark, watch as watch_appearance,
 };
 pub use self::blur::{Blur, CardRect};
+pub use self::find::{FIND_HEIGHT, FIND_WIDTH};
 pub use self::fold::glide_column;
 pub use self::frame::{BAR_HEIGHT, Frame, SIDE_OVERLAY_EXTRA};
 pub use self::modifiers::watch_command;

@@ -1,95 +1,11 @@
 //! The index's data: the groups and every row (Search `SettingsIndex.swift`
 //! :55-560), with the predicates of the dependent rows.
 
-use aeri_core::layout::TabPlace;
-use aeri_core::prefs::{AppPrefs, Engine, NewTabPlace, valid_template};
+use aeri_core::prefs::valid_template;
 
+use super::rules::*;
 use super::{Action, Control, Extra, Group, Item, Need, Page, Picture, Pill, Pref, Under};
 use crate::shell::settings::SettingsModel;
-
-// Predicates over the model (SettingsIndex.swift:773-796): "sidebar" is the
-// tabs down a side; "hides" is the column kept out until the pointer
-// reaches the edge.
-fn sidebar(m: &SettingsModel) -> bool {
-    m.layout.tabs == TabPlace::Side
-}
-
-fn top(m: &SettingsModel) -> bool {
-    m.layout.tabs == TabPlace::Top
-}
-
-fn titles_in_column(m: &SettingsModel) -> bool {
-    sidebar(m) && !m.layout.rail
-}
-
-fn fold_applies(m: &SettingsModel) -> bool {
-    sidebar(m) && m.layout.sidebar_pinned
-}
-
-fn cards_applies(m: &SettingsModel) -> bool {
-    sidebar(m) && m.layout.cards
-}
-
-const SIDE: Need = Need {
-    holds: sidebar,
-    text: "Only with the tabs down a side",
-};
-
-/// The labels of the Search with menu: the named engines, then Custom.
-const ENGINE_LABELS: &[&str] = &[
-    "Google",
-    "DuckDuckGo",
-    "Bing",
-    "Ecosia",
-    "Startpage",
-    "Kagi",
-    "Brave Search",
-    "Qwant",
-    "Custom",
-];
-
-fn places_after_current(m: &SettingsModel) -> bool {
-    m.prefs.tabs.new_place == NewTabPlace::Next
-}
-
-/// The ends of the row are the top and bottom of a column, or the left and
-/// right of a strip.
-fn new_place_labels(m: &SettingsModel) -> &'static [&'static str] {
-    if sidebar(m) {
-        &["After current", "Top", "Bottom"]
-    } else {
-        &["After current", "Leftmost", "Rightmost"]
-    }
-}
-
-fn custom_engine(m: &SettingsModel) -> bool {
-    matches!(m.prefs.browsing.engine, Engine::Custom(_))
-}
-
-fn custom_template(m: &SettingsModel) -> String {
-    match &m.prefs.browsing.engine {
-        Engine::Custom(template) => template.clone(),
-        _ => String::new(),
-    }
-}
-
-fn set_custom_template(prefs: &mut AppPrefs, template: &str) {
-    prefs.browsing.engine = Engine::Custom(template.to_owned());
-}
-
-/// Where downloads go, as `~/Downloads`.
-fn downloads_folder(m: &SettingsModel) -> String {
-    let folder = m.prefs.general.downloads_dir.as_deref();
-    let Some(folder) = folder else {
-        return "~/Downloads".to_owned();
-    };
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    match home.and_then(|home| folder.strip_prefix(home).ok().map(|rest| rest.to_owned())) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => folder.display().to_string(),
-    }
-}
 
 const BASE: Item = Item {
     id: "",
@@ -200,6 +116,20 @@ pub static GROUPS: &[Group] = &[
         extra: Extra::None,
     },
     Group {
+        id: "pages",
+        page: Page::Browsing,
+        title: "Pages",
+        icon: "doc.richtext",
+        extra: Extra::None,
+    },
+    Group {
+        id: "opening",
+        page: Page::Spaces,
+        title: "Opening and starting",
+        icon: "command",
+        extra: Extra::None,
+    },
+    Group {
         id: "passwords",
         page: Page::Passwords,
         title: "Your passwords",
@@ -228,11 +158,25 @@ pub static GROUPS: &[Group] = &[
         extra: Extra::None,
     },
     Group {
+        id: "proxy",
+        page: Page::Privacy,
+        title: "Proxy",
+        icon: "network",
+        extra: Extra::None,
+    },
+    Group {
         id: "extensions",
         page: Page::Extensions,
         title: "Installed",
         icon: "puzzlepiece.extension",
         extra: Extra::Extensions,
+    },
+    Group {
+        id: "anywhere",
+        page: Page::Keyboard,
+        title: "From any app",
+        icon: "macwindow.on.rectangle",
+        extra: Extra::None,
     },
     Group {
         id: "shortcuts",
@@ -284,6 +228,32 @@ fn provider_detail(m: &SettingsModel) -> String {
 
 pub static ITEMS: &[Item] = &[
     // General
+    item!("links.default", "browser", "link.badge.plus", "Open links from other apps",
+        "Make Aeri the browser Mail, Slack and the rest send links to",
+        Control::State {
+            pill: Pill { action: Action::MakeDefaultBrowser, label: "Make default", filled: true },
+            done: |m| m.default_browser,
+        },
+        words: &["default browser", "links", "http"],
+        live_detail: Some(browser_detail)),
+    item!("mail.webmail", "browser", "envelope", "Email links open in",
+        "Write in Gmail or another webmail, in a tab, instead of your mail app",
+        Control::Menu {
+            pref: Pref::Webmail,
+            labels: |_| &["Your mail app", "Gmail", "Outlook.com", "Fastmail", "Proton Mail"],
+        },
+        more: Some("Email (mailto:) links clicked in a page open the webmail's new message in a tab beside it, with the address, subject and text filled in. From a private tab too, in an ordinary tab, where you're signed in. Links from other apps, and Send Feedback, go there once Aeri opens email links."),
+        words: &["email", "mailto", "gmail", "mail", "outlook", "fastmail", "proton", "webmail", "compose"]),
+    item!("mail.default", "browser", "envelope.badge", "Make Aeri open email links",
+        "So links from other apps open your webmail too",
+        Control::State {
+            pill: Pill { action: Action::MakeDefaultMail, label: "Make default", filled: true },
+            done: |m| m.default_mail,
+        },
+        more: Some("macOS asks you to confirm. Pick another app in Mail › Settings › General › Default email reader to undo it."),
+        words: &["email", "mailto", "gmail", "mail", "default email", "handler"],
+        live_detail: Some(mail_detail),
+        need: Some(Need { holds: webmail_chosen, text: "Only with a webmail chosen for email links" })),
     item!("quit.confirm", "browser", "power", "Confirm before quitting",
         "Ask before ⌘Q or Quit Aeri closes the browser",
         Control::Switch(Pref::ConfirmQuit),
@@ -306,6 +276,12 @@ pub static ITEMS: &[Item] = &[
         "Light, dark, or whatever the Mac is doing. Pages follow it too",
         Control::Pictures { pref: Pref::Look, picks: LOOK_PICKS },
         words: &["dark mode", "light mode", "theme", "system"], wide: true),
+    item!("pages.dusk", "theme", "moon", "Darken pages that stay light",
+        "Pages with no dark look of their own are darkened too",
+        Control::Switch(Pref::Dusk),
+        more: Some("⇧⌘D darkens or lightens the site you're on, and keeps the choice. ⌥⇧⌘D pauses it everywhere until you press it again or Aeri quits."),
+        words: &["dark pages", "force dark", "night mode", "dark reader", "dusk"],
+        need: Some(Need { holds: look_is_not_light, text: "Only while Aeri isn't set to Light" })),
     item!("tabs.layout", "window", "sidebar.left", "Tabs",
         "Across the top of the window, down a side as a column, or as icons only",
         Control::Pictures { pref: Pref::TabsLayout, picks: TABS_PICKS },
@@ -446,6 +422,50 @@ pub static ITEMS: &[Item] = &[
         valid: valid_template,
         invalid: "An address starting with https:// with %s where your words go",
     })),
+    item!("search.shift", "search", "shift", "Shift-Return searches with",
+    "Off: Shift-Return does what Return does",
+    Control::Menu { pref: Pref::ShiftEngine, labels: |_| SHIFT_LABELS },
+    more: Some("A second engine one key away: Return asks your default, Shift-Return asks this one, with exactly what you typed."),
+    words: &["shift enter", "second engine", "alternate", "google", "perplexity"],
+    live_detail: Some(shift_detail),
+    under: Some(Under {
+        holds: custom_shift,
+        placeholder: "https://example.com/search?q=%s",
+        text: shift_template,
+        apply: set_shift_template,
+        valid: valid_template,
+        invalid: "An address starting with https:// with %s where your words go",
+    })),
+    item!("search.suggest", "search", "text.magnifyingglass", "Suggestions from your search engine",
+        "What you type is sent to your engine as you type",
+        Control::Switch(Pref::Suggest),
+        more: Some("Its suggestions show under the address field, never for an address."),
+        words: &["autocomplete", "suggest"],
+        live_detail: Some(suggest_detail)),
+    item!("search.keywords", "search", "character.cursor.ibeam", "Site shortcuts",
+        "A word before your search sends it to that site: \"yt cats\"",
+        Control::Keywords,
+        words: &["keyword", "bang"]),
+    item!("pageZoom", "pages", "plus.magnifyingglass", "Page zoom",
+        "Where every site starts. ⌘+ and ⌘− are kept for each site",
+        Control::Steps { pref: Pref::PageZoom, min: 50, max: 300, step: 5, home: 100 },
+        words: &["zoom", "size", "scale"]),
+    item!("pages.capture", "pages", "camera.viewfinder", "Capture pages",
+        "Capture… in the palette copies an area, an element or the whole page",
+        Control::Switch(Pref::Capture),
+        more: Some("Drag an area, click an element, or take the whole page. The picture goes on this Mac's clipboard only and into your downloads folder as a PNG. Nothing is sent anywhere."),
+        words: &["screenshot", "capture", "snapshot", "picture", "png", "screen capture"]),
+    // Spaces & Pins
+    item!("newtab.recent", "opening", "clock.arrow.circlepath", "Recent places in the new tab",
+        "Before you type, ⌘T's field lists the last three places you went",
+        Control::Switch(Pref::NewtabRecent),
+        more: Some("From History on this Mac, leaving out pages already open. Nothing is picked until an arrow key picks it."),
+        words: &["recent", "history", "suggestions", "cmd t", "last visited"]),
+    item!("commandbar", "opening", "chevron.right.square", "Address bar commands",
+        "\"settings\" or \"new tab\" alone in the address field goes there",
+        Control::Switch(Pref::AddressCommands),
+        more: Some("Part of a name, like \"sett\" or \"dwn\", shows the command lower in the list; Return does not run it."),
+        words: &["commands", "command palette"]),
     // Passwords
     item!("passwords.manage", "passwords", "key.viewfinder", "Your passwords",
         "Look at, change and delete what this profile has saved",
@@ -490,9 +510,70 @@ pub static ITEMS: &[Item] = &[
         "What each site was allowed or refused",
         Control::Pills(&[Pill { action: Action::SiteSettings, label: "Site Settings…", filled: false }]),
         words: &["permissions", "camera", "microphone", "location", "reset", "notifications"]),
+    // Privacy › Proxy
+    item!("proxy.mode", "proxy", "network", "Send everything through a proxy",
+        "",
+        Control::Menu { pref: Pref::ProxyMode, labels: |_| &["Off, or the Mac's own", "HTTP", "SOCKS5"] },
+        words: &["proxy", "socks", "http proxy", "vpn", "tunnel"],
+        live_detail: Some(proxy_detail)),
+    item!("proxy.host", "proxy", "server.rack", "Host",
+    "",
+    Control::Pills(&[]),
+    words: &["proxy", "address", "server"],
+    need: Some(NEEDS_PROXY),
+    under: Some(Under {
+        holds: proxy_on,
+        placeholder: "Host, such as 127.0.0.1",
+        text: host_text,
+        apply: set_host,
+        valid: host_valid,
+        invalid: "Enter a host name or IP address on its own, without a scheme, a port or a path.",
+    })),
+    item!("proxy.port", "proxy", "number", "Port",
+    "",
+    Control::Pills(&[]),
+    words: &["proxy"],
+    need: Some(NEEDS_PROXY),
+    under: Some(Under {
+        holds: proxy_on,
+        placeholder: "Port, such as 7890",
+        text: port_text,
+        apply: set_port,
+        valid: port_valid,
+        invalid: "Enter a port from 1 to 65535.",
+    })),
+    item!("proxy.user", "proxy", "person", "User name",
+    "",
+    Control::Pills(&[]),
+    words: &["proxy", "login"],
+    need: Some(NEEDS_PROXY),
+    under: Some(Under {
+        holds: proxy_on,
+        placeholder: "User name, if the proxy asks for one",
+        text: user_text,
+        apply: set_user,
+        valid: |_| true,
+        invalid: "",
+    })),
+    item!("proxy.login", "proxy", "key", "Password",
+        "Kept in the keychain, and removed when the proxy is turned off. Sent to the proxy as it is, so prefer one that needs no password if it isn't on this Mac or your own network.",
+        Control::Pills(&[Pill { action: Action::ProxyLogin, label: "Sign In…", filled: false }]),
+        words: &["proxy", "password", "keychain", "login"],
+        need: Some(NEEDS_PROXY)),
     // Extensions
     item!("extensions.store", "extensions", "arrow.down.app", "Add an extension",
         "Extensions come from the Chrome Web Store and work as they do in Chrome",
         Control::Pills(&[Pill { action: Action::WebStore, label: "Chrome Web Store…", filled: true }]),
         words: &["chrome web store", "install", "add-on", "plugin"]),
+    // Keyboard & Mouse
+    item!("launcher.on", "anywhere", "rectangle.and.text.magnifyingglass", "Open the address field from any app",
+        "A key of your own raises it over the app you're in, as Spotlight does",
+        Control::Switch(Pref::Launcher),
+        more: Some("With a window of Aeri's in front, the key is left to the page: ⌘T is the field there."),
+        words: &["spotlight", "launcher", "global", "hotkey", "shortcut", "quick search", "raycast", "alfred", "anywhere"]),
+    item!("launcher.key", "anywhere", "keyboard", "Key",
+        "Press it in any app to bring the address field up",
+        Control::Key,
+        words: &["hotkey", "global shortcut", "shift command space"],
+        need: Some(Need { holds: launcher_on, text: "Only with the address field from any app on" })),
 ];
