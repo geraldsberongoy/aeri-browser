@@ -61,6 +61,7 @@ impl Shell {
             Shortcut::ToggleSidebar => self.toggle_sidebar(window_id, cx),
             Shortcut::PreviousSpace => self.step_space(window_id, -1, cx),
             Shortcut::NextSpace => self.step_space(window_id, 1, cx),
+            Shortcut::SelectSpace(n) => self.select_space(window_id, usize::from(n), cx),
             Shortcut::ToggleBookmark => {
                 if let Some(tab) = shown {
                     self.toggle_bookmark(window_id, tab, cx);

@@ -7,15 +7,20 @@
 //! nothing is pinned (`mac::Frame::layout`); unpinned chrome slides in over
 //! the page in its own windows (`chrome_overlay`), drawn by the same view.
 
+mod bookmarks_bar;
 mod doors;
+mod give;
 mod glide;
 mod icons;
+mod player;
 mod sidebar;
 mod strip;
 mod tab_items;
 mod tab_list;
 
+pub use bookmarks_bar::BarMark;
 pub use glide::column_glides;
+pub use player::{PlayerTab, TabLook};
 
 use aeri_core::appearance::Rgba;
 use aeri_core::ids::{SpaceId, TabId};
@@ -71,6 +76,10 @@ pub struct SidebarTab {
     pub active: bool,
     pub loading: bool,
     pub audible: bool,
+    /// It holds no page (it rests, or was not opened yet): Dim sleeping tabs.
+    pub asleep: bool,
+    /// How far its page is scrolled, nought to one: Show how far you've read.
+    pub reading: f32,
 }
 
 /// One of the profile's spaces, as the sidebar shows it.
@@ -123,6 +132,11 @@ pub struct WindowFrame {
     lights_y: f32,
     /// The pinned column gliding between its full width and icons only.
     glide: Option<glide::Glide>,
+    /// The profile's top-level bookmarks, for the bar above the page.
+    marks: bookmarks_bar::Marks,
+    /// How the tab rows are drawn by the tab preferences, and the player's rows.
+    look: TabLook,
+    player: Vec<PlayerTab>,
 }
 
 /// Which window draws a piece of chrome: the frame (pinned) or an overlay
@@ -169,7 +183,10 @@ impl WindowFrame {
             command_held: false,
             lights_y: TRAFFIC_LIGHTS.y.into(),
             glide: None,
+            marks: bookmarks_bar::Marks::default(),
             tab_list: tab_list::TabListState::default(),
+            look: TabLook::default(),
+            player: Vec::new(),
         }
     }
 
@@ -433,6 +450,10 @@ pub struct PageInsets {
     pub radius: f64,
     /// The page is a card with room around it (its edge is drawn).
     pub card: bool,
+    /// The bookmarks bar's height above the page, 0 when it is not up, and
+    /// the points from the window's top to its top edge.
+    pub bar: f64,
+    pub bar_top: f64,
 }
 
 /// The page's place beside whatever is pinned, where `side` is the width
@@ -461,6 +482,8 @@ pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
             bottom: edge,
             radius,
             card: kept,
+            bar: 0.,
+            bar_top: 0.,
         };
     }
     let far = if cards { gap } else { 0. };
@@ -469,10 +492,18 @@ pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
         Side::Left => (side, far),
         Side::Right => (far, side),
     };
-    let top = if top_pinned {
-        strip_height(layout)
+    // Search `App.swift:656-663`: with the card, the bar takes the place of
+    // the card's top gap; without it, it comes on top of the strip's band.
+    let bar = if bookmarks_bar::shown(layout, fullscreen) {
+        bookmarks_bar::HEIGHT
     } else {
-        far
+        0.
+    };
+    let band = if top_pinned { strip_height(layout) } else { 0. };
+    let top = match (bar > 0., top_pinned) {
+        (true, _) => band + bar,
+        (false, true) => band,
+        (false, false) => far,
     };
     PageInsets {
         left,
@@ -481,6 +512,8 @@ pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
         bottom: far,
         radius,
         card: cards,
+        bar,
+        bar_top: band,
     }
 }
 
@@ -594,6 +627,7 @@ impl Render for WindowFrame {
             .then(|| self.sidebar(Host::Frame, cx));
         frame
             .children(self.card_edge(cx))
+            .children(self.bookmarks_bar(window, cx))
             .when(self.layout.top_pinned, |frame| {
                 frame.child(self.strip(Host::Frame, cx))
             })

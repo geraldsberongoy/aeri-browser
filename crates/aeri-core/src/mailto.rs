@@ -79,8 +79,9 @@ impl MailDraft {
         Some(draft)
     }
 
-    /// The draft as a clean `mailto:` again, for Proton Mail.
-    fn mailto(&self) -> String {
+    /// The draft as a clean `mailto:` again: for Proton Mail, and for the
+    /// system's mail app.
+    pub fn mailto(&self) -> String {
         let mut fields = Vec::new();
         if !self.cc.is_empty() {
             fields.push(format!("cc={}", encode(&self.cc.join(","), "@,+")));

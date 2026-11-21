@@ -1,0 +1,170 @@
+//! The groups of the index, in the order a page draws them (Search
+//! `SettingsIndex.swift`:62-101).
+
+use super::{Extra, Group, Page};
+
+const fn group(
+    id: &'static str,
+    page: Page,
+    title: &'static str,
+    icon: &'static str,
+    extra: Extra,
+) -> Group {
+    Group {
+        id,
+        page,
+        title,
+        icon,
+        extra,
+    }
+}
+
+pub static GROUPS: &[Group] = &[
+    group(
+        "browser",
+        Page::General,
+        "Your browser",
+        "globe.desk",
+        Extra::None,
+    ),
+    group(
+        "downloads",
+        Page::General,
+        "Downloads",
+        "arrow.down.circle",
+        Extra::None,
+    ),
+    group(
+        "theme",
+        Page::Appearance,
+        "Light and dark",
+        "circle.lefthalf.filled",
+        Extra::None,
+    ),
+    group(
+        "window",
+        Page::Appearance,
+        "Window",
+        "macwindow",
+        Extra::None,
+    ),
+    group(
+        "tablook",
+        Page::Appearance,
+        "Tabs",
+        "textformat.size",
+        Extra::None,
+    ),
+    group("motion", Page::Appearance, "Motion", "wind", Extra::None),
+    group(
+        "themes",
+        Page::Appearance,
+        "Theme",
+        "paintpalette",
+        Extra::Themes,
+    ),
+    group(
+        "newtabs",
+        Page::Tabs,
+        "New tabs",
+        "plus.square",
+        Extra::None,
+    ),
+    group("memory", Page::Tabs, "Memory", "moon.zzz", Extra::None),
+    group(
+        "tabbar",
+        Page::Tabs,
+        "In the tab bar",
+        "number",
+        Extra::None,
+    ),
+    group(
+        "search",
+        Page::Browsing,
+        "Searching",
+        "magnifyingglass",
+        Extra::None,
+    ),
+    group("links", Page::Browsing, "Links", "link", Extra::None),
+    group(
+        "video",
+        Page::Browsing,
+        "Video",
+        "play.rectangle",
+        Extra::None,
+    ),
+    group(
+        "pages",
+        Page::Browsing,
+        "Pages",
+        "doc.richtext",
+        Extra::None,
+    ),
+    group(
+        "arc",
+        Page::Spaces,
+        "Coming from Arc?",
+        "arrow.down.forward.square",
+        Extra::None,
+    ),
+    group(
+        "spaces",
+        Page::Spaces,
+        "Spaces and profiles",
+        "rectangle.3.group",
+        Extra::None,
+    ),
+    group("pins", Page::Spaces, "Pins", "pin", Extra::None),
+    group(
+        "opening",
+        Page::Spaces,
+        "Opening and starting",
+        "command",
+        Extra::None,
+    ),
+    group(
+        "passwords",
+        Page::Passwords,
+        "Your passwords",
+        "key",
+        Extra::None,
+    ),
+    group("blocking", Page::Privacy, "Blocking", "shield", Extra::None),
+    group(
+        "permissions",
+        Page::Privacy,
+        "Site permissions",
+        "checkmark.shield",
+        Extra::None,
+    ),
+    group("clear", Page::Privacy, "Clear", "trash", Extra::None),
+    group("proxy", Page::Privacy, "Proxy", "network", Extra::None),
+    group(
+        "extensions",
+        Page::Extensions,
+        "Installed",
+        "puzzlepiece.extension",
+        Extra::Extensions,
+    ),
+    group(
+        "anywhere",
+        Page::Keyboard,
+        "From any app",
+        "macwindow.on.rectangle",
+        Extra::None,
+    ),
+    group(
+        "shortcuts",
+        Page::Keyboard,
+        "Shortcuts",
+        "command",
+        Extra::Shortcuts,
+    ),
+    group(
+        "help",
+        Page::About,
+        "Help",
+        "questionmark.circle",
+        Extra::None,
+    ),
+];

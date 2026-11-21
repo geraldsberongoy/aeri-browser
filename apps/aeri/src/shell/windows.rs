@@ -19,7 +19,7 @@ use gpui::{
     WindowOptions, point, px, size,
 };
 
-use super::internal::SettingsView;
+use super::internal::{NotesView, SettingsView};
 use super::spaces::Parked;
 use super::tabs::{TabEntry, TabStart};
 use super::{NEW_TAB_URL, Nav, Shell, content_view};
@@ -62,6 +62,8 @@ pub(super) struct AeriWindow {
     pub(super) closing_pages: HashSet<TabId>,
     /// The view of the window's Settings tab, while that tab is shown.
     pub(super) settings: Option<SettingsView>,
+    /// The view of the window's What's New tab, while that tab is shown.
+    pub(super) notes: Option<NotesView>,
 }
 
 impl AeriWindow {
@@ -296,6 +298,7 @@ impl Shell {
             closing: false,
             closing_pages: HashSet::new(),
             settings: None,
+            notes: None,
         });
         let starts_blank = self
             .window(id)
@@ -452,6 +455,8 @@ impl Shell {
             active: Some(item.id) == shown,
             loading: item.value.model.is_loading(),
             audible: item.value.model.activity.audible,
+            asleep: item.value.cef.is_none(),
+            reading: self.reading_of(item.id),
         };
         let tabs: Vec<SidebarTab> = open
             .favourites
@@ -459,9 +464,15 @@ impl Shell {
             .map(|item| row(item, true))
             .chain(w.tabs.iter().map(|item| row(item, false)))
             .collect();
+        let look = self.tab_look();
+        let player = self.player_rows(&tabs);
+        self.ensure_reading(cx);
         let spaces: Vec<SpaceChip> = open
             .spaces
             .iter()
+            // With spaces off the window shows only its own: no dot, no
+            // switcher (Search `usesSpaces`, Side.swift:1413).
+            .filter(|space| self.prefs.spaces.on() || space.id == w.space)
             .map(|space| SpaceChip {
                 id: space.id,
                 name: space.name.clone(),
@@ -484,6 +495,8 @@ impl Shell {
         let extensions = !open.extensions.is_empty();
         let _ = w.frame_window.update(cx, |frame, _, cx| {
             frame.set_tabs(tabs, cx);
+            frame.set_tab_look(look, cx);
+            frame.set_player(player, cx);
             frame.set_spaces(spaces, cx);
             frame.set_notices(popup_blocked, downloads, cx);
             frame.set_doors(several, extensions, bookmarked == Some(true), cx);

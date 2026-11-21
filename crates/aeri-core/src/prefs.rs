@@ -17,6 +17,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::keymap::Chord;
+use crate::space_routes::SpaceRoute;
 
 /// The page zoom, in percent, where every site starts.
 pub const MIN_ZOOM: u16 = 50;
@@ -304,6 +305,9 @@ pub struct Browsing {
     pub capture: bool,
     pub site_styles: bool,
     pub show_link_targets: bool,
+    /// Correct spelling as you type, in pages (`autocorrect`; Search follows
+    /// the Mac's own setting, which is on unless turned off).
+    pub autocorrect: bool,
 }
 
 impl Default for Browsing {
@@ -327,6 +331,7 @@ impl Default for Browsing {
             capture: false,
             site_styles: false,
             show_link_targets: true,
+            autocorrect: true,
         }
     }
 }
@@ -357,13 +362,18 @@ pub fn clamp_zoom(percent: u16) -> u16 {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Spaces {
+    /// Separate sets of tabs (`spaces`, Search `usesSpaces`). `None` until
+    /// chosen: Search's default (off) for a fresh install, on for an Aeri
+    /// that already had more than one space (see [`Spaces::on`]).
+    pub enabled: Option<bool>,
+    /// Rules for "Send links to a space" (`spaces.links.rules`).
+    pub link_routes: Vec<SpaceRoute>,
     /// ⌘1-⌘9 switch spaces (tabs move to ⌃1-⌃9).
     pub spaces_command_numbers: bool,
     /// Links to chosen sites open in their space.
     pub links_to_spaces: bool,
     /// Links elsewhere open over the pin, and ⌘W takes it back home.
     pub pins_keep_site: bool,
-    pub pinned_rows: bool,
     pub pin_folders: bool,
     pub pin_command_new_tab: bool,
     /// ⌘T raises a floating address field over the page.
@@ -378,16 +388,35 @@ pub struct Spaces {
 impl Default for Spaces {
     fn default() -> Self {
         Self {
+            enabled: None,
+            link_routes: Vec::new(),
             spaces_command_numbers: false,
             links_to_spaces: false,
             pins_keep_site: true,
-            pinned_rows: false,
             pin_folders: false,
             pin_command_new_tab: false,
             newtab_floating: false,
             newtab_recent: false,
             address_commands: false,
             start_fresh: false,
+        }
+    }
+}
+
+impl Spaces {
+    /// Whether spaces are on: what was chosen, else Search's default, off.
+    pub fn on(&self) -> bool {
+        self.enabled.unwrap_or(false)
+    }
+
+    /// The keys the spaces take: none while they are off, ⌃1-⌃9 (⌘1-⌘9
+    /// with [`Spaces::spaces_command_numbers`]) while on.
+    pub fn keys(&self) -> crate::keymap::SpaceKeys {
+        use crate::keymap::SpaceKeys;
+        match (self.on(), self.spaces_command_numbers) {
+            (false, _) => SpaceKeys::Off,
+            (true, false) => SpaceKeys::Control,
+            (true, true) => SpaceKeys::Command,
         }
     }
 }
@@ -515,6 +544,14 @@ fn group<T: DeserializeOwned + Default>(root: &Value, key: &str) -> T {
 }
 
 impl AppPrefs {
+    /// Preferences for a new Aeri: Search's defaults, with the choices
+    /// that an existing install leaves open made (spaces off).
+    pub fn fresh_install() -> Self {
+        let mut prefs = Self::default();
+        prefs.spaces.enabled = Some(false);
+        prefs
+    }
+
     /// Preferences for an Aeri that ran before they existed: the search
     /// engine stays DuckDuckGo, as it was.
     pub fn existing_install() -> Self {
@@ -557,7 +594,7 @@ mod tests {
         assert!(p.browsing.show_link_targets && !p.browsing.suggest);
         assert_eq!(p.browsing.page_zoom_percent, 100);
         assert_eq!(p.browsing.float_leave, FloatLeave::Tabs);
-        assert!(p.spaces.pins_keep_site && !p.spaces.pinned_rows);
+        assert!(p.spaces.pins_keep_site);
         assert!(p.privacy.block_ads && p.privacy.gpc && p.privacy.notifications_ask);
         assert!(p.privacy.strip_click_ids && p.privacy.prevent_cross_site_tracking);
         assert_eq!(p.mouse.peek, Peek::Shift);
@@ -653,6 +690,26 @@ mod tests {
             AppPrefs::existing_install().browsing.engine,
             Engine::DuckDuckGo
         );
+    }
+
+    #[test]
+    fn spaces_are_off_for_new_installs_and_undecided_for_old_ones() {
+        use crate::keymap::SpaceKeys;
+        // Search's default is off; an Aeri from before the choice has not
+        // chosen, and the shell decides from its spaces once.
+        assert_eq!(AppPrefs::fresh_install().spaces.enabled, Some(false));
+        assert_eq!(AppPrefs::existing_install().spaces.enabled, None);
+        assert_eq!(AppPrefs::from_json("{}").spaces.enabled, None);
+        let mut spaces = Spaces::default();
+        assert_eq!(spaces.keys(), SpaceKeys::Off);
+        spaces.enabled = Some(true);
+        assert_eq!(spaces.keys(), SpaceKeys::Control);
+        spaces.spaces_command_numbers = true;
+        assert_eq!(spaces.keys(), SpaceKeys::Command);
+        spaces.enabled = Some(false);
+        assert_eq!(spaces.keys(), SpaceKeys::Off);
+        let stored = AppPrefs::from_json(r#"{"spaces":{"enabled":true,"linksToSpaces":true}}"#);
+        assert!(stored.spaces.on() && stored.spaces.links_to_spaces);
     }
 
     #[test]

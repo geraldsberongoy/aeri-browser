@@ -8,8 +8,8 @@ use aeri_core::appearance::Tokens;
 use aeri_core::ids::TabId;
 use aeri_core::layout::{Glyph, Layout};
 use gpui::{
-    ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, MouseUpEvent, ObjectFit,
-    SharedString, Stateful, Window, div, img, prelude::*, px,
+    AnimationExt, ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, MouseUpEvent,
+    ObjectFit, SharedString, Stateful, Window, div, img, prelude::*, px,
 };
 
 use super::tab_list::site_line;
@@ -200,7 +200,11 @@ impl WindowFrame {
     ) -> Stateful<Div> {
         let window = self.window_id;
         let id = tab.id;
-        base.on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+        let pin = tab.pinned || tab.favourite;
+        base.on_click(cx.listener(move |this, event: &ClickEvent, _, _| {
+            if this.pin_command(id, pin, event.modifiers()) {
+                return;
+            }
             this.send(AppMsg::Tab {
                 window,
                 tab: id,
@@ -224,6 +228,7 @@ impl WindowFrame {
         let base = self.tab_base("pill", index, tab, 0., cx).group("pill");
         let base = self
             .select_on_click(base, tab, cx)
+            .relative()
             .flex()
             .items_center()
             .h(px(28.))
@@ -251,7 +256,7 @@ impl WindowFrame {
             base.flex_none()
                 .w(px(30.))
                 .justify_center()
-                .child(mark(tab, 15., &t, &self.layout))
+                .child(self.dimmed(mark(tab, 15., &t, &self.layout), tab, "pill"))
         } else {
             base.w(px(186.))
                 .flex_shrink(1.)
@@ -259,9 +264,43 @@ impl WindowFrame {
                 .pl(px(11.))
                 .pr(px(7.))
                 .gap(px(6.))
-                .child(mark(tab, 15., &t, &self.layout).flex_none())
-                .child(self.pill_title(tab, &t))
+                .children(self.pill_reading(tab, &t, cx))
+                .child(self.dimmed(mark(tab, 15., &t, &self.layout).flex_none(), tab, "pill"))
+                .child(self.dimmed(self.pill_title(tab, &t), tab, "pill"))
         }
+    }
+
+    /// "Show how far you've read" on the shown pill (Search `TabBar.swift:1040`:
+    /// loose tabs only, not with the shorter bar): ink at 0.055 from the
+    /// pill's left edge as wide as the page is scrolled, under its content;
+    /// the pill clips it to its corners.
+    fn pill_reading(
+        &self,
+        tab: &SidebarTab,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        if !(self.look.reading && tab.active) || self.layout.compact_strip {
+            return None;
+        }
+        let pace = crate::motion::Pace::of(self.window_id, cx);
+        Some(
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .bottom_0()
+                .bg(theme::ca(t.text, 0.055))
+                .with_spring(
+                    ("pill-read", tab.id.0),
+                    super::tab_list::spring(
+                        crate::motion::FOLD_IN,
+                        tab.reading.clamp(0., 1.),
+                        pace.still,
+                    ),
+                    |d, v| d.w(gpui::relative(v)),
+                ),
+        )
     }
 
     /// The pill's title, or on the shown tab with "Show the address on the

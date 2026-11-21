@@ -16,7 +16,7 @@ const ROOMY_ROW: f32 = 36.;
 const ROW_GAP: f32 = 2.;
 
 /// A row's height in this layout.
-pub(super) fn row_height(roomy: bool) -> f32 {
+pub(in crate::window_frame) fn row_height(roomy: bool) -> f32 {
     if roomy { ROOMY_ROW } else { ROW }
 }
 /// Pinned squares (`PinGrid`): classic size, gap, most per row.
@@ -92,6 +92,16 @@ impl TabListState {
         self.inner.borrow_mut().pressed = tab;
     }
 
+    /// The button went down on `tab` (Tabs give when pressed), or came up.
+    pub(in super::super) fn give(&self, tab: Option<TabId>) {
+        self.inner.borrow_mut().giving = tab;
+    }
+
+    /// The tab under the button, if any.
+    pub(in super::super) fn giving(&self) -> Option<TabId> {
+        self.inner.borrow().giving
+    }
+
     /// The click that ends a press that already selected `tab`.
     pub(in super::super) fn took_press(&self, tab: TabId) -> bool {
         self.inner.borrow_mut().pressed.take() == Some(tab)
@@ -140,6 +150,8 @@ pub(super) struct State {
     /// The tab the press in progress selected: its click is not a second
     /// click on the shown tab.
     pub(super) pressed: Option<TabId>,
+    /// The tab the button is down on, which gives under it.
+    pub(super) giving: Option<TabId>,
     /// A tab a press chose, drawn as the shown one until the shell's own
     /// state says which is.
     pub(super) chosen: Option<Chosen>,
@@ -267,18 +279,28 @@ pub(super) fn pin_cells(count: usize, room: f32) -> (Vec<Rect>, f32) {
     (cells, total)
 }
 
+/// Where the squares and rows go. With `as_rows` (Pinned rows, Search
+/// `pins.list`) the favourites are rows too, ahead of the space's pinned
+/// tabs, and no squares are drawn; the hairline falls after the last
+/// pinned row.
 pub(super) fn plan<'a>(
     favourites: &[&'a SidebarTab],
     rows: &[&'a SidebarTab],
     pinned: usize,
     room: f32,
     roomy: bool,
+    as_rows: bool,
 ) -> Plan<'a> {
     let row = row_height(roomy);
     let pitch = row + ROW_GAP;
-    let (cells, grid) = pin_cells(favourites.len(), room);
+    let (squares, listed) = if as_rows {
+        (&[][..], favourites)
+    } else {
+        (favourites, &[][..])
+    };
+    let (cells, grid) = pin_cells(squares.len(), room);
     let mut items = Vec::with_capacity(favourites.len() + rows.len());
-    for (index, (tab, rect)) in favourites.iter().zip(cells).enumerate() {
+    for (index, (tab, rect)) in squares.iter().zip(cells).enumerate() {
         items.push(Item {
             tab,
             kind: Kind::Square,
@@ -286,14 +308,26 @@ pub(super) fn plan<'a>(
             index,
         });
     }
-    let top = if favourites.is_empty() {
+    let top = if squares.is_empty() {
         0.
     } else {
         grid + BELOW_GRID
     };
-    let divided = pinned > 0 && pinned < rows.len();
-    for (index, tab) in rows.iter().enumerate() {
-        let skip = if divided && index >= pinned {
+    let kept = listed.len() + pinned;
+    let count = listed.len() + rows.len();
+    let divided = kept > 0 && kept < count;
+    // Each row's place in the one column, and its index in its own list.
+    let column = listed
+        .iter()
+        .enumerate()
+        .map(|(index, tab)| (index, index, tab))
+        .chain(
+            rows.iter()
+                .enumerate()
+                .map(|(index, tab)| (listed.len() + index, index, tab)),
+        );
+    for (place, index, tab) in column {
+        let skip = if divided && place >= kept {
             DIVIDER_STEP
         } else {
             0.
@@ -303,17 +337,17 @@ pub(super) fn plan<'a>(
             kind: Kind::Row,
             rect: Rect {
                 x: 0.,
-                y: top + index as f32 * pitch + skip,
+                y: top + place as f32 * pitch + skip,
                 w: room,
                 h: row,
             },
             index,
         });
     }
-    let end = top + rows.len() as f32 * pitch + if divided { DIVIDER_STEP } else { 0. };
+    let end = top + count as f32 * pitch + if divided { DIVIDER_STEP } else { 0. };
     Plan {
         items,
-        divider: divided.then_some(top + pinned as f32 * pitch),
+        divider: divided.then_some(top + kept as f32 * pitch),
         new_tab: end,
         total: end + row + FOOT,
         row,
@@ -336,10 +370,45 @@ mod tests {
     fn roomy_rows_are_36_tall_with_the_new_tab_row_to_match() {
         assert_eq!(row_height(false), 28.);
         assert_eq!(row_height(true), 36.);
-        let plain = plan(&[], &[], 0, 200., false);
-        let roomy = plan(&[], &[], 0, 200., true);
+        let plain = plan(&[], &[], 0, 200., false, false);
+        let roomy = plan(&[], &[], 0, 200., true, false);
         assert_eq!((plain.new_tab, plain.total), (0., 28. + FOOT));
         assert_eq!((roomy.new_tab, roomy.total), (0., 36. + FOOT));
+    }
+
+    fn tab(id: u64, favourite: bool, pinned: bool) -> SidebarTab {
+        SidebarTab {
+            id: TabId(id),
+            label: String::new(),
+            host: String::new(),
+            url: String::new(),
+            icon: None,
+            favicon: None,
+            pinned,
+            favourite,
+            active: false,
+            loading: false,
+            audible: false,
+            asleep: false,
+            reading: 0.,
+        }
+    }
+
+    #[test]
+    fn favourites_as_rows_lead_the_column_with_the_hairline_after_the_pins() {
+        let (one, two) = (tab(1, true, false), tab(2, true, false));
+        let (pin, loose) = (tab(3, false, true), tab(4, false, false));
+        let squares = plan(&[&one, &two], &[&pin, &loose], 1, 212., false, false);
+        assert!(squares.items[..2].iter().all(|i| i.kind == Kind::Square));
+        let listed = plan(&[&one, &two], &[&pin, &loose], 1, 212., false, true);
+        // No squares: four rows, favourites first, 30 apart.
+        assert!(listed.items.iter().all(|i| i.kind == Kind::Row));
+        let ys: Vec<f32> = listed.items.iter().map(|i| i.rect.y).collect();
+        assert_eq!(ys, [0., 30., 60., 60. + 30. + DIVIDER_STEP]);
+        // Each keeps its index in its own list, for a drop.
+        let indices: Vec<usize> = listed.items.iter().map(|i| i.index).collect();
+        assert_eq!(indices, [0, 1, 0, 1]);
+        assert_eq!(listed.divider, Some(90.));
     }
 
     #[test]

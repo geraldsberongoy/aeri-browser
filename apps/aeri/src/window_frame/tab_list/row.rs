@@ -21,11 +21,11 @@ use crate::window_frame::{SidebarTab, WindowFrame};
 
 /// A row's title size and its mark's: 12.5 and 15, "Roomier tabs" 14 and
 /// 17 (Search `prefs.sideTitle`, `SideRow`).
-pub(super) fn title_size(layout: &Layout) -> f32 {
+pub(in crate::window_frame) fn title_size(layout: &Layout) -> f32 {
     if layout.roomy { 14. } else { 12.5 }
 }
 
-pub(super) fn mark_size(layout: &Layout) -> f32 {
+pub(in crate::window_frame) fn mark_size(layout: &Layout) -> f32 {
     if layout.roomy { 17. } else { 15. }
 }
 
@@ -150,6 +150,7 @@ impl WindowFrame {
         let ground = if active { t.live } else { t.hover }.over(t.sidebar.with_alpha(1.));
         let status = tab.loading || tab.audible;
         let numbered = number.is_some();
+        let pin = tab.pinned || tab.favourite;
         let body = self
             .tab_base("tab", item.index, tab, dy, cx)
             .group("row")
@@ -175,7 +176,10 @@ impl WindowFrame {
             })
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if this.pin_command(id, pin, event.modifiers) {
+                        return;
+                    }
                     let mut state = this.tab_list.inner.borrow_mut();
                     state.pressed = (!active).then_some(id);
                     drop(state);
@@ -189,6 +193,9 @@ impl WindowFrame {
                     this.select(id);
                     return;
                 }
+                if pin && event.modifiers().platform && !event.modifiers().shift {
+                    return;
+                }
                 let took = this.tab_list.inner.borrow_mut().pressed.take() == Some(id);
                 if !took && active {
                     // Search edits the address in the row; the bar stands in.
@@ -198,8 +205,13 @@ impl WindowFrame {
                     });
                 }
             }))
-            .child(mark(tab, mark_size(&self.layout), &t, &self.layout))
-            .child(self.title(tab, &t, swap_epoch, pace));
+            .child(self.dimmed(
+                mark(tab, mark_size(&self.layout), &t, &self.layout),
+                tab,
+                "row",
+            ))
+            .child(self.dimmed(self.title(tab, &t, swap_epoch, pace), tab, "row"));
+        let body = self.press_gives(body, id, cx);
         let body = match number {
             Some(number) => body.child(
                 number_badge(number, &t)
@@ -219,7 +231,7 @@ impl WindowFrame {
             .left_0()
             .right_0()
             .h(px(height))
-            .child(body)
+            .child(self.given(id, key, (item.rect.w, height), pace, body))
             .with_spring(
                 ("tl-ry", key),
                 spring(pace.settle, item.rect.y, pace.still),
@@ -387,7 +399,11 @@ impl WindowFrame {
                     .rounded_full()
                     .bg(theme::ca(t.text, 0.07))
                     .child(symbol(
-                        if tab.pinned { "minus" } else { "xmark" },
+                        if tab.pinned || tab.favourite {
+                            "minus"
+                        } else {
+                            "xmark"
+                        },
                         8.,
                         Weight::Semibold,
                         t.icon_muted,

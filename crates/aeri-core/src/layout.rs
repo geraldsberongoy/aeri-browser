@@ -114,6 +114,11 @@ pub struct Layout {
     /// Springs become a short ease-out in Low Power Mode or when the Mac
     /// runs hot (`motion.light`).
     pub light_motion: bool,
+    /// The bookmarks bar is up above the page (Search `barShown`,
+    /// `App.swift:716`): asked for, with bookmarks to show. The shell sets
+    /// it per window when it hands the layout over; it is never stored.
+    #[serde(skip)]
+    pub bookmarks_bar: bool,
 }
 
 impl Default for Layout {
@@ -143,6 +148,7 @@ impl Default for Layout {
             tab_numbers: false,
             reduce_animations: false,
             light_motion: false,
+            bookmarks_bar: false,
         }
     }
 }

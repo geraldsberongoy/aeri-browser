@@ -140,6 +140,7 @@ impl Shell {
         };
         let mut layout = self.chrome.layout;
         layout.sidebar_pinned &= !w.sidebar_hidden;
+        layout.bookmarks_bar = self.sync_bookmarks_bar(w, cx);
         let _ = w
             .frame_window
             .update(cx, |frame, _, cx| frame.set_layout(layout, cx));

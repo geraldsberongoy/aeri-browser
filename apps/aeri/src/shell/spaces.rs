@@ -358,6 +358,9 @@ impl Shell {
 
     /// ⌘⌥← / ⌘⌥→: the previous or next space no other window shows.
     pub(super) fn step_space(&mut self, window_id: u64, step: isize, cx: &mut App) {
+        if !self.spaces_on() {
+            return;
+        }
         let Some(w) = self.window(window_id) else {
             return;
         };

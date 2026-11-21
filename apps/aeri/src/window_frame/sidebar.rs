@@ -96,6 +96,7 @@ impl WindowFrame {
             .when(self.flat(host), |column| column.bg(theme::c(t.panel)))
             .children(band)
             .child(list)
+            .children(self.player_card(cx))
             .child(self.foot(host, cx))
             .children(self.flat(host).then(|| self.inner_hairline(&t)))
             .children((host == Host::Frame).then(|| self.edge_grip(cx)))

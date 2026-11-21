@@ -49,8 +49,7 @@ impl Shell {
             Ok(now) => tracing::debug!(bookmarked = now, "bookmark toggled"),
             Err(err) => tracing::warn!(%err, "could not change the bookmark"),
         }
-        self.refresh_profile_windows(profile, cx);
-        self.refresh_library(cx);
+        self.bookmarks_changed(profile, cx);
     }
 
     /// ⌥⌘B / ⌘Y: the library for the window's profile, at `section`.
@@ -261,7 +260,7 @@ impl Shell {
                 return;
             }
         }
-        self.refresh_library(cx);
+        self.bookmarks_changed(profile, cx);
     }
 
     /// Opens `url` in a new tab of the library's profile and brings that
@@ -413,7 +412,7 @@ impl Shell {
 
 /// Folders `bookmark` can move into: not its own folder, not itself, not
 /// anything inside it. `all` is in depth-first order.
-fn move_targets<'a>(all: &'a [Bookmark], bookmark: &Bookmark) -> Vec<&'a Bookmark> {
+pub(super) fn move_targets<'a>(all: &'a [Bookmark], bookmark: &Bookmark) -> Vec<&'a Bookmark> {
     let inside: Vec<BookmarkId> = all
         .iter()
         .skip_while(|b| b.id != bookmark.id)

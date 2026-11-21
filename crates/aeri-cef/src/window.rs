@@ -131,7 +131,7 @@ impl TabWindow {
         let view = browser_view_create(
             Some(&mut client),
             Some(&CefString::from(url)),
-            Some(&BrowserSettings::default()),
+            Some(&crate::browsing::tab_settings()),
             None,
             Some(&mut request_context),
             Some(&mut view_delegate),
@@ -264,6 +264,55 @@ impl TabWindow {
     pub fn set_dusk(&self, on: bool) {
         if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             cdp_pages::set_dark(&self.state.cdp, &host, on);
+        }
+    }
+
+    /// How far the page is scrolled, nought to one (Show how far you've
+    /// read); `done` gets none when the page could not be asked.
+    pub fn scroll_progress(&self, done: impl FnOnce(Option<f32>) + 'static) {
+        match self.browser().and_then(|browser| browser.host()) {
+            Some(host) => crate::page_signals::scroll(&self.state.cdp, &host, done),
+            None => done(None),
+        }
+    }
+
+    /// Pauses what plays in the page and remembers it; `done` gets how many
+    /// were paused.
+    pub fn pause_media(&self, done: impl FnOnce(u32) + 'static) {
+        match self.browser().and_then(|browser| browser.host()) {
+            Some(host) => crate::page_signals::pause(&self.state.cdp, &host, done),
+            None => done(0),
+        }
+    }
+
+    /// Plays again what [`pause_media`](Self::pause_media) paused.
+    pub fn resume_media(&self) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            crate::page_signals::resume(&self.state.cdp, &host);
+        }
+    }
+
+    /// Mutes the page's sound, or lets it be heard.
+    pub fn set_muted(&self, muted: bool) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            host.set_audio_muted(muted.into());
+        }
+    }
+
+    /// Whether the page's sound is muted.
+    pub fn muted(&self) -> bool {
+        self.browser()
+            .and_then(|browser| browser.host())
+            .is_some_and(|host| host.is_audio_muted() != 0)
+    }
+
+    /// Your own style for a site: the page wears the CSS kept for its site
+    /// among `styles` (host without `www.`, CSS), now and on every page it
+    /// loads, and none when the list is empty. Safe to call as often as
+    /// the list changes.
+    pub fn set_site_styles(&self, styles: &[(String, String)]) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            crate::cdp_styles::set(&self.state.cdp, &host, styles);
         }
     }
 

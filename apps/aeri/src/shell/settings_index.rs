@@ -193,6 +193,16 @@ pub enum Action {
     MakeDefaultMail,
     /// The proxy's user name and password, asked for now.
     ProxyLogin,
+    /// Tabs on the left, spaces and pinned rows; the previous choices kept.
+    ArcSetUp,
+    /// Puts back what Set Up Like Arc replaced.
+    ArcUndo,
+    /// The profile manager, ready to make a profile.
+    NewProfile,
+    /// A mail draft with the version in it.
+    SendFeedback,
+    /// The release notes, in a tab.
+    ShowNotes,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -252,6 +262,8 @@ pub enum Control {
     Key,
     /// The site shortcuts: Add, or Cancel and Save while one is written.
     Keywords,
+    /// Set Up Like Arc: Set Up, then Undo, or a badge once it is so.
+    Arc,
     /// "Always on": a row about something that has no switch.
     #[allow(dead_code, reason = "no row is only a note yet")]
     Always,
@@ -282,6 +294,19 @@ pub struct Item {
     pub live_detail: Option<fn(&SettingsModel) -> String>,
     /// A text field under the row while `holds`.
     pub under: Option<Under>,
+    /// A list or an editor under the row while it counts.
+    pub list: Option<List>,
+}
+
+/// What a row lists under itself (drawn by `settings_window::lists`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum List {
+    /// The rules of Send links to a space, with the field that adds one.
+    Routes,
+    /// The sites with a style of their own, each to remove.
+    StyledSites,
+    /// The sites kept awake, each to let rest.
+    AwakeSites,
 }
 
 /// A text field under a row (Search `textInset`): the engine's own address.
@@ -360,9 +385,11 @@ pub fn find(typed: &str) -> Vec<&'static Item> {
 }
 
 mod data;
+mod groups;
 mod pref;
 mod rules;
-pub use data::{GROUPS, ITEMS};
+pub use data::ITEMS;
+pub use groups::GROUPS;
 pub use pref::{Pref, SLEEP_MINUTES};
 
 #[cfg(test)]

@@ -9,8 +9,8 @@ use gpui::{Context, Div, InteractiveElement, Stateful};
 use super::SettingsWindow;
 use crate::address_bar::{
     CloseTab, CommandPalette, FocusAddressBar, NewTab, NewWindow, NextSpace, NextTab,
-    PreviousSpace, PreviousTab, Quit, ReopenClosedTab, SelectTab, Settings, ShowBookmarks,
-    ShowHistory, ToggleBookmark, ToggleFullScreen, ToggleSidebar,
+    PreviousSpace, PreviousTab, Quit, ReopenClosedTab, SelectSpace, SelectTab, Settings,
+    ShowBookmarks, ShowHistory, ToggleBookmark, ToggleFullScreen, ToggleSidebar,
 };
 use crate::shell::AppMsg;
 
@@ -61,11 +61,18 @@ impl SettingsWindow {
             Quit => Shortcut::Quit,
             ToggleFullScreen => Shortcut::ToggleFullScreen,
         );
-        el.on_action(cx.listener(|this, action: &SelectTab, _, cx| {
+        let el = el.on_action(cx.listener(|this, action: &SelectTab, _, cx| {
             if this.listening() {
                 cx.propagate();
             } else {
                 this.shortcut(Shortcut::SelectTab(action.0));
+            }
+        }));
+        el.on_action(cx.listener(|this, action: &SelectSpace, _, cx| {
+            if this.listening() {
+                cx.propagate();
+            } else {
+                this.shortcut(Shortcut::SelectSpace(action.0));
             }
         }))
     }

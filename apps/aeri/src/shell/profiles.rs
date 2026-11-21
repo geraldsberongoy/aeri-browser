@@ -125,6 +125,7 @@ impl Shell {
         match plan {
             Plan::Url(url) => self.open_url_window(profile, url, cx),
             Plan::Restore => self.restore_windows(profile, cx),
+            Plan::Fresh => self.fresh_windows(profile, cx),
         }
     }
 
@@ -141,8 +142,10 @@ impl Shell {
         apply_password_provider(profile, open);
         self.apply_profile_privacy(profile);
         self.apply_profile_links(profile);
+        self.apply_profile_browsing(profile);
         self.apply_profile_zoom(profile);
         self.load_workspace(profile);
+        self.adopt_spaces_default(profile, cx);
         let Some(open) = self.open.get_mut(&profile) else {
             return;
         };

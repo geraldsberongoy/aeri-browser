@@ -378,6 +378,12 @@ impl Shell {
         else {
             return;
         };
+        // A link to a site with a rule opens in its space, from a page in
+        // another one (Send links to a space).
+        let from = self.window(window_id).map(|w| (w.profile, w.space));
+        if let Some(target) = self.space_route(&url, from, cx) {
+            return self.open_routed(target, url, cx);
+        }
         let start = TabStart::Load(url);
         let beside = self.front_links_beside();
         let place = Place::Link {
@@ -400,6 +406,11 @@ impl Shell {
     /// Chrome or an extension wanted a tab: open it in the profile's newest
     /// window, or a new window of that profile.
     pub(super) fn open_url(&mut self, profile: ProfileId, url: String, cx: &mut App) {
+        // A link from another app or Chrome goes where a rule sends it
+        // (Send links to a space).
+        if let Some(window_id) = self.space_route(&url, None, cx) {
+            return self.open_routed(window_id, url, cx);
+        }
         if !self.profiles.iter().any(|p| p.id == profile) {
             tracing::warn!(%profile, url, "tab requested for an unknown profile");
             return;
@@ -421,6 +432,7 @@ impl Shell {
 
     pub(super) fn engine_event(&mut self, event: Event, cx: &mut App) {
         self.dusk_event(&event, cx);
+        self.site_styles_event(&event);
         self.find_event(&event, cx);
         self.zoom_event(&event);
         let tab_id = event.tab();

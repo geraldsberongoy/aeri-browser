@@ -239,3 +239,12 @@ pub(super) fn downloads_folder(m: &SettingsModel) -> String {
         None => folder.display().to_string(),
     }
 }
+
+pub(super) fn spaces_on(m: &SettingsModel) -> bool {
+    m.prefs.spaces.on()
+}
+
+pub(super) const NEEDS_SPACES: Need = Need {
+    holds: spaces_on,
+    text: "Only with Spaces on",
+};

@@ -3,6 +3,7 @@
 //! only through [`engine`]'s commands and events.
 
 pub mod appearance;
+pub mod arc_setup;
 pub mod credentials;
 pub mod engine;
 pub mod ids;
@@ -15,6 +16,7 @@ pub mod prefs;
 pub mod profile_db;
 pub mod proxy;
 pub mod resources;
+pub mod space_routes;
 pub mod store;
 pub mod suggest;
 pub mod tab;

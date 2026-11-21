@@ -401,9 +401,11 @@ impl Shell {
             None => rows.insert(0, typed),
         }
         if self.prefs().spaces.address_commands {
-            if let Some(command) = AddressCommand::matching(text) {
+            let spaces = self.spaces_on();
+            let listed = |c: &AddressCommand| spaces || *c != AddressCommand::NewSpace;
+            if let Some(command) = AddressCommand::matching(text).filter(listed) {
                 rows.insert(0, self.command_row(command));
-            } else if let Some(near) = AddressCommand::near(text) {
+            } else if let Some(near) = AddressCommand::near(text).filter(listed) {
                 rows.push(self.command_row(near));
             }
         }

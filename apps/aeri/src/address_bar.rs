@@ -59,6 +59,11 @@ actions!(
 #[action(namespace = address_bar, no_json)]
 pub struct SelectTab(pub u8);
 
+/// ⌃1–⌃9 (⌘1–⌘9 with the setting): show the nth space.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = address_bar, no_json)]
+pub struct SelectSpace(pub u8);
+
 /// GPUI bindings for every command with keys in `keymap`; the page's
 /// keyboard handler reads the same map.
 pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
@@ -77,6 +82,7 @@ pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
                 Shortcut::NextTab => Box::new(NextTab),
                 Shortcut::PreviousTab => Box::new(PreviousTab),
                 Shortcut::SelectTab(n) => Box::new(SelectTab(n)),
+                Shortcut::SelectSpace(n) => Box::new(SelectSpace(n)),
                 Shortcut::ToggleSidebar => Box::new(ToggleSidebar),
                 Shortcut::PreviousSpace => Box::new(PreviousSpace),
                 Shortcut::NextSpace => Box::new(NextSpace),
@@ -428,6 +434,9 @@ impl Render for AddressBar {
             )
             .on_action(cx.listener(|this, action: &SelectTab, _, _| {
                 this.shortcut(Shortcut::SelectTab(action.0))
+            }))
+            .on_action(cx.listener(|this, action: &SelectSpace, _, _| {
+                this.shortcut(Shortcut::SelectSpace(action.0))
             }))
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, _, _| this.shortcut(Shortcut::ToggleSidebar)),

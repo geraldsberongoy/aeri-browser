@@ -183,6 +183,12 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if !matches!(item.control, Control::Keywords) {
+            if let Some(list) = item.list {
+                return item
+                    .counts(&self.model)
+                    .then(|| self.list_rows(list, t, cx))
+                    .flatten();
+            }
             return self.under_field(item, t);
         }
         let t = *t;

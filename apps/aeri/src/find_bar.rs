@@ -18,8 +18,8 @@ use gpui::{
 use crate::address_bar::{
     ActualSize, CloseTab, CommandPalette, DarkenSite, Find, FindNext, FindPrevious,
     FocusAddressBar, NewTab, NewWindow, NextSpace, NextTab, PauseDarkening, PreviousSpace,
-    PreviousTab, Quit, ReopenClosedTab, SelectTab, Settings, ShowBookmarks, ShowHistory,
-    ToggleBookmark, ToggleFullScreen, ToggleSidebar, UndoCloseTab, ZoomIn, ZoomOut,
+    PreviousTab, Quit, ReopenClosedTab, SelectSpace, SelectTab, Settings, ShowBookmarks,
+    ShowHistory, ToggleBookmark, ToggleFullScreen, ToggleSidebar, UndoCloseTab, ZoomIn, ZoomOut,
 };
 use crate::shell::{AppMsg, FindMsg};
 use crate::symbol::{Weight, symbol};
@@ -200,8 +200,11 @@ fn forward_shortcuts(root: gpui::Div, cx: &mut Context<FindBar>) -> gpui::Div {
         DarkenSite => Shortcut::DarkenSite,
         PauseDarkening => Shortcut::PauseDarkening,
     );
-    root.on_action(cx.listener(|this, action: &SelectTab, _, _| {
+    let root = root.on_action(cx.listener(|this, action: &SelectTab, _, _| {
         this.shortcut(Shortcut::SelectTab(action.0));
+    }));
+    root.on_action(cx.listener(|this, action: &SelectSpace, _, _| {
+        this.shortcut(Shortcut::SelectSpace(action.0));
     }))
 }
 

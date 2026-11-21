@@ -44,6 +44,8 @@ pub enum AppMsg {
         pick: Pick,
     },
     Library(LibraryMsg),
+    /// The bookmarks bar's clicks and menus.
+    BookmarksBar(super::BarMsg),
     /// The bar asked to go away (Escape, a click outside, losing the
     /// keyboard); `session` is the reveal it belongs to, so a late request
     /// from an earlier one is ignored.
@@ -187,6 +189,12 @@ pub enum AppMsg {
     SpaceEditorClosed,
     /// The space's icon and colour menu and popover.
     SpaceLook(crate::space_look::SpaceLookMsg),
+    /// From the site style editor: the CSS for a site, blank to forget it.
+    SaveSiteStyle {
+        profile: ProfileId,
+        host: String,
+        css: String,
+    },
     /// The tab editor: the tab's own name and icon; `None` for the page's.
     SetTabLook {
         tab: TabId,
@@ -211,6 +219,8 @@ pub enum AppMsg {
     /// Once a minute: rest tabs unseen past the Person's period, or while
     /// memory stays short.
     RestCheck,
+    /// What the tab rows read from their pages and the player does.
+    TabSignal(super::tab_signals::TabSignal),
     /// macOS reported a change in memory pressure.
     MemoryPressure(Pressure),
     Resources(ResourceMsg),
@@ -289,6 +299,9 @@ pub enum Nav {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabCommand {
     Select,
+    /// ⌘ on a pin: with Settings › Pins › ⌘-click on a pin opens a new tab,
+    /// the pin's page opens in a new tab; otherwise it is selected.
+    PinCommandClick,
     Close,
     CloseOthers,
     Duplicate,

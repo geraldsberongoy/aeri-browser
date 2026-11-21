@@ -8,6 +8,7 @@ use gpui::App;
 use super::bar::{BarRow, Pick, suggestion_row, typed_row};
 use super::passwords::PASSWORDS_PAGE;
 use super::session::now;
+use super::space_prefs::is_space_palette;
 use super::trust::{CLEAR_DATA_PAGE, DOWNLOADS_PAGE};
 use super::{ChromeMsg, Shell, TabCommand};
 use crate::mac::Edge;
@@ -47,6 +48,8 @@ pub enum PaletteCommand {
     /// Settings › Appearance › Darken pages that stay light.
     DarkenSite,
     PauseDarkening,
+    /// Settings › Browsing › Your own style for a site.
+    EditSiteStyle,
     Quit,
 }
 
@@ -83,6 +86,7 @@ const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand::Capture,
     PaletteCommand::DarkenSite,
     PaletteCommand::PauseDarkening,
+    PaletteCommand::EditSiteStyle,
     PaletteCommand::Quit,
 ];
 
@@ -130,7 +134,10 @@ impl Shell {
             .iter()
             .map(|&command| (command, self.command_title(window_id, command)))
             .filter(|(command, title)| {
-                self.pages_command_listed(*command) && matches(&words, title)
+                self.pages_command_listed(*command)
+                    && self.site_style_listed(window_id, *command)
+                    && (self.spaces_on() || !is_space_palette(*command))
+                    && matches(&words, title)
             })
             .map(|(command, title)| BarRow {
                 title,
@@ -145,7 +152,9 @@ impl Shell {
         if words.is_empty() {
             return rows;
         }
-        if let Some(open) = self.open.get(&w.profile) {
+        if self.spaces_on()
+            && let Some(open) = self.open.get(&w.profile)
+        {
             rows.extend(
                 open.spaces
                     .iter()
@@ -241,6 +250,7 @@ impl Shell {
             PaletteCommand::DarkenSite => "Darken This Site",
             PaletteCommand::PauseDarkening if self.dusk_paused() => "Resume Darkening",
             PaletteCommand::PauseDarkening => "Pause Darkening",
+            PaletteCommand::EditSiteStyle => return self.site_style_title(window_id),
         };
         title.to_owned()
     }
@@ -278,6 +288,7 @@ impl Shell {
             PaletteCommand::ClearBrowsingData => self.open_page(window_id, CLEAR_DATA_PAGE, cx),
             PaletteCommand::ManagePasswords => self.open_page(window_id, PASSWORDS_PAGE, cx),
             PaletteCommand::Capture => self.capture_page(window_id),
+            PaletteCommand::EditSiteStyle => self.edit_site_style(window_id, cx),
             PaletteCommand::ShowResources => self.show_resources(window_id, cx),
             PaletteCommand::PinSidebar => self.chrome_msg(
                 ChromeMsg::Pin {

@@ -30,6 +30,10 @@ pub enum Shortcut {
     ToggleSidebar,
     PreviousSpace,
     NextSpace,
+    /// The nth space, 1-9 (Search `spaces.N`): ⌃1-⌃9, or ⌘1-⌘9 with
+    /// Settings › Spaces & Pins › ⌘1–⌘9 switch spaces. No keys while
+    /// spaces are off ([`Keymap::default_for`]).
+    SelectSpace(u8),
     /// Bookmark the shown page, or remove its bookmarks.
     ToggleBookmark,
     ShowBookmarks,
@@ -87,6 +91,7 @@ impl Shortcut {
             Self::DarkenSite,
             Self::PauseDarkening,
         ]);
+        all.extend((1..=9).map(Self::SelectSpace));
         all
     }
 
@@ -105,6 +110,7 @@ impl Shortcut {
             Self::ToggleSidebar => "Show or Hide Sidebar".into(),
             Self::PreviousSpace => "Previous Space".into(),
             Self::NextSpace => "Next Space".into(),
+            Self::SelectSpace(n) => format!("Space {n}"),
             Self::ToggleBookmark => "Bookmark Page".into(),
             Self::ShowBookmarks => "Bookmarks".into(),
             Self::ShowHistory => "History".into(),
@@ -138,6 +144,7 @@ impl Shortcut {
             Self::ToggleSidebar => "toggle-sidebar".into(),
             Self::PreviousSpace => "previous-space".into(),
             Self::NextSpace => "next-space".into(),
+            Self::SelectSpace(n) => format!("space-{n}"),
             Self::ToggleBookmark => "bookmark-page".into(),
             Self::ShowBookmarks => "bookmarks".into(),
             Self::ShowHistory => "history".into(),
@@ -175,6 +182,7 @@ impl Shortcut {
             Self::ToggleSidebar => "cmd-s".into(),
             Self::PreviousSpace => "alt-cmd-left".into(),
             Self::NextSpace => "alt-cmd-right".into(),
+            Self::SelectSpace(n) => format!("ctrl-{n}"),
             Self::ToggleBookmark => "cmd-d".into(),
             Self::ShowBookmarks => "alt-cmd-b".into(),
             Self::ShowHistory => "cmd-y".into(),
@@ -410,14 +418,52 @@ pub struct Keymap {
     changes: BTreeMap<Shortcut, Option<Chord>>,
     /// A tab was just closed and ⌘Z may bring it back (not stored).
     undo_close: bool,
+    /// Which keys the spaces take, and so where ⌘1-⌘9 default to (not
+    /// stored: it follows Settings › Spaces & Pins).
+    space_keys: SpaceKeys,
+}
+
+/// Search's Spaces & Pins settings as the keys see them (`KeyCombo.
+/// spacesOnCommand`, `Command.defaultKey`, `Shortcuts.swift`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SpaceKeys {
+    /// Spaces are off: they have no keys, ⌘1-⌘9 pick tabs.
+    #[default]
+    Off,
+    /// ⌃1-⌃9 switch spaces, ⌘1-⌘9 pick tabs.
+    Control,
+    /// ⌘1-⌘9 switch spaces, ⌃1-⌃9 pick tabs (`spaces.commandNumbers`).
+    Command,
 }
 
 impl Keymap {
+    /// The keys a command has until the Person changes them, with the
+    /// spaces' setting counted: `None` for a space's keys while spaces
+    /// are off.
+    pub fn default_for(&self, shortcut: Shortcut) -> Option<Chord> {
+        let digit = |modifier: &str, n: u8| Chord::parse(&format!("{modifier}-{n}"));
+        match (shortcut, self.space_keys) {
+            (Shortcut::SelectSpace(_), SpaceKeys::Off) => None,
+            (Shortcut::SelectSpace(n), SpaceKeys::Control) => digit("ctrl", n),
+            (Shortcut::SelectSpace(n), SpaceKeys::Command) => digit("cmd", n),
+            (Shortcut::SelectTab(n), SpaceKeys::Command) => digit("ctrl", n),
+            _ => Some(shortcut.default_chord()),
+        }
+    }
+
+    pub fn space_keys(&self) -> SpaceKeys {
+        self.space_keys
+    }
+
+    pub fn set_space_keys(&mut self, keys: SpaceKeys) {
+        self.space_keys = keys;
+    }
+
     /// The command's keys now.
     pub fn chord(&self, shortcut: Shortcut) -> Option<Chord> {
         match self.changes.get(&shortcut) {
             Some(change) => change.clone(),
-            None => Some(shortcut.default_chord()),
+            None => self.default_for(shortcut),
         }
     }
 
@@ -500,8 +546,9 @@ impl Keymap {
     /// Gives the command its default keys back; a command holding them
     /// loses them.
     pub fn reset(&mut self, shortcut: Shortcut) {
-        let chord = shortcut.default_chord();
-        if let Some(other) = self.shortcut(&chord).filter(|&o| o != shortcut) {
+        if let Some(chord) = self.default_for(shortcut)
+            && let Some(other) = self.shortcut(&chord).filter(|&o| o != shortcut)
+        {
             self.set(other, None);
         }
         self.changes.remove(&shortcut);
@@ -512,7 +559,7 @@ impl Keymap {
     }
 
     fn set(&mut self, shortcut: Shortcut, chord: Option<Chord>) {
-        if chord.as_ref() == Some(&shortcut.default_chord()) {
+        if chord == self.default_for(shortcut) {
             self.changes.remove(&shortcut);
         } else {
             self.changes.insert(shortcut, chord);
@@ -584,13 +631,48 @@ mod tests {
 
     #[test]
     fn defaults_are_distinct_and_valid() {
-        let keymap = Keymap::default();
-        let bindings = keymap.bindings();
-        assert_eq!(bindings.len(), Shortcut::all().len());
-        for (s, c) in &bindings {
-            assert_eq!(keymap.shortcut(c), Some(*s), "{} is shared", c);
-            assert_eq!(Shortcut::from_key(&s.key()), Some(*s));
+        for keys in [SpaceKeys::Off, SpaceKeys::Control, SpaceKeys::Command] {
+            let mut keymap = Keymap::default();
+            keymap.set_space_keys(keys);
+            let bindings = keymap.bindings();
+            let spaces = if keys == SpaceKeys::Off { 9 } else { 0 };
+            assert_eq!(bindings.len() + spaces, Shortcut::all().len(), "{keys:?}");
+            for (s, c) in &bindings {
+                assert_eq!(keymap.shortcut(c), Some(*s), "{} is shared", c);
+                assert_eq!(Shortcut::from_key(&s.key()), Some(*s));
+            }
         }
+    }
+
+    #[test]
+    fn the_number_keys_go_to_tabs_or_spaces() {
+        let mut keymap = Keymap::default();
+        assert_eq!(keymap.chord(Shortcut::SelectTab(2)), Some(chord("cmd-2")));
+        assert_eq!(keymap.chord(Shortcut::SelectSpace(2)), None);
+        keymap.set_space_keys(SpaceKeys::Control);
+        assert_eq!(keymap.chord(Shortcut::SelectTab(2)), Some(chord("cmd-2")));
+        assert_eq!(
+            keymap.chord(Shortcut::SelectSpace(2)),
+            Some(chord("ctrl-2"))
+        );
+        // ⌘1-⌘9 switch spaces and ⌃1-⌃9 pick tabs: the two swapped.
+        keymap.set_space_keys(SpaceKeys::Command);
+        assert_eq!(keymap.chord(Shortcut::SelectTab(9)), Some(chord("ctrl-9")));
+        assert_eq!(
+            keymap.shortcut(&chord("cmd-9")),
+            Some(Shortcut::SelectSpace(9))
+        );
+        // A key the Person chose stays through the swap, and is stored.
+        keymap
+            .bind(Shortcut::SelectTab(1), chord("cmd-k"), OnConflict::Refuse)
+            .unwrap();
+        keymap.set_space_keys(SpaceKeys::Control);
+        assert_eq!(keymap.chord(Shortcut::SelectTab(1)), Some(chord("cmd-k")));
+        assert!(!keymap.is_default(Shortcut::SelectTab(1)));
+        // Nothing about the mode is stored.
+        let mut plain = Keymap::default();
+        plain.set_space_keys(SpaceKeys::Command);
+        assert_eq!(plain.to_json(), "{}");
     }
 
     #[test]

@@ -160,6 +160,10 @@ wrap_display_handler! {
             emit(&self.sink, Event::TitleChanged { tab: self.tab, title: text(title) });
         }
 
+        fn on_fullscreen_mode_change(&self, browser: Option<&mut Browser>, fullscreen: ::std::os::raw::c_int) {
+            crate::browsing::fullscreen_changed(self.tab, browser, fullscreen != 0);
+        }
+
         fn on_favicon_urlchange(&self, browser: Option<&mut Browser>, icon_urls: Option<&mut CefStringList>) {
             let Some(browser) = browser else {
                 return;
@@ -329,7 +333,7 @@ wrap_life_span_handler! {
             _popup_features: Option<&cef::PopupFeatures>,
             _window_info: Option<&mut cef::WindowInfo>,
             client: Option<&mut Option<Client>>,
-            _settings: Option<&mut cef::BrowserSettings>,
+            settings: Option<&mut cef::BrowserSettings>,
             _extra_info: Option<&mut Option<cef::DictionaryValue>>,
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
@@ -340,6 +344,9 @@ wrap_life_span_handler! {
             let Some(client) = client else { return 1 };
             let tab = TabId::next();
             *client = Some(tab_client(tab, self.sink.clone()));
+            if let Some(settings) = settings {
+                crate::browsing::apply_to(settings);
+            }
             tracing::debug!(opener = %self.tab, %tab, url, "popup becomes a tab");
             crate::window::expect_popup(crate::window::PendingPopup {
                 popup_id,
@@ -395,11 +402,14 @@ wrap_keyboard_handler! {
     impl KeyboardHandler {
         fn on_pre_key_event(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             event: Option<&KeyEvent>,
             _os_event: *mut u8,
             _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
+            if event.is_some_and(|event| crate::browsing::escape_kept(self.tab, browser, event)) {
+                return 1;
+            }
             match event.and_then(shortcut_for) {
                 Some(shortcut) => {
                     (self.sink)(Signal::Shortcut { tab: self.tab, shortcut });

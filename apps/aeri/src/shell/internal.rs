@@ -22,12 +22,19 @@ use super::settings_index::Page;
 use super::tabs::TabEntry;
 use super::windows::Spot;
 use super::{Shell, content_view};
+use crate::release_notes::ReleaseNotes;
 use crate::settings_window::SettingsWindow;
 
 /// The Settings tab's view and the tab it belongs to.
 pub(super) struct SettingsView {
     pub(super) tab: TabId,
     pub(super) handle: WindowHandle<SettingsWindow>,
+}
+
+/// The What's New tab's view and the tab it belongs to.
+pub(super) struct NotesView {
+    pub(super) tab: TabId,
+    pub(super) handle: WindowHandle<ReleaseNotes>,
 }
 
 impl Shell {
@@ -62,6 +69,7 @@ impl Shell {
         let opener = w.tabs.active();
         let asked = match page.kind {
             Kind::Settings => page.detail.as_deref().and_then(Page::from_key),
+            Kind::ReleaseNotes => None,
         };
         if let Some(tab) = self.internal_tab(window_id, page.kind) {
             if let Some(asked) = asked {
@@ -76,8 +84,13 @@ impl Shell {
             self.switch_to(window_id, tab, cx);
             return;
         }
-        let section = asked.unwrap_or_else(|| self.remembered_settings_page());
-        let address = InternalPage::new(page.kind, Some(section.key()));
+        let address = match page.kind {
+            Kind::Settings => {
+                let section = asked.unwrap_or_else(|| self.remembered_settings_page());
+                InternalPage::new(page.kind, Some(section.key()))
+            }
+            Kind::ReleaseNotes => InternalPage::new(Kind::ReleaseNotes, None),
+        };
         let (tab, entry) = TabEntry::of_internal(&address);
         let Some(w) = self.window_mut(window_id) else {
             return;
@@ -130,6 +143,7 @@ impl Shell {
             .collect();
         for id in ids {
             self.sync_settings_view(id, cx);
+            self.sync_notes_view(id, cx);
         }
     }
 
@@ -206,6 +220,83 @@ impl Shell {
             return;
         };
         w.settings = Some(SettingsView { tab, handle });
+        let frame = w.frame.clone();
+        if let Some(view) = view {
+            self.later(move |_| frame.created(tab, view));
+        }
+    }
+
+    /// The window's What's New view, kept as Settings' is: made when its
+    /// tab is first shown, gone with the tab.
+    fn sync_notes_view(&mut self, window_id: u64, cx: &mut App) {
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        let is_notes = |shell: &Self, tab: TabId| {
+            shell
+                .internal_of(window_id, tab)
+                .is_some_and(|page| page.kind == Kind::ReleaseNotes)
+        };
+        let kept = w
+            .notes
+            .as_ref()
+            .map(|view| view.tab)
+            .filter(|&tab| is_notes(self, tab));
+        if w.notes.is_some() && kept.is_none() {
+            let Some(view) = self.window_mut(window_id).and_then(|w| w.notes.take()) else {
+                return;
+            };
+            let _ = view
+                .handle
+                .update(cx, |_, window, _| window.remove_window());
+            if let Some(frame) = self.window(window_id).map(|w| w.frame.clone()) {
+                let tab = view.tab;
+                self.later(move |_| frame.remove_tab(tab));
+            }
+        }
+        let wanted = self
+            .window(window_id)
+            .and_then(|w| w.shown())
+            .filter(|&tab| is_notes(self, tab));
+        if let Some(tab) = wanted.filter(|_| kept.is_none()) {
+            self.open_notes_view(window_id, tab, cx);
+        }
+    }
+
+    /// Makes the What's New view for `tab`, as [`Shell::open_settings_view`]
+    /// makes Settings'.
+    fn open_notes_view(&mut self, window_id: u64, tab: TabId, cx: &mut App) {
+        let options = WindowOptions {
+            titlebar: None,
+            kind: WindowKind::PopUp,
+            focus: false,
+            show: false,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: WindowBackgroundAppearance::Opaque,
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                point(px(0.), px(0.)),
+                size(px(980.), px(680.)),
+            ))),
+            ..Default::default()
+        };
+        let handle = match cx.open_window(options, |_, cx| cx.new(|_| ReleaseNotes::new())) {
+            Ok(handle) => handle,
+            Err(err) => {
+                tracing::error!(%err, "could not open the What's New view");
+                return;
+            }
+        };
+        let view = handle
+            .update(cx, |_, window, _| content_view(window))
+            .ok()
+            .flatten();
+        let Some(w) = self.window_mut(window_id) else {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+            return;
+        };
+        w.notes = Some(NotesView { tab, handle });
         let frame = w.frame.clone();
         if let Some(view) = view {
             self.later(move |_| frame.created(tab, view));

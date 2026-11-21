@@ -21,7 +21,7 @@ pub(super) fn load(db: &AppDb, existing_install: bool) -> AppPrefs {
             let prefs = if existing_install {
                 AppPrefs::existing_install()
             } else {
-                AppPrefs::default()
+                AppPrefs::fresh_install()
             };
             save(db, &prefs);
             prefs
@@ -65,8 +65,13 @@ impl Shell {
         self.apply_privacy(&before.privacy, cx);
         self.apply_launcher(before);
         self.apply_links(before, cx);
+        self.apply_browsing(before, cx);
         self.apply_pages(before, cx);
         self.apply_zoom_prefs(before, cx);
+        self.apply_bookmarks_bar(before, cx);
+        self.apply_site_styles_prefs(before, cx);
+        self.apply_tab_signals(before, cx);
+        self.apply_space_prefs(before, cx);
     }
 
     /// New downloads go to the chosen folder, else the default one

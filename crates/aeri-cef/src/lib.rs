@@ -5,7 +5,9 @@
 //! used here runs on the main thread (CEF's UI thread on macOS with
 //! `external_message_pump`).
 
+mod browsing;
 mod cdp_pages;
+mod cdp_styles;
 mod client;
 mod devtools;
 mod downloads;
@@ -15,6 +17,7 @@ mod fetch;
 mod find;
 mod links;
 mod orphan;
+mod page_signals;
 mod preferences;
 mod profile;
 mod request_policy;
@@ -34,6 +37,7 @@ use aeri_core::engine::Event;
 use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::keymap::{Chord, Keymap, Shortcut};
 
+pub use browsing::{set_escape_twice, set_link_bubble};
 pub use cdp_pages::Capture;
 pub use devtools::DevTools;
 pub use downloads::{cancel_download, set_download_ask, set_download_dir};

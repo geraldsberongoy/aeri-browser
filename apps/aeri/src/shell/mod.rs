@@ -25,8 +25,11 @@
 //! goes, it turns dormant and the context is released. Aeri keeps running
 //! with no windows, like other Mac browsers.
 
+mod about;
 mod appearance;
 mod bar;
+mod bookmarks_bar;
+mod browsing;
 mod chrome;
 mod favourites;
 mod find;
@@ -49,13 +52,17 @@ mod resting;
 mod session;
 mod settings;
 pub mod settings_index;
+mod settings_rows;
 mod shortcuts;
 mod site_icons;
+mod site_styles;
+mod space_prefs;
 mod space_settings;
 mod spaces;
 mod suggest;
 mod tab_look;
 mod tab_menu;
+mod tab_signals;
 mod tabs;
 mod theme_files;
 mod themes;
@@ -83,6 +90,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{App, Menu, MenuItem, WindowHandle, actions};
 
 pub use self::bar::{BarRow, Pick};
+pub use self::bookmarks_bar::BarMsg;
 pub use self::find::FindMsg;
 pub use self::links::open_urls;
 pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand, ThemeEditorMsg};
@@ -90,8 +98,10 @@ use self::profiles::remove_deleted_profiles;
 use self::quit::quit_on_signals;
 use self::resting::Resting;
 pub use self::settings::{KeyRow, SettingsModel, SettingsMsg};
+pub use self::settings_rows::{ArcState, RowsMsg};
 pub use self::spaces::SPACE_ICONS;
 use self::spaces::{Parked, SpaceInfo};
+pub use self::tab_signals::{PlayerAct, TabSignal};
 use self::tabs::TabEntry;
 use self::trust::DownloadEntry;
 use self::windows::AeriWindow;
@@ -134,6 +144,10 @@ type Effect = Box<dyn FnOnce(&mut Shell)>;
 enum Plan {
     /// Its saved windows (one window on its first space if none).
     Restore,
+    /// Its windows as a fresh start leaves them: pins, favourites and named
+    /// tabs stay, the other tabs do not come back (Start with a fresh
+    /// window).
+    Fresh,
     /// A window on this address: a new tab in the first space no window
     /// shows.
     Url(String),
@@ -238,8 +252,10 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     remove_deleted_profiles(&db, &config.data_dir);
     // An explicit start address opens one window on it; otherwise each
     // profile restores its session.
+    let fresh = prefs.spaces.start_fresh;
     let plan = || match &config.start_url {
         Some(url) => Plan::Url(url.clone()),
+        None if fresh => Plan::Fresh,
         None => Plan::Restore,
     };
     let mut launch = Vec::new();
@@ -261,6 +277,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     // Before any window opens: every view paints from the theme.
     appearance::start(&db, tx.clone(), cx);
     launcher::startup_switches(&prefs);
+    browsing::start(&prefs.browsing);
     let runtime_config = RuntimeConfig {
         root_cache_path: root_cache_path.clone(),
         log_file: Some(config.data_dir.join("chromium.log")),
@@ -280,7 +297,8 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     aeri_cef::set_download_ask(prefs.general.downloads_ask);
     links::start(&prefs, &tx);
 
-    let keymap = settings::load_keymap(&db);
+    let mut keymap = settings::load_keymap(&db);
+    keymap.set_space_keys(prefs.spaces.keys());
     settings::install_keymap(&keymap, cx);
     let send = |msg: fn() -> AppMsg| {
         let tx = tx.clone();
@@ -485,6 +503,7 @@ impl Shell {
                 command,
             } => self.tab_command(window, tab, command, cx),
             AppMsg::TabMenu { window, tab, x, y } => self.tab_menu(window, tab, x, y),
+            AppMsg::BookmarksBar(msg) => self.bookmarks_bar_msg(msg, cx),
             AppMsg::OpenInProfile { profile, url } => self.open_in_profile(profile, url, cx),
             AppMsg::ExtensionsChanged { profile } => self.extensions_changed(profile, cx),
             AppMsg::Nav { window, nav } => self.nav(window, nav),
@@ -562,6 +581,9 @@ impl Shell {
             } => self.delete_space(window, space, confirmed, cx),
             AppMsg::SpaceEditorClosed => self.space_editor = None,
             AppMsg::SpaceLook(msg) => self.space_look_msg(msg, cx),
+            AppMsg::SaveSiteStyle { profile, host, css } => {
+                self.save_site_style(profile, &host, &css);
+            }
             AppMsg::SetTabLook { tab, name, icon } => self.set_tab_look(tab, name, icon, cx),
             AppMsg::TabEditorClosed => self.tab_editor = None,
             AppMsg::WindowKey { window } => self.window_key(window, cx),
@@ -578,6 +600,7 @@ impl Shell {
                 }
             }
             AppMsg::RestCheck => self.rest_check(cx),
+            AppMsg::TabSignal(signal) => self.tab_signal(signal, cx),
             AppMsg::MemoryPressure(level) => self.memory_pressure(level, cx),
             AppMsg::Resources(msg) => self.resources_msg(msg, cx),
             AppMsg::SystemAppearanceChanged => self.system_appearance_changed(cx),

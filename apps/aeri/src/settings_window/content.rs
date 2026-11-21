@@ -440,6 +440,7 @@ impl SettingsWindow {
             }
             Control::Key => (self.launcher_key(t, cx), None),
             Control::Keywords => (self.keywords_control(t, cx), None),
+            Control::Arc => (self.arc_control(t, cx), None),
             Control::Always => (always_on(t), None),
         }
     }

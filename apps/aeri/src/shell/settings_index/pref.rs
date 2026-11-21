@@ -2,7 +2,7 @@
 //! how a choice edits the layout or the app-wide preferences
 //! (`aeri_core::prefs`).
 
-use aeri_core::layout::{Glyph, Layout, Side, TabPlace};
+use aeri_core::layout::{FavouriteStyle, Glyph, Layout, Side, TabPlace};
 use aeri_core::prefs::{AppPrefs, CloseAfter, Engine, NewTabPlace, Webmail, clamp_zoom};
 use aeri_core::proxy::ProxyMode;
 
@@ -68,6 +68,24 @@ pub enum Pref {
     Capture,
     /// The percent every site starts at.
     PageZoom,
+    LinksTabs,
+    MediaClick,
+    EscapeTwice,
+    ShowLinks,
+    Autocorrect,
+    SiteStyles,
+    SidebarPlayer,
+    ReadingProgress,
+    TabsGive,
+    BookmarksBar,
+    SleepDim,
+    Spaces,
+    SpacesCommand,
+    LinksToSpaces,
+    /// Favourites as rows: a layout preference, not an app-wide one.
+    PinnedRows,
+    PinCommand,
+    StartFresh,
 }
 
 /// Search's `SleepPace` waits, in minutes (Sleep.swift:57-63).
@@ -174,6 +192,23 @@ impl Pref {
             Self::Dusk => Value::On(p.appearance.dusk),
             Self::Capture => Value::On(p.browsing.capture),
             Self::PageZoom => Value::Pick(usize::from(p.browsing.page_zoom_percent)),
+            Self::LinksTabs => Value::On(p.browsing.links_little_tabs),
+            Self::MediaClick => Value::On(p.browsing.media_click),
+            Self::EscapeTwice => Value::On(p.browsing.escape_twice),
+            Self::ShowLinks => Value::On(p.browsing.show_link_targets),
+            Self::Autocorrect => Value::On(p.browsing.autocorrect),
+            Self::SiteStyles => Value::On(p.browsing.site_styles),
+            Self::SidebarPlayer => Value::On(p.appearance.sidebar_player),
+            Self::ReadingProgress => Value::On(p.appearance.reading_progress),
+            Self::TabsGive => Value::On(p.appearance.tabs_give),
+            Self::BookmarksBar => Value::On(p.appearance.bookmarks_bar),
+            Self::SleepDim => Value::On(p.tabs.sleep_dim),
+            Self::Spaces => Value::On(p.spaces.on()),
+            Self::SpacesCommand => Value::On(p.spaces.spaces_command_numbers),
+            Self::LinksToSpaces => Value::On(p.spaces.links_to_spaces),
+            Self::PinnedRows => Value::On(l.favourites == FavouriteStyle::Rows),
+            Self::PinCommand => Value::On(p.spaces.pin_command_new_tab),
+            Self::StartFresh => Value::On(p.spaces.start_fresh),
         }
     }
 
@@ -224,6 +259,13 @@ impl Pref {
             Self::ReduceAnimations => layout.reduce_animations = on,
             Self::TabNumbers => layout.tab_numbers = on,
             Self::AddressOnTab => layout.address_on_tab = on,
+            Self::PinnedRows => {
+                layout.favourites = if on {
+                    FavouriteStyle::Rows
+                } else {
+                    FavouriteStyle::Grid
+                }
+            }
             _ => return false,
         }
         true
@@ -282,6 +324,22 @@ impl Pref {
             Self::PageZoom => {
                 prefs.browsing.page_zoom_percent = clamp_zoom(u16::try_from(ix).unwrap_or(100))
             }
+            Self::LinksTabs => prefs.browsing.links_little_tabs = on,
+            Self::MediaClick => prefs.browsing.media_click = on,
+            Self::EscapeTwice => prefs.browsing.escape_twice = on,
+            Self::ShowLinks => prefs.browsing.show_link_targets = on,
+            Self::Autocorrect => prefs.browsing.autocorrect = on,
+            Self::SiteStyles => prefs.browsing.site_styles = on,
+            Self::SidebarPlayer => prefs.appearance.sidebar_player = on,
+            Self::ReadingProgress => prefs.appearance.reading_progress = on,
+            Self::TabsGive => prefs.appearance.tabs_give = on,
+            Self::BookmarksBar => prefs.appearance.bookmarks_bar = on,
+            Self::SleepDim => prefs.tabs.sleep_dim = on,
+            Self::Spaces => prefs.spaces.enabled = Some(on),
+            Self::SpacesCommand => prefs.spaces.spaces_command_numbers = on,
+            Self::LinksToSpaces => prefs.spaces.links_to_spaces = on,
+            Self::PinCommand => prefs.spaces.pin_command_new_tab = on,
+            Self::StartFresh => prefs.spaces.start_fresh = on,
             _ => return false,
         }
         true

@@ -9,6 +9,7 @@ mod closed;
 mod history;
 mod keep_awake;
 mod settings;
+mod site_styles;
 mod workspace;
 
 use std::path::Path;
@@ -118,6 +119,8 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE favourites ADD COLUMN icon TEXT;
      ALTER TABLE closed_tabs ADD COLUMN name TEXT;
      ALTER TABLE closed_tabs ADD COLUMN icon TEXT;",
+    // 10: the Person's own style for a site, by host (Search `styles.json`).
+    "CREATE TABLE site_styles (host TEXT PRIMARY KEY NOT NULL, css TEXT NOT NULL);",
 ];
 
 pub struct ProfileDb {

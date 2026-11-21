@@ -27,10 +27,11 @@ mod plan;
 mod row;
 
 pub(super) use self::plan::TabListState;
+pub(super) use self::plan::row_height;
 use self::plan::{DIVIDER, Item, Kind, LEAVE, TILE, plan};
+use self::row::ghost;
 pub(super) use self::row::site_line;
-use self::row::{ghost, title_size};
-pub(super) use self::row::{number_badge, shortcut_number};
+pub(super) use self::row::{mark_size, number_badge, shortcut_number, title_size};
 use super::tab_items::mark;
 use super::{Host, SidebarTab, WindowFrame};
 use crate::motion;
@@ -144,7 +145,15 @@ impl WindowFrame {
         let favourites: Vec<&SidebarTab> = tabs.iter().filter(|t| t.favourite).collect();
         let others: Vec<&SidebarTab> = tabs.iter().filter(|t| !t.favourite).collect();
         let pinned = others.iter().filter(|t| t.pinned).count();
-        let plan = plan(&favourites, &others, pinned, room, self.layout.roomy);
+        let as_rows = self.layout.favourites == aeri_core::layout::FavouriteStyle::Rows;
+        let plan = plan(
+            &favourites,
+            &others,
+            pinned,
+            room,
+            self.layout.roomy,
+            as_rows,
+        );
         let numbers = self.layout.tab_numbers && self.command_held;
         let changes = self.tab_list.inner.borrow_mut().sync(space, &plan.items);
         if changes.newly_leaving {
@@ -162,7 +171,16 @@ impl WindowFrame {
 
         // The shown tab's ground, under everything.
         if let Some(shown) = plan.items.iter().find(|i| i.tab.active) {
-            inner = inner.child(live_ground(shown, &t, layout_key, changes.pill_epoch, pace));
+            let reading =
+                (self.look.reading && shown.kind == Kind::Row).then_some(shown.tab.reading);
+            inner = inner.child(live_ground(
+                shown,
+                &t,
+                layout_key,
+                changes.pill_epoch,
+                pace,
+                reading,
+            ));
         }
 
         for item in &plan.items {
@@ -262,6 +280,7 @@ impl WindowFrame {
         let label = SharedString::from(tab.label.clone());
         let body = self
             .tab_base("pin", item.index, tab, dy, cx)
+            .group("pin")
             .size_full()
             .flex()
             .items_center()
@@ -283,7 +302,10 @@ impl WindowFrame {
             .tooltip(move |_, cx| cx.new(|_| Tip(label.clone())).into())
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if this.pin_command(id, true, event.modifiers) {
+                        return;
+                    }
                     if !active {
                         this.press_select(id, cx);
                     }
@@ -298,9 +320,13 @@ impl WindowFrame {
         } else if super::tab_items::is_blank(tab) {
             body
         } else if super::tab_items::shown_favicon(tab, &self.layout).is_some() {
-            body.child(mark(tab, scale * 16. / TILE, &t, &self.layout))
+            body.child(self.dimmed(mark(tab, scale * 16. / TILE, &t, &self.layout), tab, "pin"))
         } else {
-            body.child(SharedString::from(super::tab_items::letter(tab)))
+            body.child(self.dimmed(
+                div().child(SharedString::from(super::tab_items::letter(tab))),
+                tab,
+                "pin",
+            ))
         };
         let mut opacity = spring(pace.settle, 1., pace.still);
         if fresh {
@@ -410,6 +436,22 @@ impl WindowFrame {
         })
     }
 
+    /// ⌘ on a pin (Settings › Pins › ⌘-click on a pin opens a new tab):
+    /// the shell knows the setting and does what it says, or selects the
+    /// pin as any press does. False for anything else, which goes on as
+    /// usual (Search `extendTabSelection`: a pin with ⌘ and no ⇧).
+    pub(super) fn pin_command(&self, tab: TabId, pin: bool, modifiers: gpui::Modifiers) -> bool {
+        if !pin || !modifiers.platform || modifiers.shift {
+            return false;
+        }
+        self.send(AppMsg::Tab {
+            window: self.window_id,
+            tab,
+            command: TabCommand::PinCommandClick,
+        });
+        true
+    }
+
     /// A press on a tab: it is drawn as the shown one at once, and the
     /// shell is asked to show it. The shell's state replaces the guess when
     /// it arrives; a refusal is undone when the patience of the guess runs
@@ -454,6 +496,7 @@ fn live_ground(
     key: u64,
     epoch: u64,
     pace: motion::Pace,
+    reading: Option<f32>,
 ) -> impl IntoElement {
     let still = pace.still;
     let r = shown.rect;
@@ -466,19 +509,21 @@ fn live_ground(
     } else {
         Duration::from_millis(140)
     };
+    let ground = match reading {
+        Some(ratio) => split_ground(t, key, shown, ratio, pace).into_any_element(),
+        None => div()
+            .size_full()
+            .rounded(px(radius))
+            .bg(theme::c(colour))
+            .into_any_element(),
+    };
     div()
         .absolute()
-        .child(
-            div()
-                .size_full()
-                .rounded(px(radius))
-                .bg(theme::c(colour))
-                .with_animation(
-                    ("tl-live-in", epoch),
-                    Animation::new(fade).with_easing(motion::ease_out),
-                    |d, t| d.opacity(t),
-                ),
-        )
+        .child(div().size_full().child(ground).with_animation(
+            ("tl-live-in", epoch),
+            Animation::new(fade).with_easing(motion::ease_out),
+            |d, t| d.opacity(t),
+        ))
         .with_spring(("tl-lx", key), spring(pace.glide, r.x, still), |d, v| {
             d.left(px(v))
         })
@@ -491,4 +536,48 @@ fn live_ground(
         .with_spring(("tl-lh", key), spring(pace.glide, r.h, still), |s, v| {
             s.map_element(|s| s.map_element(|s| s.map_element(|d| d.h(px(v)))))
         })
+}
+
+/// "Show how far you've read" (Search `ReadingFill`, `Tab.swift:275`): the
+/// row's ground with ink at 0.055 over its first `ratio`, easing out over
+/// 0.15 s as the value changes. GPUI clips a box to a rectangle, so the
+/// ground is drawn in two pieces that each keep the row's corners: the
+/// filled piece is rounded on the left, and on the right once it reaches
+/// that corner; the rest is rounded on the right, and on the left while the
+/// fill has not left that corner.
+fn split_ground(
+    t: &Tokens,
+    key: u64,
+    shown: &Item,
+    ratio: f32,
+    pace: motion::Pace,
+) -> impl IntoElement {
+    let width = shown.rect.w;
+    let filled = t.text.with_alpha(0.055).over(t.live);
+    div()
+        .size_full()
+        .flex()
+        .child(
+            div()
+                .h_full()
+                .flex_none()
+                .bg(theme::c(filled))
+                .rounded_l(px(9.))
+                .with_spring(
+                    ("tl-read", mix(key as i64, shown.tab.id.0)),
+                    spring(motion::FOLD_IN, ratio.clamp(0., 1.), pace.still),
+                    move |d, v| {
+                        d.w(gpui::relative(v))
+                            .when(v * width > width - 9., |d| d.rounded_r(px(9.)))
+                    },
+                ),
+        )
+        .child(
+            div()
+                .h_full()
+                .flex_1()
+                .bg(theme::c(t.live))
+                .rounded_r(px(9.))
+                .when(ratio * width < 9., |d| d.rounded_l(px(9.))),
+        )
 }

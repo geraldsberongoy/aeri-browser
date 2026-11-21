@@ -8,6 +8,8 @@ pub const SCHEME: &str = "aeri";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Settings,
+    /// `aeri://release-notes`: What's New (Search `InternalPage.Kind.notes`).
+    ReleaseNotes,
 }
 
 impl Kind {
@@ -15,6 +17,7 @@ impl Kind {
     pub fn name(self) -> &'static str {
         match self {
             Self::Settings => "settings",
+            Self::ReleaseNotes => "release-notes",
         }
     }
 
@@ -22,6 +25,7 @@ impl Kind {
     pub fn title(self) -> &'static str {
         match self {
             Self::Settings => "Settings",
+            Self::ReleaseNotes => "What's New",
         }
     }
 }
@@ -54,6 +58,7 @@ impl InternalPage {
         let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
         let kind = match host.to_ascii_lowercase().as_str() {
             "settings" => Kind::Settings,
+            "release-notes" => Kind::ReleaseNotes,
             _ => return None,
         };
         let detail = path.trim_matches('/').to_ascii_lowercase();
@@ -89,6 +94,13 @@ mod tests {
         assert_eq!(InternalPage::parse("aeri://nowhere"), None);
         assert_eq!(InternalPage::parse("https://settings"), None);
         assert_eq!(InternalPage::parse("settings"), None);
+    }
+
+    #[test]
+    fn release_notes_have_an_address() {
+        let page = InternalPage::new(Kind::ReleaseNotes, None);
+        assert_eq!(page.url(), "aeri://release-notes");
+        assert_eq!(InternalPage::parse("aeri://release-notes"), Some(page));
     }
 
     #[test]

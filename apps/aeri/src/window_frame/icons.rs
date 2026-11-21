@@ -178,7 +178,8 @@ impl WindowFrame {
                     .absolute()
                     .left(px(COLUMN_PAD))
                     .top(px(place.y))
-                    .child(self.icon_tile(place, number, &t, dy, cx)),
+                    .size(px(tile))
+                    .child(self.icon_tile(place, number, &t, dy, pace, cx)),
             );
         }
         if let Some(y) = plan.divider {
@@ -230,6 +231,7 @@ impl WindowFrame {
         number: Option<u8>,
         t: &Tokens,
         dy: f32,
+        pace: crate::motion::Pace,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let (window, tab, t) = (self.window_id, place.tab, *t);
@@ -238,9 +240,10 @@ impl WindowFrame {
         let high = self.layout.high_contrast;
         let group = SharedString::from(format!("tile-{}", id.0));
         let closable = active && !tab.pinned && !tab.favourite;
+        let pin = tab.pinned || tab.favourite;
         let tip = icon_tip(tab, &self.layout);
         let tile = ICON_TILE as f32;
-        let mut body = self
+        let body = self
             .tab_base("tile", place.index, tab, dy, cx)
             .group(group.clone())
             .relative()
@@ -248,7 +251,7 @@ impl WindowFrame {
             .flex_none()
             .items_center()
             .justify_center()
-            .size(px(tile))
+            .size_full()
             .rounded(px(RADIUS))
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
@@ -260,7 +263,10 @@ impl WindowFrame {
             .tooltip(move |_, cx| cx.new(|_| Tip(tip.clone())).into())
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if this.pin_command(id, pin, event.modifiers) {
+                        return;
+                    }
                     this.tab_list.press((!active).then_some(id));
                     if !active {
                         this.press_select(id, cx);
@@ -270,6 +276,9 @@ impl WindowFrame {
             .on_click(cx.listener(move |this, event: &ClickEvent, _, _| {
                 if event.is_keyboard() {
                     this.select(id);
+                    return;
+                }
+                if pin && event.modifiers().platform && !event.modifiers().shift {
                     return;
                 }
                 let took = this.tab_list.took_press(id);
@@ -282,6 +291,7 @@ impl WindowFrame {
                     });
                 }
             }));
+        let mut body = self.press_gives(body, id, cx);
         // What the tile holds, first that applies: the ⌘ number, the ring,
         // the blank page's lens, the site's mark.
         let face = if let Some(number) = number {
@@ -297,7 +307,12 @@ impl WindowFrame {
             )
             .into_any_element()
         } else if place.square && shown_favicon(tab, &self.layout).is_none() {
-            SharedString::from(letter(tab)).into_any_element()
+            self.dimmed(
+                div().child(SharedString::from(letter(tab))),
+                tab,
+                group.clone(),
+            )
+            .into_any_element()
         } else {
             // A tile wears its site's icon whatever "Tabs show" says; only
             // pinned squares follow it (Search `IconTile`, SideIcons.swift).
@@ -312,6 +327,8 @@ impl WindowFrame {
             let mark = mark(tab, 16., &t, &wears);
             if active {
                 mark.into_any_element()
+            } else if self.dims(tab) {
+                self.dimmed(mark, tab, group.clone()).into_any_element()
             } else {
                 mark.opacity(0.85)
                     .group_hover(group.clone(), |s| s.opacity(1.))
@@ -366,7 +383,7 @@ impl WindowFrame {
         }
         // Sound: a small speaker on a disc of the column's ground, in the
         // bottom corner (a press mutes in Search; Aeri has no mute yet).
-        body.when(tab.audible && !tab.loading, |tile| {
+        let body = body.when(tab.audible && !tab.loading, |tile| {
             tile.child(
                 div()
                     .absolute()
@@ -387,7 +404,8 @@ impl WindowFrame {
                         t.icon_muted,
                     )),
             )
-        })
+        });
+        self.given(id, id.0, (tile, tile), pace, body)
     }
 
     /// The plus after the tiles (Search `SideBar.newTab`, icons branch): a

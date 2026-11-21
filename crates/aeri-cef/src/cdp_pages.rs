@@ -41,6 +41,8 @@ pub(crate) struct Cdp {
     dark: Cell<Option<bool>>,
     /// The layer is up over the page, waiting for a choice.
     capturing: Cell<bool>,
+    /// Your own styles for sites, as the page was last told them.
+    pub(crate) styles: crate::cdp_styles::Styles,
 }
 
 /// What a capture came to.

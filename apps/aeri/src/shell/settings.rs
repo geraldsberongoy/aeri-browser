@@ -22,6 +22,8 @@ use gpui::{App, WindowHandle};
 use super::bar::Pick;
 use super::passwords::PASSWORDS_PAGE;
 use super::settings_index::{self, Action, Page, Pref, SLEEP_MINUTES, Value};
+use super::settings_rows::{RowsMsg, SettingsLists};
+use super::space_prefs::is_space_command;
 use super::theme_files::{ThemeFileOp, ThemeSource};
 use super::themes::ThemeTarget;
 use super::trust::CLEAR_DATA_PAGE;
@@ -70,6 +72,8 @@ pub struct SettingsModel {
     pub launcher_refusal: Option<String>,
     /// Why the key last typed in the launcher's key box was turned down.
     pub launcher_hint: Option<&'static str>,
+    /// What the list rows draw.
+    pub lists: SettingsLists,
 }
 
 /// A theme of the library, as Settings lists it.
@@ -156,6 +160,8 @@ pub enum SettingsMsg {
     LauncherKey(String),
     /// ⌫ in the launcher's key box.
     LauncherClear,
+    /// A button in a list under a row.
+    Rows(RowsMsg),
 }
 
 /// What the Settings tabs wait on: a key change that hit another command's
@@ -305,6 +311,7 @@ impl Shell {
                 self.settings.launcher_hint = None;
                 self.clear_launcher_key(cx);
             }
+            SettingsMsg::Rows(rows) => self.rows_msg(window_id, rows, cx),
         }
         self.refresh_settings(cx);
     }
@@ -371,6 +378,11 @@ impl Shell {
             Action::MakeDefaultBrowser => self.make_default_browser(),
             Action::MakeDefaultMail => self.make_default_mail(),
             Action::ProxyLogin => self.edit_proxy_login(),
+            Action::ArcSetUp => self.set_up_like_arc(cx),
+            Action::ArcUndo => self.undo_arc_setup(cx),
+            Action::NewProfile => self.show_profile_manager(true, cx),
+            Action::SendFeedback => self.send_feedback(window_id, cx),
+            Action::ShowNotes => self.show_release_notes(window_id, cx),
             Action::ChooseDownloads => {
                 let current = self
                     .prefs
@@ -489,7 +501,9 @@ impl Shell {
     }
 
     /// Keeps and installs `keymap`.
-    fn use_keymap(&mut self, keymap: Keymap, cx: &mut App) {
+    fn use_keymap(&mut self, mut keymap: Keymap, cx: &mut App) {
+        // A reset keeps where ⌘1-⌘9 go (Settings › Spaces & Pins).
+        keymap.set_space_keys(self.prefs.spaces.keys());
         if let Err(err) = self.db.set_setting(KEYMAP, &keymap.to_json()) {
             tracing::warn!(%err, "could not save the keymap");
         }
@@ -586,6 +600,9 @@ impl Shell {
             version: env!("CARGO_PKG_VERSION"),
             keys: Shortcut::all()
                 .into_iter()
+                // The Spaces section is there only with spaces on (Search
+                // ShortcutsPage.swift:17).
+                .filter(|shortcut| self.spaces_on() || !is_space_command(*shortcut))
                 .map(|shortcut| KeyRow {
                     shortcut,
                     title: shortcut.title(),
@@ -610,6 +627,7 @@ impl Shell {
             default_mail: Self::is_default_mail(),
             launcher_refusal: super::launcher::refusal(),
             launcher_hint: self.settings.launcher_hint,
+            lists: self.settings_lists(profile),
         }
     }
 }

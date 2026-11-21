@@ -29,6 +29,7 @@ impl Shell {
             .is_some_and(|open| open.favourites.get(tab).is_some());
         match command {
             TabCommand::Select => self.switch_to(window_id, tab, cx),
+            TabCommand::PinCommandClick => self.pin_command_click(window_id, tab, cx),
             TabCommand::Close => self.close_tab(window_id, tab, cx),
             TabCommand::CloseOthers => {
                 let others: Vec<TabId> = self
@@ -201,7 +202,7 @@ impl Shell {
             };
             add(&title, command(TabCommand::KeepAwake(!kept)));
         }
-        if favourite.is_none() {
+        if favourite.is_none() && self.prefs.spaces.on() {
             let others: Vec<_> = open.spaces.iter().filter(|s| s.id != w.space).collect();
             if !others.is_empty() {
                 add("", None);

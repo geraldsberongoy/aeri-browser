@@ -11,6 +11,7 @@ mod editor;
 mod extras;
 mod key_box;
 mod keys;
+mod lists;
 mod pictures;
 mod rail;
 mod shortcuts;
@@ -62,6 +63,10 @@ pub struct SettingsWindow {
     draft: Option<editor::Draft>,
     /// The launcher's key box waits for the next key.
     launcher_listening: bool,
+    /// The site a new link rule names.
+    route_input: Entity<TextInput>,
+    /// The space a new link rule opens in, by its place in the list.
+    route_pick: usize,
     lit_epoch: u64,
     focus: FocusHandle,
 }
@@ -123,6 +128,16 @@ impl SettingsWindow {
             .detach();
             fields.insert(id, input);
         }
+        let route_input = cx.new(|cx| TextInput::new("notion.so", cx));
+        cx.subscribe(
+            &route_input,
+            |this, _, event: &InputEvent, cx| match event {
+                InputEvent::Edited(_) => cx.notify(),
+                InputEvent::Submitted(_) => this.add_route(cx),
+                _ => {}
+            },
+        )
+        .detach();
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         Self {
@@ -144,6 +159,8 @@ impl SettingsWindow {
             fields,
             draft: None,
             launcher_listening: false,
+            route_input,
+            route_pick: 0,
         }
     }
 

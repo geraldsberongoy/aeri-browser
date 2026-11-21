@@ -82,6 +82,8 @@ naming the Search file they come from.
 | ⌘+ zooms the page | Observed | capture after ⌘+ twice |
 | New rows on General, Browsing, Spaces & Pins, Privacy (Proxy), Keyboard (From any app) | Observed | captures of each page |
 | Launcher key, proxy, default browser, webmail, dusk, capture | Tested (build) | not driven on screen: they change the owner's system state or need a proxy |
+| Bookmarks bar above the page after ⌘D; reading progress fill on the shown row; Spaces & Pins, Browsing (Links, Video), About (Help) pages; What's New tab | Observed | captures z-bar, z-row, z-spaces, z-about, z-notes |
+| What's New wraps with a heading; reading fill keeps both rounded ends; player card; site-style editor | Tested (build) | fixed after the capture; not re-driven |
 
 ## Residual risks
 
