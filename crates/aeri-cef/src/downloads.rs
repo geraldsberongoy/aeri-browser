@@ -5,7 +5,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use aeri_core::ids::TabId;
 use aeri_core::trust;
@@ -21,7 +22,8 @@ use crate::{Download, DownloadState, Signal, SignalSink};
 /// Chrome's suffix for a download still being written.
 const PARTIAL_SUFFIX: &str = ".crdownload";
 
-static DOWNLOAD_DIR: OnceLock<PathBuf> = OnceLock::new();
+static DOWNLOAD_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
+static ASK: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     /// Paths given to downloads still running, so two at once never share
@@ -31,9 +33,16 @@ thread_local! {
     static RUNNING: RefCell<HashMap<u32, DownloadItemCallback>> = RefCell::default();
 }
 
-/// Sets the folder downloads are saved in. Once, before any download.
-pub(crate) fn set_download_dir(dir: PathBuf) {
-    let _ = DOWNLOAD_DIR.set(dir);
+/// Sets the folder new downloads are saved in; downloads already running
+/// keep theirs. Any thread.
+pub fn set_download_dir(dir: PathBuf) {
+    *DOWNLOAD_DIR.write().expect("download dir") = Some(dir);
+}
+
+/// Whether each download shows a save panel (starting at the folder and
+/// name Aeri would have used) before it starts. Any thread.
+pub fn set_download_ask(ask: bool) {
+    ASK.store(ask, Ordering::Relaxed);
 }
 
 /// Cancels a running download. Main thread.
@@ -98,14 +107,23 @@ wrap_download_handler! {
             suggested_name: Option<&CefString>,
             callback: Option<&mut BeforeDownloadCallback>,
         ) -> ::std::os::raw::c_int {
-            let (Some(callback), Some(dir)) = (callback, DOWNLOAD_DIR.get()) else {
+            let dir = DOWNLOAD_DIR.read().expect("download dir").clone();
+            let (Some(callback), Some(dir)) = (callback, dir) else {
                 return 0;
             };
             let suggested = suggested_name.map(ToString::to_string).unwrap_or_default();
-            let path = trust::download_path(dir, &suggested, taken);
+            let path = trust::download_path(&dir, &suggested, taken);
             tracing::info!(tab = %self.tab, path = %path.display(), "download starts");
-            RESERVED.with_borrow_mut(|reserved| reserved.insert(path.clone()));
-            callback.cont(Some(&CefString::from(path.to_string_lossy().as_ref())), 0);
+            // With a save panel the Person may pick another name, so the
+            // suggested one is not reserved.
+            let ask = ASK.load(Ordering::Relaxed);
+            if !ask {
+                RESERVED.with_borrow_mut(|reserved| reserved.insert(path.clone()));
+            }
+            callback.cont(
+                Some(&CefString::from(path.to_string_lossy().as_ref())),
+                ask.into(),
+            );
             1
         }
 

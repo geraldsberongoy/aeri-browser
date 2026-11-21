@@ -18,6 +18,11 @@ pub enum Shortcut {
     NewWindow,
     CloseTab,
     ReopenClosedTab,
+    /// ⌘Z right after closing a tab, with Settings › Tabs › ⌘Z reopens a
+    /// closed tab. Not listed or rebound: the keymap hands it to pages only
+    /// while [`Keymap::with_undo_close`] says a close can be undone, so a
+    /// page's own undo keeps ⌘Z otherwise.
+    UndoCloseTab,
     NextTab,
     PreviousTab,
     /// The nth tab, 1-9; 9 is the last.
@@ -70,6 +75,7 @@ impl Shortcut {
             Self::NewWindow => "New Window".into(),
             Self::CloseTab => "Close Tab".into(),
             Self::ReopenClosedTab => "Reopen Closed Tab".into(),
+            Self::UndoCloseTab => "Undo Close Tab".into(),
             Self::NextTab => "Next Tab".into(),
             Self::PreviousTab => "Previous Tab".into(),
             Self::SelectTab(9) => "Last Tab".into(),
@@ -95,6 +101,7 @@ impl Shortcut {
             Self::NewWindow => "new-window".into(),
             Self::CloseTab => "close-tab".into(),
             Self::ReopenClosedTab => "reopen-closed-tab".into(),
+            Self::UndoCloseTab => "undo-close-tab".into(),
             Self::NextTab => "next-tab".into(),
             Self::PreviousTab => "previous-tab".into(),
             Self::SelectTab(n) => format!("tab-{n}"),
@@ -123,6 +130,7 @@ impl Shortcut {
             Self::NewWindow => "cmd-n".into(),
             Self::CloseTab => "cmd-w".into(),
             Self::ReopenClosedTab => "shift-cmd-t".into(),
+            Self::UndoCloseTab => "cmd-z".into(),
             Self::NextTab => "ctrl-tab".into(),
             Self::PreviousTab => "ctrl-shift-tab".into(),
             Self::SelectTab(n) => format!("cmd-{n}"),
@@ -335,6 +343,8 @@ pub enum BindError {
 pub struct Keymap {
     /// Commands whose keys differ from the default; `None`: no keys.
     changes: BTreeMap<Shortcut, Option<Chord>>,
+    /// A tab was just closed and ⌘Z may bring it back (not stored).
+    undo_close: bool,
 }
 
 impl Keymap {
@@ -351,6 +361,16 @@ impl Keymap {
         Shortcut::all()
             .into_iter()
             .find(|&s| self.chord(s).as_ref() == Some(chord))
+            .or_else(|| {
+                (self.undo_close && *chord == Shortcut::UndoCloseTab.default_chord())
+                    .then_some(Shortcut::UndoCloseTab)
+            })
+    }
+
+    /// The same keys, with ⌘Z reaching [`Shortcut::UndoCloseTab`] or not.
+    pub fn with_undo_close(mut self, on: bool) -> Keymap {
+        self.undo_close = on;
+        self
     }
 
     /// Every command that has keys, with them.
@@ -570,5 +590,24 @@ mod tests {
         assert_eq!(read.chord(Shortcut::NewTab), Some(chord("cmd-k")));
         assert_eq!(read.chord(Shortcut::Quit), Some(chord("cmd-q")));
         assert_eq!(Keymap::from_json("not json"), Keymap::default());
+    }
+
+    #[test]
+    fn command_z_reaches_the_app_only_while_a_close_can_be_undone() {
+        let keymap = Keymap::default();
+        assert_eq!(keymap.shortcut(&chord("cmd-z")), None);
+        let armed = keymap.with_undo_close(true);
+        assert_eq!(
+            armed.shortcut(&chord("cmd-z")),
+            Some(Shortcut::UndoCloseTab)
+        );
+        assert_eq!(armed.shortcut(&chord("shift-cmd-z")), None);
+        assert!(!Shortcut::all().contains(&Shortcut::UndoCloseTab));
+        assert!(
+            armed
+                .bindings()
+                .iter()
+                .all(|(s, _)| *s != Shortcut::UndoCloseTab)
+        );
     }
 }

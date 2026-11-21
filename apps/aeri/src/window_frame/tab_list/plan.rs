@@ -96,6 +96,39 @@ impl TabListState {
     pub(in super::super) fn took_press(&self, tab: TabId) -> bool {
         self.inner.borrow_mut().pressed.take() == Some(tab)
     }
+
+    /// A press chose `tab` while the shell's shown tab was `base`: the list
+    /// draws it shown at once.
+    pub(in super::super) fn choose(&self, tab: TabId, base: Option<TabId>) {
+        self.inner.borrow_mut().chosen = Some(Chosen {
+            tab,
+            base,
+            since: Instant::now(),
+        });
+    }
+
+    /// The tab to draw as shown instead of the shell's `shell` one, if a
+    /// press is still waiting for the shell. The choice ends when the shell's
+    /// shown tab changes (it agrees or it does not: its word stands) or
+    /// after [`CHOICE_PATIENCE`] (the shell refused).
+    pub(super) fn chosen(&self, shell: Option<TabId>) -> Option<TabId> {
+        let mut state = self.inner.borrow_mut();
+        let chosen = state.chosen.as_ref()?;
+        if shell != chosen.base || chosen.since.elapsed() >= CHOICE_PATIENCE {
+            state.chosen = None;
+            return None;
+        }
+        Some(chosen.tab)
+    }
+}
+
+/// How long a press's tab stays drawn as shown with no word from the shell.
+pub(super) const CHOICE_PATIENCE: Duration = Duration::from_millis(600);
+
+pub(super) struct Chosen {
+    tab: TabId,
+    base: Option<TabId>,
+    since: Instant,
 }
 
 #[derive(Default)]
@@ -107,6 +140,9 @@ pub(super) struct State {
     /// The tab the press in progress selected: its click is not a second
     /// click on the shown tab.
     pub(super) pressed: Option<TabId>,
+    /// A tab a press chose, drawn as the shown one until the shell's own
+    /// state says which is.
+    pub(super) chosen: Option<Chosen>,
     pub(super) pill_shown: bool,
     pub(super) pill_epoch: u64,
     /// The shown tab, and a count of changes of it: the site swaps in for

@@ -39,6 +39,8 @@ naming the Search file they come from.
 | 2 | Customisation 1:1: Search's Settings (rail, find, groups, switches, segmented, pictures, key boxes) over a data index; every Appearance/Tabs preference applied (cards, slide, ⌘S icons, compact strip, nav left, roomy, letters/site icons, high contrast, address on the shown tab, ⌘ numbers, reduce animations, save power); site icons; space looks (colours, presets, strength, custom gradient, grain, 24 icons, Search's space menu) | Each row changes the chrome; screenshots |
 | 3 | Address in the shown tab (click the live row), ⌘K tab finder with ⌘ held | Driven live |
 | 4 | Carrying tabs (held row follows the pointer, others make room), two-finger space swipe | Driven live |
+| 5 | Every Search setting (inventory `settings-parity`, ~110 rows: A in Aeri, B behaviour without row, C buildable, D not on Chromium): Settings as a tab; preference store (`aeri_core::prefs`); General, Tabs, Browsing (engine), Privacy rows with their behaviour; then find, zoom, link bubble, dusk, proxy, bookmarks bar, close idle tabs, launcher; then reader, floating video, peek, split, pin folders, groups, ⌃Tab | Each row changes behaviour; no row without it; D rows absent |
+| Owner | ⌘L and ⌘T as Zen's floating field (no dim, acrylic card, 150 ms grow, instant close); app icon light/dark; double-click empty chrome zooms; column ↔ icons glides | Observed |
 
 ## Status
 
@@ -48,6 +50,7 @@ naming the Search file they come from.
 | 2 | done (`dd9f167`); parity pass against Search.app side by side (below) |
 | 3 | pending |
 | 4 | pending |
+| 5 | wave 0-1 built: Settings tab, prefs store, General/Tabs/Browsing/Privacy rows; waves 2-3 pending |
 
 ## Evidence ledger
 
@@ -70,6 +73,11 @@ naming the Search file they come from.
 | Sidebar foot shows only the doors that apply (profile with several profiles, space with several spaces, puzzle with extensions, bookmarks) | Observed | fresh profile: bookmark door alone, as Search's |
 | Settings text at AppKit's line height (1.19), not GPUI's 1.618 | Observed | Settings rows now as dense as Search's (row "Hide the column…" ≈ 52 pt in both) |
 | Site icons arrive and are kept per host on disk; restored tabs wear them | Observed | log: github favicon downloaded 200; restored apple.com tabs show the Apple icon in the column |
+| Settings is a tab (`aeri://settings/<page>`) with Search's pages General · Appearance · Tabs · Browsing · Passwords · Privacy · Extensions · Keyboard & Mouse · About | Observed | ⌘, opened a Settings tab beside the page; General page with Confirm before quitting, Save to, Ask where, Always show downloads |
+| ⌘L/⌘T Zen card: no dim, centred above the middle, 15 radius, 62 input row, 45 rows | Observed | captures of ⌘L and ⌘T with "apple.com" typed |
+| Double-click on the column's empty band zooms the window and back | Observed | frame 1280×820 → 1800×1130 → 1280×820 |
+| Full column ↔ icons glides with the page | Observed | four captures during ⌘S: page edge between 232 and 60 mid-way |
+| App icon light/dark/tinted in Assets.car | Tested | `assetutil --info`: Aqua, DarkAqua, Tintable |
 
 ## Residual risks
 

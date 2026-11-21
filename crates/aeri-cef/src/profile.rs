@@ -15,15 +15,15 @@ use cef::rc::Rc as _;
 use cef::{
     CefString, CompletionCallback, ContentSettingTypes, ContentSettingValues,
     ImplCompletionCallback, ImplPreferenceManager, ImplPreferenceObserver, ImplRequestContext,
-    ImplRequestContextHandler, ImplValue, JsonWriterOptions, PreferenceObserver, Registration,
-    RequestContext, RequestContextHandler, RequestContextSettings, WrapCompletionCallback,
-    WrapPreferenceObserver, WrapRequestContextHandler, request_context_create_context,
-    value_create, wrap_completion_callback, wrap_preference_observer, wrap_request_context_handler,
-    write_json,
+    ImplRequestContextHandler, JsonWriterOptions, PreferenceObserver, Registration, RequestContext,
+    RequestContextHandler, RequestContextSettings, WrapCompletionCallback, WrapPreferenceObserver,
+    WrapRequestContextHandler, request_context_create_context, wrap_completion_callback,
+    wrap_preference_observer, wrap_request_context_handler, write_json,
 };
 
 use crate::Error;
 use crate::extensions::{self, Extension};
+use crate::preferences::{self, PrefSet, PrefValue, set as set_preference};
 
 #[derive(Clone)]
 pub struct ProfileContext {
@@ -87,7 +87,35 @@ impl ProfileContext {
     /// Sets one of the profile's boolean Chrome preferences. Main thread,
     /// after the context is initialized.
     pub fn set_bool_preference(&self, name: &str, value: bool) -> Result<(), String> {
-        set_bool_preference(&self.context, name, value)
+        set_preference(&self.context, name, &PrefValue::Bool(value))
+    }
+
+    /// An integer preference (see [`crate::preferences`] for the names).
+    pub fn set_int_preference(&self, name: &str, value: i32) -> Result<(), String> {
+        set_preference(&self.context, name, &PrefValue::Int(value))
+    }
+
+    pub fn set_string_preference(&self, name: &str, value: &str) -> Result<(), String> {
+        set_preference(&self.context, name, &PrefValue::String(value.to_owned()))
+    }
+
+    pub fn set_list_preference(&self, name: &str, value: Vec<PrefValue>) -> Result<(), String> {
+        set_preference(&self.context, name, &PrefValue::List(value))
+    }
+
+    pub fn set_dict_preference(
+        &self,
+        name: &str,
+        value: Vec<(String, PrefValue)>,
+    ) -> Result<(), String> {
+        set_preference(&self.context, name, &PrefValue::Dict(value))
+    }
+
+    /// Sets every preference in `prefs`, in order, on CEF's UI thread: at
+    /// once when called from it, else posted. Chromium's refusals are logged
+    /// (a posted task cannot report them).
+    pub fn apply_preferences(&self, prefs: PrefSet) {
+        preferences::apply_on_ui(self.context.clone(), prefs);
     }
 
     /// Installed, enabled extensions with a toolbar action. Main thread,
@@ -145,7 +173,7 @@ wrap_request_context_handler! {
             };
             // Aeri's `profile.db` history is the profile's only one, so
             // clearing it clears everything the profile recorded.
-            if let Err(error) = set_bool_preference(context, "history.saving_disabled", true) {
+            if let Err(error) = set_preference(context, "history.saving_disabled", &PrefValue::Bool(true)) {
                 tracing::warn!(error, "Chrome's history recording stays on");
             }
             // Popups need the Person's gesture unless a site is allowed; an
@@ -188,37 +216,4 @@ pub(crate) fn popups_allowed(context: &RequestContext, url: &str) -> bool {
     let url = CefString::from(url);
     context.content_setting(Some(&url), Some(&url), ContentSettingTypes::POPUPS)
         == ContentSettingValues::ALLOW
-}
-
-/// Sets a boolean preference of the profile. cef-rs's `set_preference`
-/// returned false with an empty error string and with none (Observed), while
-/// the same call made directly with a zeroed error string succeeds, so this
-/// calls CEF directly.
-fn set_bool_preference(context: &RequestContext, name: &str, value: bool) -> Result<(), String> {
-    let cef_value = value_create().ok_or("no CEF value")?;
-    cef_value.set_bool(value.into());
-    let name = CefString::from(name);
-    let manager = ImplPreferenceManager::get_raw(context);
-    // SAFETY: `manager` is the live context's preference manager and is
-    // used only during this call. CEF takes the value's reference added
-    // here, and `error` is a zeroed string CEF may fill; it is cleared
-    // before returning.
-    unsafe {
-        let set = (*manager).set_preference.ok_or("no set_preference")?;
-        let mut error: cef::sys::cef_string_t = std::mem::zeroed();
-        cef_value.add_ref();
-        let done = set(
-            manager,
-            (&name).into(),
-            ImplValue::get_raw(&cef_value),
-            &mut error,
-        );
-        let reason = if error.str_.is_null() {
-            String::new()
-        } else {
-            String::from_utf16_lossy(std::slice::from_raw_parts(error.str_, error.length))
-        };
-        cef::sys::cef_string_utf16_clear(&mut error);
-        if done == 0 { Err(reason) } else { Ok(()) }
-    }
 }

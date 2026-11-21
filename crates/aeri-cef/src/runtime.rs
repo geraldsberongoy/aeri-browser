@@ -213,6 +213,7 @@ wrap_app! {
                     Some(&CefString::from("profile-directory")),
                     Some(&CefString::from("Default")),
                 );
+                apply_extra_switches(command_line);
             }
             if browser_process && self.devtools_pipe.load(Ordering::Relaxed) {
                 // See `devtools`: the pipe is a browser-target session, and
@@ -249,6 +250,54 @@ fn append_to_list(command_line: &mut CommandLine, name: &str, value: &str) {
         format!("{existing},{value}")
     };
     command_line.append_switch_with_value(Some(&switch), Some(&CefString::from(value.as_str())));
+}
+
+/// A switch the shell asked for.
+enum ExtraSwitch {
+    Flag(String),
+    Value(String, String),
+    ListItem(String, String),
+}
+
+static EXTRA_SWITCHES: Mutex<Vec<ExtraSwitch>> = Mutex::new(Vec::new());
+
+/// Adds a Chromium command-line switch (without its `--`) to the browser
+/// process, for what no preference controls: autoplay
+/// (`autoplay-policy=document-user-activation-required`), 120 Hz
+/// (`disable-frame-rate-limit`) and the like. Takes effect only when called
+/// before [`Runtime::start`]; a switch set twice keeps the last value.
+pub fn add_switch(name: &str, value: Option<&str>) {
+    let mut switches = EXTRA_SWITCHES.lock().expect("switch list");
+    let name = name.to_owned();
+    switches.push(match value {
+        Some(value) => ExtraSwitch::Value(name, value.to_owned()),
+        None => ExtraSwitch::Flag(name),
+    });
+}
+
+/// Adds `item` to a comma-separated switch such as `enable-features` or
+/// `disable-features`, beside what is already in it. Before
+/// [`Runtime::start`].
+pub fn add_list_switch_item(name: &str, item: &str) {
+    EXTRA_SWITCHES
+        .lock()
+        .expect("switch list")
+        .push(ExtraSwitch::ListItem(name.to_owned(), item.to_owned()));
+}
+
+fn apply_extra_switches(command_line: &mut CommandLine) {
+    for switch in EXTRA_SWITCHES.lock().expect("switch list").iter() {
+        match switch {
+            ExtraSwitch::Flag(name) => {
+                command_line.append_switch(Some(&CefString::from(name.as_str())));
+            }
+            ExtraSwitch::Value(name, value) => command_line.append_switch_with_value(
+                Some(&CefString::from(name.as_str())),
+                Some(&CefString::from(value.as_str())),
+            ),
+            ExtraSwitch::ListItem(name, item) => append_to_list(command_line, name, item),
+        }
+    }
 }
 
 wrap_browser_process_handler! {

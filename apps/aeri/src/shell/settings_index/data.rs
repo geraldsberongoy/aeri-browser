@@ -2,8 +2,9 @@
 //! :55-560), with the predicates of the dependent rows.
 
 use aeri_core::layout::TabPlace;
+use aeri_core::prefs::{AppPrefs, Engine, NewTabPlace, valid_template};
 
-use super::{Action, Control, Extra, Group, Item, Need, Page, Picture, Pill, Pref};
+use super::{Action, Control, Extra, Group, Item, Need, Page, Picture, Pill, Pref, Under};
 use crate::shell::settings::SettingsModel;
 
 // Predicates over the model (SettingsIndex.swift:773-796): "sidebar" is the
@@ -34,6 +35,62 @@ const SIDE: Need = Need {
     text: "Only with the tabs down a side",
 };
 
+/// The labels of the Search with menu: the named engines, then Custom.
+const ENGINE_LABELS: &[&str] = &[
+    "Google",
+    "DuckDuckGo",
+    "Bing",
+    "Ecosia",
+    "Startpage",
+    "Kagi",
+    "Brave Search",
+    "Qwant",
+    "Custom",
+];
+
+fn places_after_current(m: &SettingsModel) -> bool {
+    m.prefs.tabs.new_place == NewTabPlace::Next
+}
+
+/// The ends of the row are the top and bottom of a column, or the left and
+/// right of a strip.
+fn new_place_labels(m: &SettingsModel) -> &'static [&'static str] {
+    if sidebar(m) {
+        &["After current", "Top", "Bottom"]
+    } else {
+        &["After current", "Leftmost", "Rightmost"]
+    }
+}
+
+fn custom_engine(m: &SettingsModel) -> bool {
+    matches!(m.prefs.browsing.engine, Engine::Custom(_))
+}
+
+fn custom_template(m: &SettingsModel) -> String {
+    match &m.prefs.browsing.engine {
+        Engine::Custom(template) => template.clone(),
+        _ => String::new(),
+    }
+}
+
+fn set_custom_template(prefs: &mut AppPrefs, template: &str) {
+    prefs.browsing.engine = Engine::Custom(template.to_owned());
+}
+
+/// Where downloads go, as `~/Downloads`.
+fn downloads_folder(m: &SettingsModel) -> String {
+    let folder = m.prefs.general.downloads_dir.as_deref();
+    let Some(folder) = folder else {
+        return "~/Downloads".to_owned();
+    };
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    match home.and_then(|home| folder.strip_prefix(home).ok().map(|rest| rest.to_owned())) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => folder.display().to_string(),
+    }
+}
+
 const BASE: Item = Item {
     id: "",
     group: "",
@@ -46,6 +103,7 @@ const BASE: Item = Item {
     control: Control::Pills(&[]),
     need: None,
     live_detail: None,
+    under: None,
 };
 
 macro_rules! item {
@@ -64,6 +122,20 @@ macro_rules! item {
 }
 
 pub static GROUPS: &[Group] = &[
+    Group {
+        id: "browser",
+        page: Page::General,
+        title: "Your browser",
+        icon: "globe.desk",
+        extra: Extra::None,
+    },
+    Group {
+        id: "downloads",
+        page: Page::General,
+        title: "Downloads",
+        icon: "arrow.down.circle",
+        extra: Extra::None,
+    },
     Group {
         id: "theme",
         page: Page::Appearance,
@@ -100,6 +172,13 @@ pub static GROUPS: &[Group] = &[
         extra: Extra::Themes,
     },
     Group {
+        id: "newtabs",
+        page: Page::Tabs,
+        title: "New tabs",
+        icon: "plus.square",
+        extra: Extra::None,
+    },
+    Group {
         id: "memory",
         page: Page::Tabs,
         title: "Memory",
@@ -114,6 +193,13 @@ pub static GROUPS: &[Group] = &[
         extra: Extra::None,
     },
     Group {
+        id: "search",
+        page: Page::Browsing,
+        title: "Searching",
+        icon: "magnifyingglass",
+        extra: Extra::None,
+    },
+    Group {
         id: "passwords",
         page: Page::Passwords,
         title: "Your passwords",
@@ -121,10 +207,10 @@ pub static GROUPS: &[Group] = &[
         extra: Extra::None,
     },
     Group {
-        id: "clear",
+        id: "blocking",
         page: Page::Privacy,
-        title: "Clear",
-        icon: "trash",
+        title: "Blocking",
+        icon: "shield",
         extra: Extra::None,
     },
     Group {
@@ -132,6 +218,13 @@ pub static GROUPS: &[Group] = &[
         page: Page::Privacy,
         title: "Site permissions",
         icon: "checkmark.shield",
+        extra: Extra::None,
+    },
+    Group {
+        id: "clear",
+        page: Page::Privacy,
+        title: "Clear",
+        icon: "trash",
         extra: Extra::None,
     },
     Group {
@@ -190,6 +283,24 @@ fn provider_detail(m: &SettingsModel) -> String {
 }
 
 pub static ITEMS: &[Item] = &[
+    // General
+    item!("quit.confirm", "browser", "power", "Confirm before quitting",
+        "Ask before ⌘Q or Quit Aeri closes the browser",
+        Control::Switch(Pref::ConfirmQuit),
+        words: &["quit", "cmd q"]),
+    item!("downloads.folder", "downloads", "folder", "Save to",
+        "",
+        Control::Pills(&[Pill { action: Action::ChooseDownloads, label: "Change…", filled: false }]),
+        words: &["download folder"],
+        live_detail: Some(downloads_folder)),
+    item!("downloads.ask", "downloads", "questionmark.folder", "Ask where to save each file",
+        "A save sheet for every download",
+        Control::Switch(Pref::DownloadsAsk),
+        words: &["download", "save as"]),
+    item!("downloads.button", "downloads", "arrow.down.to.line", "Always show the downloads button",
+        "Off, it shows only while a file comes in",
+        Control::Switch(Pref::DownloadsButton),
+        words: &["download"]),
     // Appearance
     item!("look", "theme", "circle.lefthalf.filled", "Appearance",
         "Light, dark, or whatever the Mac is doing. Pages follow it too",
@@ -272,6 +383,31 @@ pub static ITEMS: &[Item] = &[
         ]),
         words: &["import", "export", "library", "save", "file"]),
     // Tabs
+    item!("tabs.newPlace", "newtabs", "arrow.right.to.line", "New tab position",
+        "Where a link or ⌘T's new tab goes in the row",
+        Control::Menu { pref: Pref::NewPlace, labels: new_place_labels },
+        words: &["new tab", "order"]),
+    item!("tabs.frontBeside", "newtabs", "arrow.turn.down.right", "Links opened in front go beside their page",
+        "A link that opens a new tab lands right after the tab it came from",
+        Control::Switch(Pref::FrontBeside),
+        words: &["target blank", "new tab", "order", "next to", "opener", "link"],
+        need: Some(Need { holds: places_after_current, text: "Only with New tab position on After current" })),
+    item!("tabs.newAfterLast", "newtabs", "plus.rectangle.on.rectangle", "Leave a new tab when the last tab closes",
+        "Otherwise you land on a pinned tab",
+        Control::Switch(Pref::NewAfterLast),
+        words: &["last tab"]),
+    item!("tabs.closeGoesBack", "newtabs", "arrow.uturn.backward", "Closing a tab goes back to the one before",
+        "Otherwise you land on the tab beside it",
+        Control::Switch(Pref::CloseGoesBack),
+        words: &["close", "previous tab", "recent"]),
+    item!("tabs.undoReopens", "newtabs", "arrow.uturn.backward.circle", "⌘Z reopens a closed tab",
+        "Right after closing it, as ⇧⌘T would bring it back",
+        Control::Switch(Pref::UndoReopens),
+        words: &["undo", "reopen", "closed tab", "cmd z", "restore"]),
+    item!("tabs.lazy", "newtabs", "hourglass", "Load background tabs when you go to them",
+        "A link opened behind the page waits until you go to its tab",
+        Control::Switch(Pref::LazyBackground),
+        words: &["lazy", "background"]),
     item!("tabs.sleep", "memory", "moon.zzz", "Sleep tabs you aren't using",
         "A resting tab lets its page go and comes back where you left it",
         Control::Segmented {
@@ -281,6 +417,13 @@ pub static ITEMS: &[Item] = &[
         },
         more: Some("Tabs playing sound, in a call or with something typed stay awake, and so do sites you keep awake."),
         words: &["memory", "discard", "suspend", "ram", "rest"], wide: true),
+    item!("tabs.close.after", "memory", "timer", "Close tabs you leave alone",
+        "Pinned tabs stay. ⇧⌘T brings one back",
+        Control::Menu {
+            pref: Pref::CloseAfter,
+            labels: |_| &["Never", "After 12 hours", "After a day", "After a week", "After a month"],
+        },
+        words: &["auto close", "archive", "clean up"]),
     item!("tabs.shortcuts", "tabbar", "command", "Show tab numbers while ⌘ is held",
         "Which tab each ⌘1–9 selects",
         Control::Switch(Pref::TabNumbers),
@@ -290,6 +433,19 @@ pub static ITEMS: &[Item] = &[
         Control::Switch(Pref::AddressOnTab),
         more: Some("Look-alike names in other alphabets show as they really are, and plain http says Not secure. Off, the tab you're on still says so for those two."),
         words: &["url", "domain", "security", "address bar"]),
+    // Browsing
+    item!("search.engine", "search", "magnifyingglass", "Search with",
+    "Where words that aren't an address go",
+    Control::Menu { pref: Pref::Engine, labels: |_| ENGINE_LABELS },
+    words: &["google", "duckduckgo", "engine", "kagi", "bing", "custom", "template"],
+    under: Some(Under {
+        holds: custom_engine,
+        placeholder: "https://example.com/search?q=%s",
+        text: custom_template,
+        apply: set_custom_template,
+        valid: valid_template,
+        invalid: "An address starting with https:// with %s where your words go",
+    })),
     // Passwords
     item!("passwords.manage", "passwords", "key.viewfinder", "Your passwords",
         "Look at, change and delete what this profile has saved",
@@ -299,11 +455,29 @@ pub static ITEMS: &[Item] = &[
         "",
         Control::Menu {
             pref: Pref::Provider,
-            labels: &["Save Passwords in Aeri", "Use a Password-Manager Extension", "Don't Save Passwords"],
+            labels: |_| &["Save Passwords in Aeri", "Use a Password-Manager Extension", "Don't Save Passwords"],
         },
         words: &["passwords", "extension", "password manager", "autofill", "save", "profile"],
         live_detail: Some(provider_detail)),
     // Privacy
+    item!("sites.keep", "blocking", "eye.slash", "Prevent cross-site tracking",
+        "As in Safari",
+        Control::Switch(Pref::CrossSite),
+        words: &["itp", "cookies", "tracking"]),
+    item!("privacy.clickIDs", "blocking", "scissors", "Remove click trackers from links",
+        "gclid, fbclid and the like go before the page loads",
+        Control::Switch(Pref::ClickIds),
+        more: Some("The IDs an ad network adds to a link so the site can tell whose click it was. Campaign tags (utm_) stay, as in Safari."),
+        words: &["gclid", "fbclid", "click id", "link tracking", "tracking parameters"]),
+    item!("privacy.gpc", "blocking", "hand.raised", "Tell sites not to sell or share your data",
+        "Global Privacy Control, with every request",
+        Control::Switch(Pref::Gpc),
+        more: Some("Sends Sec-GPC: 1, which some laws make a site honour."),
+        words: &["gpc", "do not sell", "do not track", "dnt", "global privacy control"]),
+    item!("notifications.ask", "permissions", "bell.badge", "Let sites ask to send notifications",
+        "Only a site you allow reaches your Mac's notifications",
+        Control::Switch(Pref::Notifications),
+        words: &["notifications", "alerts", "push"]),
     item!("clear.history", "clear", "clock.arrow.circlepath", "History",
         "Every address you have been to",
         Control::Pills(&[Pill { action: Action::ClearHistory, label: "Clear History…", filled: false }]),

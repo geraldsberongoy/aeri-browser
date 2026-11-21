@@ -8,7 +8,9 @@ use gpui::{
 };
 
 use super::SettingsWindow;
-use super::controls::{menu_button, pictures, pill, segmented, switch};
+use super::controls::{
+    always_on, done_mark, menu_button, pictures, pill, segmented, steps, switch,
+};
 use crate::shell::SettingsMsg;
 use crate::shell::settings_index::{self, Action, Control, Extra, Group, Item, Page, Value};
 use crate::symbol::{Weight, symbol};
@@ -315,7 +317,16 @@ impl SettingsWindow {
             control: Some(control),
             note,
         };
-        self.row(row, t, cx)
+        let row = self.row(row, t, cx);
+        match self.under_field(item, t) {
+            Some(under) => div()
+                .flex()
+                .flex_col()
+                .child(row)
+                .child(under)
+                .into_any_element(),
+            None => row,
+        }
     }
 
     /// The control an item asks for, and the line under it.
@@ -362,11 +373,11 @@ impl SettingsWindow {
             }
             Control::Menu { pref, labels } => {
                 let pref = *pref;
+                let labels = labels(&self.model);
                 let chosen = labels
                     .get(pref.get(&self.model).index())
                     .copied()
                     .unwrap_or("");
-                let labels = *labels;
                 let control = menu_button(id, item.title, chosen, t, cx, move |this, x, y, _| {
                     this.send(SettingsMsg::Menu { pref, labels, x, y })
                 });
@@ -396,6 +407,33 @@ impl SettingsWindow {
                     None,
                 )
             }
+            Control::State { pill: p, done } => {
+                let action: Action = p.action;
+                let control = if done(&self.model) {
+                    done_mark(t)
+                } else {
+                    pill(id, p.label, p.filled, t, cx, move |this, _| {
+                        this.send(SettingsMsg::Do(action))
+                    })
+                };
+                (control, None)
+            }
+            Control::Steps {
+                pref,
+                min,
+                max,
+                step,
+                home,
+            } => {
+                let pref = *pref;
+                let range = (*min, *max, *step, *home);
+                let value = u16::try_from(pref.get(&self.model).index()).unwrap_or(range.3);
+                let control = steps(id, value, range, t, cx, move |this, value, cx| {
+                    this.set(pref, Value::Pick(usize::from(value)), cx)
+                });
+                (control, None)
+            }
+            Control::Always => (always_on(t), None),
         }
     }
 

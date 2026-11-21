@@ -10,12 +10,15 @@ use crate::library::Section;
 impl Shell {
     pub(super) fn shortcut(&mut self, window_id: u64, shortcut: Shortcut, cx: &mut App) {
         let shown = self.window(window_id).and_then(AeriWindow::shown);
+        // Anything but ⌘Z right after a close makes the close the last thing
+        // done no more.
+        let undo_window = self.undo_close_window();
+        if shortcut != Shortcut::UndoCloseTab {
+            self.undo_close_in(None);
+        }
         match shortcut {
             Shortcut::FocusAddressBar => self.show_bar(window_id, cx),
-            Shortcut::NewTab => {
-                self.add_new_tab(window_id, true, cx);
-                self.show_bar(window_id, cx);
-            }
+            Shortcut::NewTab => self.toggle_new_tab_bar(window_id, cx),
             Shortcut::NewWindow => {
                 if let Some(profile) = self.window(window_id).map(|w| w.profile) {
                     self.new_window(profile, cx);
@@ -27,6 +30,12 @@ impl Shell {
                 }
             }
             Shortcut::ReopenClosedTab => self.reopen_closed(window_id, cx),
+            Shortcut::UndoCloseTab => {
+                self.undo_close_in(None);
+                if undo_window == Some(window_id) {
+                    self.reopen_closed(window_id, cx);
+                }
+            }
             Shortcut::NextTab | Shortcut::PreviousTab => {
                 let step = if shortcut == Shortcut::NextTab { 1 } else { -1 };
                 let order = self.sidebar_order(window_id);

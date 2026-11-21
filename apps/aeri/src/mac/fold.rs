@@ -27,13 +27,15 @@ use block2::RcBlock;
 use gpui::SpringState;
 use objc2::encode::{Encode, Encoding};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject};
+use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{NSWindow, NSWindowStyleMask};
 use objc2_foundation::{NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer};
 use std::ptr::NonNull;
 
+use super::Edge;
 use super::frame::Frame;
+use crate::chrome_overlay::set_overlay_shown;
 use crate::motion::{FOLD_IN, FOLD_OUT, ease_in, ease_in_out, ease_out};
 use crate::shell::AppMsg;
 use aeri_core::appearance::Motion;
@@ -308,6 +310,7 @@ impl Frame {
     fn hide_side(&self) {
         if let Some(overlay) = self.side_overlay() {
             overlay.setAlphaValue(0.0);
+            set_overlay_shown(self.window_id, Edge::Side, false);
             overlay.setIgnoresMouseEvents(true);
         }
         self.place_side(0.);
@@ -447,8 +450,15 @@ impl Frame {
         self.place_side(if fade { 1. } else { position });
         if let Some(overlay) = self.side_overlay() {
             // `hide_side` leaves the overlay transparent; a slide shows it
-            // whole from its first step.
-            overlay.setAlphaValue(if fade { f64::from(position) } else { 1.0 });
+            // whole from its first step. Set only when it changes: a moving
+            // slide would otherwise ask the window server every frame.
+            let alpha = if fade { f64::from(position) } else { 1.0 };
+            if overlay.alphaValue() != alpha {
+                if alpha > 0. {
+                    set_overlay_shown(self.window_id, Edge::Side, true);
+                }
+                overlay.setAlphaValue(alpha);
+            }
         }
     }
 
@@ -484,9 +494,7 @@ impl Frame {
         unsafe {
             let layer: *mut AnyObject = msg_send![&*view, layer];
             let Some(layer) = layer.as_ref() else { return };
-            let Some(class) = AnyClass::get(c"CATransaction") else {
-                return;
-            };
+            let class = objc2::class!(CATransaction);
             let _: () = msg_send![class, begin];
             let _: () = msg_send![class, setDisableActions: true];
             let _: () = msg_send![layer, setAffineTransform: transform];
@@ -505,6 +513,19 @@ impl Fold {
         if let Some(run) = self.run.borrow_mut().take() {
             run.stop();
         }
+    }
+}
+
+/// The pinned column of window `window_id` is `width` points wide (a frame
+/// of its glide between its full width and icons only, drawn by the frame
+/// view); `None` ends the glide. The page follows it ([`Frame::set_column`]).
+/// Not inside a GPUI update: it resizes windows.
+pub fn glide_column(window_id: u64, width: Option<f64>) {
+    let frame = super::reveal::frames()
+        .into_iter()
+        .find(|f| f.window_id == window_id);
+    if let Some(frame) = frame {
+        frame.set_column(width);
     }
 }
 

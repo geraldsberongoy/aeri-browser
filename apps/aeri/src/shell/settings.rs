@@ -1,4 +1,5 @@
-//! Settings (Phase 12, design §5; Search's Settings): one window (⌘,)
+//! Settings (Phase 12, design §5; Search's Settings): a page in a tab of its
+//! own (⌘,, `aeri://settings/<page>`, see [`internal`](super::internal))
 //! holding every preference from [`super::settings_index`] and the keyboard
 //! shortcuts with their editor. Each row changes its preference through
 //! the shell's own entry points: `change_layout`, `set_app_appearance`,
@@ -6,20 +7,21 @@
 //! kept in `app.db` and drives both the page's keyboard handler and Aeri's
 //! own windows.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use aeri_core::appearance::{AppAppearance, Base};
 use aeri_core::credentials::PasswordProvider;
+use aeri_core::internal::{InternalPage, Kind};
 use aeri_core::keymap::{BindError, Chord, Keymap, OnConflict, Shortcut};
 use aeri_core::layout::Layout;
+use aeri_core::prefs::AppPrefs;
 use aeri_core::store::AppDb;
-use gpui::{
-    App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, px, size,
-};
+use gpui::{App, WindowHandle};
 
 use super::bar::Pick;
 use super::passwords::PASSWORDS_PAGE;
-use super::settings_index::{Action, Page, Pref, SLEEP_MINUTES, Value};
+use super::settings_index::{self, Action, Page, Pref, SLEEP_MINUTES, Value};
 use super::theme_files::{ThemeFileOp, ThemeSource};
 use super::themes::ThemeTarget;
 use super::trust::CLEAR_DATA_PAGE;
@@ -38,9 +40,9 @@ const WEB_STORE: &str = "https://chromewebstore.google.com/";
 /// What Settings draws from: the choices as they stand now.
 #[derive(Clone, Debug, Default)]
 pub struct SettingsModel {
-    /// The page it opens on (`Page::key`).
-    pub page: String,
     pub layout: Layout,
+    /// The app-wide preferences.
+    pub prefs: AppPrefs,
     /// Light, Dark, Auto.
     pub look: usize,
     /// Never, Later, Normal, Sooner.
@@ -113,6 +115,13 @@ pub enum SettingsMsg {
         x: f32,
         y: f32,
     },
+    /// A row's text field changed (`field` is its row's id).
+    Text {
+        field: &'static str,
+        text: String,
+    },
+    /// The folder the Person chose for downloads.
+    DownloadsFolder(PathBuf),
     /// Open an extension's action.
     Extension(String),
     /// The page now showing, to remember.
@@ -133,13 +142,12 @@ pub enum SettingsMsg {
         x: f32,
         y: f32,
     },
-    Closed,
 }
 
-/// The open Settings window and what it is waiting on.
+/// What the Settings tabs wait on: a key change that hit another command's
+/// keys, and why one was refused. They belong to the window it was made in.
+#[derive(Default)]
 pub(super) struct Settings {
-    handle: WindowHandle<SettingsWindow>,
-    /// The browser window it acts on (themes for its space, say).
     window: u64,
     /// A key change waiting for Swap or Replace.
     pending: Option<(Shortcut, Chord)>,
@@ -176,106 +184,74 @@ fn sleep_choice(after: Option<Duration>) -> usize {
 }
 
 impl Shell {
-    /// Opens Settings (or brings it forward), acting on `window_id`.
+    /// ⌘, and Settings…: the window's Settings tab, brought forward or
+    /// opened beside the current tab (Search `Browser.show`).
     pub(super) fn show_settings(&mut self, window_id: u64, cx: &mut App) {
-        if let Some(settings) = &mut self.settings {
-            settings.window = window_id;
-            let handle = settings.handle;
-            let view = handle
-                .update(cx, |_, window, _| super::content_view(window))
-                .ok()
-                .flatten();
-            if let Some(view) = view {
-                cx.activate(true);
-                self.later(move |_| mac::bring_to_front(view));
-                self.refresh_settings(cx);
-                return;
-            }
-        }
-        // A tab's size: 980 by 680, no smaller than 720 by 480.
-        let options = WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some("Settings".into()),
-                appears_transparent: true,
-                traffic_light_position: None,
-            }),
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(980.), px(680.)),
-                cx,
-            ))),
-            window_min_size: Some(size(px(720.), px(480.))),
-            ..Default::default()
-        };
-        let model = self.settings_model(window_id, None, None, cx);
-        let tx = self.tx.clone();
-        match cx.open_window(options, |window, cx| {
-            cx.new(|cx| SettingsWindow::new(model, tx, window, cx))
-        }) {
-            Ok(handle) => {
-                cx.activate(true);
-                self.settings = Some(Settings {
-                    handle,
-                    window: window_id,
-                    pending: None,
-                    key_error: None,
-                });
-            }
-            Err(err) => tracing::error!(%err, "could not open Settings"),
-        }
+        self.show_internal(window_id, InternalPage::new(Kind::Settings, None), cx);
     }
 
-    /// The browser window Settings acts on: the one it was opened from, or
-    /// the first left if that closed.
-    fn settings_target(&mut self) -> Option<u64> {
-        let window_id = self.settings.as_ref()?.window;
-        let window_id = if self.window(window_id).is_some() {
-            window_id
-        } else {
-            self.windows.first()?.id
-        };
-        if let Some(settings) = &mut self.settings {
-            settings.window = window_id;
-        }
-        Some(window_id)
+    /// The Settings page the last tab showed, which a new tab opens on.
+    pub(super) fn remembered_settings_page(&self) -> Page {
+        self.db
+            .setting(SETTINGS_PAGE)
+            .ok()
+            .flatten()
+            .and_then(|key| Page::from_key(&key))
+            .unwrap_or(Page::General)
     }
 
-    pub(super) fn settings_msg(&mut self, msg: SettingsMsg, cx: &mut App) {
-        if self.settings.is_none() {
+    /// The Settings tab moved to `page` itself: its address says so (and
+    /// comes back there after a relaunch), and new tabs open there.
+    fn settings_moved(&mut self, window_id: u64, page: Page, cx: &mut App) {
+        if let Err(err) = self.db.set_setting(SETTINGS_PAGE, page.key()) {
+            tracing::warn!(%err, "could not remember the settings page");
+        }
+        let Some(tab) = self
+            .window(window_id)
+            .and_then(|w| w.settings.as_ref())
+            .map(|view| view.tab)
+        else {
+            return;
+        };
+        self.set_internal_address(
+            tab,
+            &InternalPage::new(Kind::Settings, Some(page.key())),
+            cx,
+        );
+    }
+
+    pub(super) fn settings_msg(&mut self, window_id: u64, msg: SettingsMsg, cx: &mut App) {
+        if self.window(window_id).is_none() {
             return;
         }
+        self.settings.window = window_id;
         match msg {
-            SettingsMsg::Closed => {
-                self.settings = None;
-                return;
-            }
             SettingsMsg::Page(page) => {
-                if let Err(err) = self.db.set_setting(SETTINGS_PAGE, page.key()) {
-                    tracing::warn!(%err, "could not remember the settings page");
-                }
+                self.settings_moved(window_id, page, cx);
                 return;
             }
             SettingsMsg::Pick(pick) => {
-                let Some(window_id) = self.settings_target() else {
-                    return;
-                };
                 self.bar_pick(window_id, pick, cx);
             }
             SettingsMsg::Set { pref, value } => self.set_pref(pref, value, cx),
-            SettingsMsg::Do(action) => {
-                if let Some(window_id) = self.settings_target() {
-                    self.settings_action(window_id, action, cx);
+            SettingsMsg::Text { field, text } => {
+                if let Some(under) = settings_index::ITEMS
+                    .iter()
+                    .find(|item| item.id == field)
+                    .and_then(|item| item.under.as_ref())
+                {
+                    self.change_prefs(|prefs| (under.apply)(prefs, &text), cx);
                 }
             }
+            SettingsMsg::DownloadsFolder(folder) => {
+                self.change_prefs(|prefs| prefs.general.downloads_dir = Some(folder), cx);
+            }
+            SettingsMsg::Do(action) => self.settings_action(window_id, action, cx),
             SettingsMsg::Menu { pref, labels, x, y } => {
-                self.settings_menu(pref, labels, x, y, cx);
+                self.settings_menu(window_id, pref, labels, x, y, cx);
                 return;
             }
-            SettingsMsg::Extension(extension) => {
-                if let Some(window_id) = self.settings_target() {
-                    self.extension_action(window_id, extension, cx);
-                }
-            }
+            SettingsMsg::Extension(extension) => self.extension_action(window_id, extension, cx),
             SettingsMsg::Record { shortcut, keys } => {
                 let Some(chord) = Chord::parse(&keys) else {
                     self.key_result(Err(format!("{keys} cannot be a shortcut.")), None);
@@ -284,7 +260,7 @@ impl Shell {
                 self.change_keys(shortcut, chord, OnConflict::Refuse, cx);
             }
             SettingsMsg::Resolve(answer) => {
-                let pending = self.settings.as_mut().and_then(|s| s.pending.take());
+                let pending = self.settings.pending.take();
                 if let (Some(how), Some((shortcut, chord))) = (answer, pending) {
                     self.change_keys(shortcut, chord, how, cx);
                 }
@@ -301,7 +277,7 @@ impl Shell {
             }
             SettingsMsg::ResetAll => self.use_keymap(Keymap::default(), cx),
             SettingsMsg::KeyMenu { shortcut, x, y } => {
-                self.key_menu(shortcut, x, y, cx);
+                self.key_menu(window_id, shortcut, x, y, cx);
                 return;
             }
         }
@@ -328,24 +304,24 @@ impl Shell {
                 self.set_rest_after(after);
             }
             Pref::Provider => {
-                let Some(profile) = self
-                    .settings_target()
-                    .and_then(|id| self.window(id))
-                    .map(|w| w.profile)
-                else {
+                let Some(profile) = self.window(self.settings.window).map(|w| w.profile) else {
                     return;
                 };
                 if let Some(provider) = PasswordProvider::ALL.get(value.index()) {
                     self.set_password_provider(profile, *provider);
                 }
             }
-            layout_pref => {
-                self.change_layout(
-                    |layout| {
-                        layout_pref.edit_layout(layout, value);
-                    },
-                    cx,
-                );
+            other => {
+                let mut stored = false;
+                self.change_prefs(|prefs| stored = other.edit_prefs(prefs, value), cx);
+                if !stored {
+                    self.change_layout(
+                        |layout| {
+                            other.edit_layout(layout, value);
+                        },
+                        cx,
+                    );
+                }
             }
         }
     }
@@ -367,12 +343,30 @@ impl Shell {
             }
             Action::SiteSettings => self.open_page(window_id, SITE_SETTINGS, cx),
             Action::WebStore => self.open_page(window_id, WEB_STORE, cx),
+            Action::ChooseDownloads => {
+                let current = self
+                    .prefs
+                    .general
+                    .downloads_dir
+                    .clone()
+                    .unwrap_or_else(|| self.default_download_dir.clone());
+                let tx = self.tx.clone();
+                // A modal panel runs its own event loop: outside this update.
+                self.later(move |_| {
+                    if let Some(folder) = mac::choose_folder(Some(&current)) {
+                        let _ = tx.unbounded_send(AppMsg::Settings {
+                            window: window_id,
+                            msg: SettingsMsg::DownloadsFolder(folder),
+                        });
+                    }
+                });
+            }
         }
     }
 
-    /// The Settings window's content view, for a native menu.
-    fn settings_view(&self, cx: &mut App) -> Option<*mut std::ffi::c_void> {
-        let handle = self.settings.as_ref()?.handle;
+    /// The Settings tab's content view, for a native menu.
+    fn settings_view(&self, window_id: u64, cx: &mut App) -> Option<*mut std::ffi::c_void> {
+        let handle = self.window(window_id)?.settings.as_ref()?.handle;
         handle
             .update(cx, |_, window, _| super::content_view(window))
             .ok()
@@ -382,21 +376,17 @@ impl Shell {
     /// The native pop-up of a Menu control at (`x`, `y`).
     fn settings_menu(
         &mut self,
+        window_id: u64,
         pref: Pref,
         labels: &'static [&'static str],
         x: f32,
         y: f32,
         cx: &mut App,
     ) {
-        let Some(view) = self.settings_view(cx) else {
+        let Some(view) = self.settings_view(window_id, cx) else {
             return;
         };
-        let model = self.settings_model(
-            self.settings.as_ref().map_or(0, |s| s.window),
-            None,
-            None,
-            cx,
-        );
+        let model = self.settings_model(window_id, None, None, cx);
         let current = pref.get(&model).index();
         let entries: Vec<Entry> = labels
             .iter()
@@ -413,14 +403,17 @@ impl Shell {
                     pref,
                     value: Value::Pick(ix),
                 };
-                let _ = tx.unbounded_send(AppMsg::Settings(msg));
+                let _ = tx.unbounded_send(AppMsg::Settings {
+                    window: window_id,
+                    msg,
+                });
             });
         });
     }
 
     /// Right-click on a key box: Clear Shortcut, Reset to Default.
-    fn key_menu(&mut self, shortcut: Shortcut, x: f32, y: f32, cx: &mut App) {
-        let Some(view) = self.settings_view(cx) else {
+    fn key_menu(&mut self, window_id: u64, shortcut: Shortcut, x: f32, y: f32, cx: &mut App) {
+        let Some(view) = self.settings_view(window_id, cx) else {
             return;
         };
         let entries = vec![
@@ -441,7 +434,10 @@ impl Shell {
                 } else {
                     SettingsMsg::Reset(shortcut)
                 };
-                let _ = tx.unbounded_send(AppMsg::Settings(msg));
+                let _ = tx.unbounded_send(AppMsg::Settings {
+                    window: window_id,
+                    msg,
+                });
             });
         });
     }
@@ -460,10 +456,8 @@ impl Shell {
     }
 
     fn key_result(&mut self, result: Result<(), String>, pending: Option<(Shortcut, Chord)>) {
-        if let Some(settings) = &mut self.settings {
-            settings.key_error = result.err();
-            settings.pending = pending;
-        }
+        self.settings.key_error = result.err();
+        self.settings.pending = pending;
     }
 
     /// Keeps and installs `keymap`.
@@ -478,18 +472,27 @@ impl Shell {
 
     /// Sends Settings its content again, after anything it shows changed.
     pub(super) fn refresh_settings(&mut self, cx: &mut App) {
-        let Some(settings) = &self.settings else {
-            return;
-        };
-        let handle = settings.handle;
-        let window = settings.window;
-        let pending = settings.pending.clone();
-        let key_error = settings.key_error.clone();
-        let model = self.settings_model(window, pending, key_error, cx);
-        let _ = handle.update(cx, |view, _, cx| view.set_model(model, cx));
+        let views: Vec<(u64, WindowHandle<SettingsWindow>)> = self
+            .windows
+            .iter()
+            .filter_map(|w| Some((w.id, w.settings.as_ref()?.handle)))
+            .collect();
+        for (id, handle) in views {
+            // A key change's outcome belongs to the window it was made in.
+            let (pending, key_error) = if self.settings.window == id {
+                (
+                    self.settings.pending.clone(),
+                    self.settings.key_error.clone(),
+                )
+            } else {
+                (None, None)
+            };
+            let model = self.settings_model(id, pending, key_error, cx);
+            let _ = handle.update(cx, |view, _, cx| view.set_model(model, cx));
+        }
     }
 
-    fn settings_model(
+    pub(super) fn settings_model(
         &self,
         window_id: u64,
         pending: Option<(Shortcut, Chord)>,
@@ -531,13 +534,8 @@ impl Shell {
             })
             .collect();
         SettingsModel {
-            page: self
-                .db
-                .setting(SETTINGS_PAGE)
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
             layout: self.chrome.layout,
+            prefs: self.prefs.clone(),
             look,
             sleep: sleep_choice(self.resting.after),
             provider: PasswordProvider::ALL
@@ -581,12 +579,5 @@ impl Shell {
             }),
             key_error,
         }
-    }
-}
-
-/// Settings messages from its window reach the shell as [`AppMsg`]s.
-impl From<SettingsMsg> for AppMsg {
-    fn from(msg: SettingsMsg) -> Self {
-        AppMsg::Settings(msg)
     }
 }

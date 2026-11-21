@@ -38,6 +38,12 @@ impl WindowFrame {
     /// below it. The band's empty parts drag the window. Pinned, the
     /// column's inner edge drags to resize and a double-click on it resets.
     pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> gpui::AnyElement {
+        // Gliding between full and icons only, both are drawn.
+        if host == Host::Frame
+            && let Some(width) = self.glide_width()
+        {
+            return self.gliding_column(width, cx);
+        }
         if self.layout.icon_column() {
             self.icon_column(host, cx).into_any_element()
         } else {
@@ -45,7 +51,7 @@ impl WindowFrame {
         }
     }
 
-    fn full_sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn full_sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
         let width = self.column_width();
         // Search: `lights = fullScreen ? 0 : max(0, min(80, width - 20 - 86))`.
@@ -129,7 +135,7 @@ impl WindowFrame {
         // below a pinned strip an overlay starts lower.
         let right = self.layout.side == Side::Right;
         let origin = if right {
-            self.window_width - self.column_width()
+            self.window_width - self.drawn_width()
         } else {
             0.
         };
@@ -197,7 +203,8 @@ impl WindowFrame {
                 })),
             );
         }
-        foot
+        // What is left of the foot's row is the column's floor.
+        foot.child(self.column_floor(host, cx).h(px(DOOR)))
     }
 
     /// The column's inner edge (Search `EdgeGrip`): a 9 pt strip that takes

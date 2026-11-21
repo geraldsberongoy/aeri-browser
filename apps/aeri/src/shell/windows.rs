@@ -19,6 +19,7 @@ use gpui::{
     WindowOptions, point, px, size,
 };
 
+use super::internal::SettingsView;
 use super::spaces::Parked;
 use super::tabs::{TabEntry, TabStart};
 use super::{NEW_TAB_URL, Nav, Shell, content_view};
@@ -59,6 +60,8 @@ pub(super) struct AeriWindow {
     pub(super) closing: bool,
     /// While closing: the pages still to close before the window goes.
     pub(super) closing_pages: HashSet<TabId>,
+    /// The view of the window's Settings tab, while that tab is shown.
+    pub(super) settings: Option<SettingsView>,
 }
 
 impl AeriWindow {
@@ -292,6 +295,7 @@ impl Shell {
             favourite,
             closing: false,
             closing_pages: HashSet::new(),
+            settings: None,
         });
         let starts_blank = self
             .window(id)
@@ -487,9 +491,7 @@ impl Shell {
             }
         });
         if let Some(tab) = model {
-            let _ = w
-                .bar
-                .update(cx, |bar, _, cx| bar.show_tab(&tab, bookmarked, cx));
+            let _ = w.bar.update(cx, |bar, _, cx| bar.show_tab(&tab, cx));
         }
     }
 
@@ -614,6 +616,11 @@ impl Shell {
         };
         let w = self.windows.remove(index);
         let frame = w.frame.clone();
+        if let Some(view) = &w.settings {
+            let _ = view
+                .handle
+                .update(cx, |_, window, _| window.remove_window());
+        }
         self.later(move |_| frame.detach());
         let _ = w.bar.update(cx, |_, window, _| window.remove_window());
         for overlay in w.overlays {

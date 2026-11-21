@@ -30,15 +30,16 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
-    NSAnimatablePropertyContainer, NSAnimationContext, NSApplication,
-    NSApplicationDidBecomeActiveNotification, NSApplicationDidResignActiveNotification, NSColor,
-    NSWindow, NSWindowButton, NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
+    NSApplication, NSApplicationDidBecomeActiveNotification,
+    NSApplicationDidResignActiveNotification, NSColor, NSWindow, NSWindowButton,
+    NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
     NSWindowDidBecomeMainNotification, NSWindowDidEnterFullScreenNotification,
     NSWindowDidExitFullScreenNotification, NSWindowDidResignKeyNotification,
     NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
+    NSUserDefaults, ns_string,
 };
 
 use super::fold::Fold;
@@ -48,19 +49,13 @@ use super::window_of;
 use crate::native_menu;
 use crate::shell::AppMsg;
 pub(super) use crate::window_frame::pinned_side_width;
-use crate::window_frame::{PageInsets, page_insets, strip_height};
+use crate::window_frame::{PageInsets, column_glides, page_insets, strip_height};
 
-/// Address bar geometry, in points, from Search's `Omnibox` (see
-/// `address_bar`): the bar's window covers the whole page and paints the
-/// scrim and the field itself, so only the field's and a row's size are
-/// shared with the view.
-pub const BAR_HEIGHT: f64 = 50.0;
-/// One suggestion row under the field, and the list's padding (2 x 6) and
-/// border (2 x 1).
-pub const SUGGESTION_HEIGHT: f64 = 34.0;
-pub const SUGGESTION_CHROME: f64 = 14.0;
-/// Rows shown at once; more scroll.
-pub const MAX_VISIBLE_SUGGESTIONS: usize = 9;
+/// The address bar's input row, in points, as Zen's floating URL bar has it
+/// (see `address_bar`): the bar's window covers the whole page and paints
+/// the card itself, so only the row's height is shared with the view (it
+/// sizes the window before the first layout).
+pub const BAR_HEIGHT: f64 = 62.0;
 /// The side overlay's width beyond the sidebar: room for the fold shadow
 /// (Search's `FoldShadow`: radius 20, 4 pt away from the page).
 pub const SIDE_OVERLAY_EXTRA: f64 = 28.0;
@@ -90,6 +85,9 @@ pub struct Frame {
     /// The sidebar sliding over the page and back.
     pub(super) fold: Fold,
     notifications: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
+    /// The pinned column's width while it glides between its full width and
+    /// icons only; `None` at rest, when the layout says.
+    column: Cell<Option<f64>>,
 }
 
 impl Frame {
@@ -109,6 +107,7 @@ impl Frame {
             overlays: RefCell::default(),
             reveal: Reveal::default(),
             fold: Fold::default(),
+            column: Cell::new(None),
             notifications: RefCell::default(),
         })
     }
@@ -244,10 +243,16 @@ impl Frame {
         layout
     }
 
-    /// Where the page sits beside the chrome (see [`page_insets`]).
+    /// Where the page sits beside the chrome (see [`page_insets`]): beside
+    /// the pinned column as wide as it is now, mid-glide or not.
     fn insets(&self, frame: &NSWindow) -> PageInsets {
         let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
-        page_insets(&self.layout.get(), fullscreen, frame.frame().size.width)
+        let layout = self.layout.get();
+        let side = self
+            .column
+            .get()
+            .unwrap_or_else(|| pinned_side_width(&layout, frame.frame().size.width));
+        page_insets(&layout, fullscreen, side)
     }
 
     /// Where the active tab's window goes, in screen coordinates: the whole
@@ -284,8 +289,52 @@ impl Frame {
         if previous == layout {
             return;
         }
+        self.hold_page(&previous, &layout);
         self.hide_chrome();
         self.layout();
+    }
+
+    /// A column that glides between its full width and icons only
+    /// ([`column_glides`]) is drawn by the frame view, which tells where it
+    /// is on every frame ([`Frame::set_column`]): the page stays at the old
+    /// width until the view's first report, so it does not jump to the new one and
+    /// back. The view always ends the glide, even when it does not make
+    /// one.
+    fn hold_page(&self, before: &Layout, after: &Layout) {
+        if !after.sidebar_pinned {
+            self.column.set(None);
+        } else if self.column.get().is_none()
+            && column_glides(before, after)
+            && let Some(frame) = self.frame.borrow().as_ref()
+        {
+            let width = frame.frame().size.width;
+            self.column.set(Some(before.column_width(width)));
+        }
+    }
+
+    /// The pinned column is `width` points wide on this frame of its glide,
+    /// and the page and the address bar follow it; `None` ends the glide and
+    /// fits everything to the layout.
+    pub(super) fn set_column(&self, width: Option<f64>) {
+        let previous = self.column.replace(width);
+        let Some(frame) = self.frame.borrow().clone() else {
+            return;
+        };
+        match width {
+            Some(_) => {
+                let page = self.page_rect(&frame);
+                if let Some(tab) = self.active_window() {
+                    tab.setFrame_display(page, false);
+                }
+                if self.bar_visible.get()
+                    && let Some(bar) = self.bar.borrow().as_ref()
+                {
+                    bar.setFrame_display(page, false);
+                }
+            }
+            None if previous.is_some() => self.layout(),
+            None => {}
+        }
     }
 
     /// Takes the theme's motion for sliding chrome.
@@ -310,8 +359,15 @@ impl Frame {
         };
         let page = self.page_rect(&frame);
         let radius = self.insets(&frame).radius;
+        // Only the window being looked at is drawn at once; the others (in
+        // a pile, with dozens of tabs) are resized without drawing, and not
+        // at all when they are already there.
+        let shown = self.active_window();
         for (_, tab) in self.tabs.borrow().iter() {
-            tab.setFrame_display(page, true);
+            if tab.frame() != page {
+                let visible = shown.as_ref().is_some_and(|s| std::ptr::eq(&**s, &**tab));
+                tab.setFrame_display(page, visible);
+            }
             round_page(tab, radius);
         }
         if let Some([side, strip]) = self.overlays.borrow().as_ref() {
@@ -326,27 +382,42 @@ impl Frame {
                 Side::Left => rect.origin.x,
                 Side::Right => rect.origin.x + rect.size.width - width,
             };
-            side.setFrame_display(
-                NSRect::new(
-                    NSPoint::new(x, rect.origin.y),
-                    NSSize::new(width, (rect.size.height - below).max(1.0)),
-                ),
-                true,
+            let side_rect = NSRect::new(
+                NSPoint::new(x, rect.origin.y),
+                NSSize::new(width, (rect.size.height - below).max(1.0)),
             );
-            strip.setFrame_display(
-                NSRect::new(
-                    NSPoint::new(rect.origin.x, window_top - strip_h),
-                    NSSize::new(rect.size.width, strip_h),
-                ),
-                true,
+            let strip_rect = NSRect::new(
+                NSPoint::new(rect.origin.x, window_top - strip_h),
+                NSSize::new(rect.size.width, strip_h),
             );
+            // Out of sight they are refitted without being drawn, and left
+            // alone when they are already there (a live resize comes here
+            // on every frame).
+            for (window, wanted, shown) in [
+                (
+                    side,
+                    side_rect,
+                    self.reveal.shown[reveal::Edge::Side as usize].get(),
+                ),
+                (
+                    strip,
+                    strip_rect,
+                    self.reveal.shown[reveal::Edge::Top as usize].get(),
+                ),
+            ] {
+                if window.frame() != wanted {
+                    window.setFrame_display(wanted, shown);
+                }
+            }
         }
         self.replace_side();
         self.place_lights(&frame);
         if let Some(bar) = self.bar.borrow().as_ref() {
-            // Over the page, so the scrim dims the page and not the sidebar;
-            // the view places the field and the list within it.
-            bar.setFrame_display(page, true);
+            // Over the page, not the sidebar; the view places the card
+            // within it.
+            if bar.frame() != page {
+                bar.setFrame_display(page, self.bar_visible.get());
+            }
         }
     }
 
@@ -398,25 +469,15 @@ impl Frame {
         bar.makeKeyWindow();
     }
 
-    /// Hides the address bar: the window fades on Search's `quick` (0.14 s)
-    /// unless motion is off. With `focus_page`, the page takes the keyboard.
+    /// Hides the address bar at once (Zen closes its bar without motion).
+    /// With `focus_page`, the page takes the keyboard.
     pub fn hide_bar(&self, focus_page: bool) {
         let Some(bar) = self.bar.borrow().clone() else {
             return;
         };
         self.bar_visible.set(false);
         bar.setIgnoresMouseEvents(true);
-        if self.motion_now() == Motion::Off {
-            bar.setAlphaValue(0.0);
-        } else {
-            let fading = bar.clone();
-            let changes = RcBlock::new(move |context: NonNull<NSAnimationContext>| {
-                // SAFETY: AppKit passes the live context for this group.
-                unsafe { context.as_ref() }.setDuration(0.14);
-                fading.animator().setAlphaValue(0.0);
-            });
-            NSAnimationContext::runAnimationGroup(&changes);
-        }
+        bar.setAlphaValue(0.0);
         if focus_page && let Some(tab) = self.active_window() {
             tab.makeKeyWindow();
         }
@@ -493,6 +554,28 @@ impl Frame {
             unsafe { center.removeObserver(token.as_ref()) };
         }
         self.remove_lights();
+    }
+}
+
+/// What a double-click on a title bar does, per System Settings › Desktop &
+/// Dock (Search `Strip.mouseUp`, `Stage.swift`): `AppleActionOnDoubleClick`
+/// is "Minimize" (miniaturize), "None" (nothing) or, unset or anything
+/// else, "Maximize" (zoom). Unset, the older `AppleMiniaturizeOnDoubleClick`
+/// still asks for a miniaturize. Full screen has no title bar to click.
+pub(super) fn double_click_action(window: &NSWindow) {
+    if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
+        return;
+    }
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let action = defaults.stringForKey(ns_string!("AppleActionOnDoubleClick"));
+    match action.as_deref().map(ToString::to_string).as_deref() {
+        Some("Minimize") => window.miniaturize(None),
+        Some("None") => {}
+        Some(_) => window.zoom(None),
+        None if defaults.boolForKey(ns_string!("AppleMiniaturizeOnDoubleClick")) => {
+            window.miniaturize(None);
+        }
+        None => window.zoom(None),
     }
 }
 

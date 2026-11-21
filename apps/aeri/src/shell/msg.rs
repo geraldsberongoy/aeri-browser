@@ -38,8 +38,12 @@ pub enum AppMsg {
         pick: Pick,
     },
     Library(LibraryMsg),
+    /// The bar asked to go away (Escape, a click outside, losing the
+    /// keyboard); `session` is the reveal it belongs to, so a late request
+    /// from an earlier one is ignored.
     AddressDismissed {
         window: u64,
+        session: u64,
     },
     Shortcut {
         window: u64,
@@ -218,10 +222,19 @@ pub enum AppMsg {
         target: super::themes::ThemeTarget,
         recipe: Recipe,
     },
-    Settings(super::settings::SettingsMsg),
+    /// A Settings tab's message, from the window that shows it.
+    Settings {
+        window: u64,
+        msg: super::settings::SettingsMsg,
+    },
     /// The menu bar's Settings, with no browser window in front.
     OpenSettings,
+    /// Quit; asks first when the preference says so.
     Quit,
+    /// Quit without asking: after the confirmation, and for signals.
+    QuitNow,
+    /// The downloads folder the Person chose in the folder panel.
+    SetDownloadsDir(std::path::PathBuf),
 }
 
 /// The page-first chrome (Phase 12).

@@ -5,6 +5,7 @@
 //! this module turns them into AppKit/CEF effects and keeps the profile's
 //! records up to date.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -12,6 +13,8 @@ use std::time::Instant;
 use aeri_cef::{TabObserver, TabWindow};
 use aeri_core::engine::{Event, Favicon};
 use aeri_core::ids::{ProfileId, TabId};
+use aeri_core::internal::InternalPage;
+use aeri_core::prefs::NewTabPlace;
 use aeri_core::profile_db::{ClosedTab, Origin, SavedTab, records_history};
 use aeri_core::tab::{LoadState, Tab};
 use aeri_core::workspace::Item;
@@ -65,8 +68,12 @@ impl SiteIcon {
 }
 
 impl TabEntry {
-    /// A tab that loads `url` when it is first shown.
+    /// A tab that loads `url` when it is first shown. One of Aeri's own
+    /// pages ([`InternalPage`]) has no page to load.
     pub(super) fn unseen(url: &str, title: &str) -> (TabId, Self) {
+        if let Some(page) = InternalPage::parse(url) {
+            return Self::of_internal(&page);
+        }
         let id = TabId::next();
         let mut model = Tab::new(id, url);
         model.title = title.to_owned();
@@ -81,6 +88,31 @@ impl TabEntry {
             favicon: None,
         };
         (id, entry)
+    }
+
+    /// A tab for one of Aeri's own pages: always loaded, never given to
+    /// the engine; its view is the shell's ([`Shell::sync_internal_views`]).
+    pub(super) fn of_internal(page: &InternalPage) -> (TabId, Self) {
+        let id = TabId::next();
+        let mut model = Tab::new(id, page.url());
+        model.title = page.title().to_owned();
+        model.load = LoadState::Loaded;
+        let entry = Self {
+            model,
+            cef: None,
+            unseen: None,
+            blocked_popup: None,
+            last_seen: Instant::now(),
+            name: None,
+            icon: None,
+            favicon: None,
+        };
+        (id, entry)
+    }
+
+    /// The page of Aeri's own the tab shows, if it is one.
+    pub(super) fn internal(&self) -> Option<InternalPage> {
+        InternalPage::parse(&self.model.url)
     }
 
     /// A saved tab, unseen until shown, with the Person's name and icon.
@@ -134,23 +166,64 @@ impl TabEntry {
     }
 }
 
-/// Where a new tab goes in its window.
+/// Whether closing the tab leaves it on the closed stack: not a blank tab or
+/// one of Aeri's own pages.
+fn remembered(entry: &TabEntry) -> bool {
+    let url = entry.url();
+    !url.is_empty() && url != NEW_TAB_URL && entry.internal().is_none()
+}
+
+/// Where a new tab goes in its window (Settings › Tabs › New tab position).
 pub(super) enum Place {
-    /// Next to the page that opened it.
+    /// A tab no page opened (⌘T, a tab Chrome asked for, a page that opened
+    /// one in front): the end of the row, or the top if the Person chose it.
+    /// `opener` is the page that opened it, which closing goes back to.
+    Front { opener: Option<TabId> },
+    /// A link opened from a page: right after it and the links it already
+    /// opened. `run`: it joins the page's run of links, with whether links
+    /// opened in front go beside their page.
+    Link { opener: TabId, run: Option<bool> },
+    /// Right after this tab (a copy of it, a notice's page), whatever the
+    /// Person chose and without joining a run of links.
     After(TabId),
+    /// The end of the row, whatever the Person chose.
     End,
     /// Back where it was (reopening a closed tab).
-    At {
-        index: usize,
-        pinned: bool,
-    },
+    At { index: usize, pinned: bool },
+}
+
+thread_local! {
+    /// The window where ⌘Z may bring back the tab just closed, while
+    /// closing it is still the last thing done (Search's `lastClose`).
+    static UNDO_CLOSE: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
 impl Shell {
-    /// Adds a blank tab at the end of a window's space.
+    /// Adds a blank tab to a window's space, where the Person's New tab
+    /// position says.
     pub(super) fn add_new_tab(&mut self, window_id: u64, foreground: bool, cx: &mut App) {
         let start = TabStart::Load(NEW_TAB_URL.to_owned());
-        self.add_tab(window_id, TabId::next(), start, Place::End, foreground, cx);
+        let place = Place::Front { opener: None };
+        self.add_tab(window_id, TabId::next(), start, place, foreground, cx);
+    }
+
+    /// Lets ⌘Z bring back the tab just closed in `window` (`None`: no more).
+    pub(super) fn undo_close_in(&self, window: Option<u64>) {
+        if UNDO_CLOSE.get() == window {
+            return;
+        }
+        UNDO_CLOSE.set(window);
+        aeri_cef::set_keymap(self.keymap.clone().with_undo_close(window.is_some()));
+    }
+
+    /// The window ⌘Z may bring a closed tab back in, if any.
+    pub(super) fn undo_close_window(&self) -> Option<u64> {
+        UNDO_CLOSE.get()
+    }
+
+    /// Links opened in front go beside their page: only with After current.
+    fn front_links_beside(&self) -> bool {
+        self.prefs.tabs.front_beside && self.prefs.tabs.new_place == NewTabPlace::Next
     }
 
     /// Adds a tab to a window's space; its page follows outside the update.
@@ -164,6 +237,15 @@ impl Shell {
         foreground: bool,
         cx: &mut App,
     ) {
+        // One of Aeri's own pages has one tab per window: that tab shows.
+        if let TabStart::Load(url) = &start
+            && let Some(page) = InternalPage::parse(url)
+        {
+            self.show_internal(window_id, page, cx);
+            return;
+        }
+        let new_place = self.prefs.tabs.new_place;
+        let lazy_background = self.prefs.tabs.lazy_background;
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
@@ -171,8 +253,10 @@ impl Shell {
             TabStart::Load(url) => url.as_str(),
             TabStart::Adopt => "",
         };
+        // A link opened behind waits for its tab to be shown only when the
+        // Person asked (Load background tabs when you go to them).
         let unseen = match &start {
-            TabStart::Load(url) if !foreground => Some(url.clone()),
+            TabStart::Load(url) if !foreground && lazy_background => Some(url.clone()),
             _ => None,
         };
         let lazy = unseen.is_some();
@@ -187,6 +271,8 @@ impl Shell {
             favicon: None,
         };
         match place {
+            Place::Front { opener } => w.tabs.insert_front(tab, entry, new_place, opener),
+            Place::Link { opener, run } => w.tabs.insert_link(tab, entry, opener, new_place, run),
             Place::After(opener) => w.tabs.insert(tab, entry, false, Some(opener)),
             Place::End => w.tabs.insert(tab, entry, false, None),
             Place::At { index, pinned } => w.tabs.insert_at(tab, entry, pinned, index),
@@ -252,7 +338,9 @@ impl Shell {
         }
     }
 
-    /// A page opened a tab: it joins the opener's window, next to it.
+    /// A page opened a tab: it joins the opener's window. Behind, it goes
+    /// with the page's links; in front, at the end of the row (or the top)
+    /// unless links opened in front go beside their page.
     pub(super) fn tab_opened(&mut self, tab: TabId, opener: TabId, foreground: bool, cx: &mut App) {
         let Some(window_id) = self
             .window_of_tab(opener)
@@ -262,7 +350,22 @@ impl Shell {
             return;
         };
         let start = TabStart::Adopt;
-        let place = self.place_after(window_id, opener);
+        let beside = self.front_links_beside();
+        let place = if !foreground {
+            Place::Link {
+                opener,
+                run: Some(beside),
+            }
+        } else if beside {
+            Place::Link {
+                opener,
+                run: Some(true),
+            }
+        } else {
+            Place::Front {
+                opener: Some(opener),
+            }
+        };
         self.add_tab(window_id, tab, start, place, foreground, cx);
     }
 
@@ -276,17 +379,12 @@ impl Shell {
             return;
         };
         let start = TabStart::Load(url);
-        let place = self.place_after(window_id, opener);
+        let beside = self.front_links_beside();
+        let place = Place::Link {
+            opener,
+            run: (!foreground || beside).then_some(beside),
+        };
         self.add_tab(window_id, TabId::next(), start, place, foreground, cx);
-    }
-
-    /// Next to the opener if it is one of the window's space tabs (not a
-    /// favourite), else at the end.
-    fn place_after(&self, window_id: u64, opener: TabId) -> Place {
-        match self.window(window_id) {
-            Some(w) if w.tabs.get(opener).is_some() => Place::After(opener),
-            _ => Place::End,
-        }
     }
 
     /// A tab in a space no window shows opened something: it goes to the
@@ -317,7 +415,8 @@ impl Shell {
         };
         tracing::info!(url, "Chrome-created tab opens as an Aeri tab");
         let start = TabStart::Load(url);
-        self.add_tab(window_id, TabId::next(), start, Place::End, true, cx);
+        let place = Place::Front { opener: None };
+        self.add_tab(window_id, TabId::next(), start, place, true, cx);
     }
 
     pub(super) fn engine_event(&mut self, event: Event, cx: &mut App) {
@@ -330,6 +429,8 @@ impl Shell {
                 url, error_text, ..
             } => tracing::info!(%tab_id, %url, %error_text, "load failed"),
             Event::RendererGone { reason, .. } => tracing::warn!(%tab_id, %reason, "renderer gone"),
+            // Typing is something done since the last close: ⌘Z is the page's.
+            Event::Typed { .. } => self.undo_close_in(None),
             _ => {}
         }
         let Some(profile) = self.spot_profile(spot) else {
@@ -449,6 +550,8 @@ impl Shell {
     /// Makes `tab` (one of the space's tabs or a favourite) the window's
     /// shown tab. An unseen tab gets its page; a favourite's page moves here.
     pub(super) fn switch_to(&mut self, window_id: u64, tab: TabId, cx: &mut App) {
+        // Going to another tab is something done since the last close.
+        self.undo_close_in(None);
         let Some(profile) = self.window(window_id).map(|w| w.profile) else {
             return;
         };
@@ -507,7 +610,8 @@ impl Shell {
     }
 
     /// Closes a tab the Person closed. The space's last tab is replaced by
-    /// a new tab (stage 1: the window does not close).
+    /// a new tab (stage 1: the window does not close). With Leave a new tab
+    /// when the last tab closes, so is the last tab that is not pinned.
     pub(super) fn close_tab(&mut self, window_id: u64, tab: TabId, cx: &mut App) {
         let Some(w) = self.window(window_id) else {
             return;
@@ -524,13 +628,18 @@ impl Shell {
             self.close_favourite(profile, tab, cx);
             return;
         }
+        let new_after_last = self.prefs.tabs.new_after_last;
+        let undo_reopens = self.prefs.tabs.undo_reopens;
         let Some(w) = self.window(window_id) else {
             return;
         };
         if w.tabs.get(tab).is_none() {
             return;
         }
-        if w.tabs.len() == 1 && w.favourite.is_none() {
+        let showing_it = w.favourite.is_none() && w.tabs.active() == Some(tab);
+        if w.tabs.len() == 1 && w.favourite.is_none()
+            || new_after_last && showing_it && w.tabs.is_last_loose(tab)
+        {
             self.add_new_tab(window_id, true, cx);
             self.show_bar(window_id, cx);
         }
@@ -543,6 +652,8 @@ impl Shell {
         if let Some(next) = next.filter(|_| !showing_favourite) {
             self.switch_to(window_id, next, cx);
         }
+        // ⌘Z brings it back while closing it is the last thing done.
+        self.undo_close_in((undo_reopens && remembered(&item.value)).then_some(window_id));
         self.later(move |_| {
             if let Some(cef) = item.value.cef {
                 cef.close();
@@ -564,14 +675,13 @@ impl Shell {
             Spot::Favourite(_) => Origin::Favourites,
             Spot::Parked(_, space) => Origin::Space(space),
         };
+        let goes_back = self.prefs.tabs.close_goes_back;
         let list = self.list_mut(spot)?;
         let index = list.position(tab)?;
         let was_active = list.active() == Some(tab);
-        let item = list.remove(tab)?;
+        let item = list.remove_going(tab, goes_back)?;
         let next = if was_active { list.active() } else { None };
-        let url = item.value.url();
-        if !url.is_empty()
-            && url != NEW_TAB_URL
+        if remembered(&item.value)
             && let Some(db) = self.open.get(&profile).and_then(|open| open.db.as_ref())
         {
             let closed = ClosedTab {

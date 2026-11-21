@@ -5,7 +5,9 @@
 use aeri_core::appearance::AppAppearance;
 use aeri_core::engine::Command;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
+use aeri_core::internal::InternalPage;
 use aeri_core::omnibox::{self, Destination};
+use aeri_core::prefs::Engine;
 use aeri_core::suggest::{self, Candidate, Source};
 use gpui::App;
 
@@ -13,7 +15,8 @@ use super::palette::PaletteCommand;
 use super::session::now;
 use super::tabs::{Place, TabEntry, TabStart};
 use super::windows::Spot;
-use super::{NEW_TAB_URL, SEARCH_TEMPLATE, Shell};
+use super::{NEW_TAB_URL, Shell};
+use crate::address_bar::{AddressBar, BarMode};
 
 /// History rows read per keystroke, before ranking.
 const HISTORY_CANDIDATES: usize = 200;
@@ -69,16 +72,17 @@ pub(super) fn display_address(url: &str) -> String {
     bare.strip_suffix('/').unwrap_or(bare).to_owned()
 }
 
-/// The row for what the Person typed, if it is anything.
-pub(super) fn typed_row(text: &str) -> Option<BarRow> {
-    let (title, hint) = match omnibox::classify(text, SEARCH_TEMPLATE)? {
-        Destination::Address(url) => (display_address(url.as_str()), "Go to address"),
-        Destination::Search(_) => (text.trim().to_owned(), "Search DuckDuckGo"),
+/// The row for what the Person typed, if it is anything; words that are not
+/// an address are searched with `engine`.
+pub(super) fn typed_row(text: &str, engine: &Engine) -> Option<BarRow> {
+    let (title, hint) = match omnibox::classify(text, &engine.omnibox_template())? {
+        Destination::Address(url) => (display_address(url.as_str()), "Go to address".to_owned()),
+        Destination::Search(_) => (text.trim().to_owned(), format!("Search {}", engine.name())),
     };
     Some(BarRow {
         title,
         detail: String::new(),
-        hint: hint.to_owned(),
+        hint,
         pick: Pick::Text(text.to_owned()),
     })
 }
@@ -117,31 +121,64 @@ fn tab_candidate(id: TabId, entry: &TabEntry) -> Option<Candidate> {
 impl Shell {
     /// ⌘L: the bar takes the keyboard with the shown address.
     pub(super) fn show_bar(&mut self, window_id: u64, cx: &mut App) {
-        self.reveal_bar(window_id, false, cx);
+        self.reveal_bar(window_id, BarMode::Address, cx);
+    }
+
+    /// ⌘T: the bar for a new tab, with the last text typed into it. Pressed
+    /// again while it is open, it closes.
+    pub(super) fn toggle_new_tab_bar(&mut self, window_id: u64, cx: &mut App) {
+        let open = self.window(window_id).is_some_and(|w| {
+            w.bar_shown
+                && w.bar
+                    .read(cx)
+                    .is_ok_and(|bar| bar.mode() == BarMode::NewTab)
+        });
+        if open {
+            self.hide_bar(window_id, cx);
+        } else {
+            self.reveal_bar(window_id, BarMode::NewTab, cx);
+            let typed = self
+                .window(window_id)
+                .and_then(|w| w.bar.read(cx).ok().map(|bar| bar.typed(cx)));
+            if let Some(text) = typed.filter(|text| !text.is_empty()) {
+                self.bar_query(window_id, text, cx);
+            }
+        }
     }
 
     /// ⇧⌘P: the bar as the command palette, listing the commands.
     pub(super) fn show_palette(&mut self, window_id: u64, cx: &mut App) {
-        self.reveal_bar(window_id, true, cx);
+        self.reveal_bar(window_id, BarMode::Palette, cx);
         self.bar_query(window_id, String::new(), cx);
     }
 
-    fn reveal_bar(&mut self, window_id: u64, palette: bool, cx: &mut App) {
+    fn reveal_bar(&mut self, window_id: u64, mode: BarMode, cx: &mut App) {
         self.refresh_window(window_id, cx);
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
         w.bar_shown = true;
-        w.palette = palette;
+        w.palette = mode == BarMode::Palette;
         let place = self.chrome.layout.bar;
         let Some(w) = self.window(window_id) else {
             return;
         };
         let _ = w
             .bar
-            .update(cx, |bar, window, cx| bar.reveal(palette, place, window, cx));
+            .update(cx, |bar, window, cx| bar.reveal(mode, place, window, cx));
         let frame = w.frame.clone();
         self.later(move |_| frame.show_bar());
+    }
+
+    /// The bar asked to go away; honoured only for the reveal it belongs
+    /// to, and only while it is still open.
+    pub(super) fn dismiss_bar(&mut self, window_id: u64, session: u64, cx: &mut App) {
+        let current = self.window(window_id).is_some_and(|w| {
+            w.bar_shown && w.bar.read(cx).is_ok_and(|bar| bar.session() == session)
+        });
+        if current {
+            self.hide_bar(window_id, cx);
+        }
     }
 
     pub(super) fn hide_bar(&mut self, window_id: u64, cx: &mut App) {
@@ -172,11 +209,18 @@ impl Shell {
         let blank = self.shown_model(w).is_none_or(|tab| tab.url == NEW_TAB_URL);
         let target = w.shown();
         self.hide_bar(window_id, cx);
-        let Some(destination) = omnibox::classify(text, SEARCH_TEMPLATE) else {
+        // One of Aeri's own pages: its tab, made or brought forward.
+        if let Some(page) = InternalPage::parse(text) {
+            self.show_internal(window_id, page, cx);
+            return;
+        }
+        // A tab that has no web page to navigate leaves it where it is.
+        let on_internal = target.is_some_and(|tab| self.internal_of(window_id, tab).is_some());
+        let Some(destination) = omnibox::classify(text, &self.engine().omnibox_template()) else {
             return;
         };
         let url = destination.url().to_string();
-        if new_tab && !blank {
+        if (new_tab && !blank) || on_internal {
             self.add_tab(
                 window_id,
                 TabId::next(),
@@ -262,7 +306,7 @@ impl Shell {
     /// The typed text first, unless a known address starts with it
     /// (decision 3), then the ranked suggestions.
     fn address_rows(&self, window_id: u64, text: &str) -> Vec<BarRow> {
-        let Some(typed) = typed_row(text) else {
+        let Some(typed) = typed_row(text, self.engine()) else {
             return Vec::new();
         };
         let ranked = suggest::rank(text, self.candidates(window_id, text), now());
@@ -280,11 +324,14 @@ impl Shell {
 
     /// Return or a click on a row.
     pub(super) fn bar_pick(&mut self, window_id: u64, pick: Pick, cx: &mut App) {
-        let Some(palette) = self.window(window_id).map(|w| w.palette) else {
+        let Some(new_tab) = self
+            .window(window_id)
+            .map(|w| w.palette || w.bar.read(cx).is_ok_and(AddressBar::opens_new_tab))
+        else {
             return;
         };
         match pick {
-            Pick::Text(text) | Pick::Open(text) => self.go(window_id, &text, palette, cx),
+            Pick::Text(text) | Pick::Open(text) => self.go(window_id, &text, new_tab, cx),
             Pick::Tab(tab) => {
                 self.hide_bar(window_id, cx);
                 self.show_tab_anywhere(window_id, tab, cx);

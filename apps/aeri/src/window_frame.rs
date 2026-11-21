@@ -8,11 +8,14 @@
 //! the page in its own windows (`chrome_overlay`), drawn by the same view.
 
 mod doors;
+mod glide;
 mod icons;
 mod sidebar;
 mod strip;
 mod tab_items;
 mod tab_list;
+
+pub use glide::column_glides;
 
 use aeri_core::appearance::Rgba;
 use aeri_core::ids::{SpaceId, TabId};
@@ -20,7 +23,7 @@ use aeri_core::layout::{DEFAULT_SIDEBAR, Layout, Side, TabPlace, clamp_width};
 use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    BoxShadow, ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent,
+    App, BoxShadow, ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, SharedString, Window, div, point, prelude::*, px, rgb,
 };
 
@@ -118,6 +121,8 @@ pub struct WindowFrame {
     command_held: bool,
     /// Where the window's own buttons were last put, from the strip's top.
     lights_y: f32,
+    /// The pinned column gliding between its full width and icons only.
+    glide: Option<glide::Glide>,
 }
 
 /// Which window draws a piece of chrome: the frame (pinned) or an overlay
@@ -163,6 +168,7 @@ impl WindowFrame {
             grip_seen: false,
             command_held: false,
             lights_y: TRAFFIC_LIGHTS.y.into(),
+            glide: None,
             tab_list: tab_list::TabListState::default(),
         }
     }
@@ -183,10 +189,13 @@ impl WindowFrame {
         }
     }
 
-    /// Where the chrome sits.
+    /// Where the chrome sits. Swapping the full column for icons only (or
+    /// back) glides ([`column_glides`]).
     pub fn set_layout(&mut self, layout: Layout, cx: &mut Context<Self>) {
         if self.layout != layout {
-            self.layout = layout;
+            let from = self.drawn_width();
+            let before = std::mem::replace(&mut self.layout, layout);
+            self.follow_column(&before, from, cx);
             cx.notify();
         }
     }
@@ -212,9 +221,16 @@ impl WindowFrame {
         self.layout.side == Side::Right
     }
 
-    /// The column's width in this window: fixed with icons only.
+    /// The column's width in this window when it is at rest: fixed with
+    /// icons only. While it glides ([`WindowFrame::drawn_width`]) the full
+    /// column keeps its own width, which the glide only reveals.
     fn column_width(&self) -> f32 {
-        self.layout.column_width(f64::from(self.window_width)) as f32
+        let window = f64::from(self.window_width);
+        if self.glide.is_some() {
+            self.layout.sidebar_width_in(window) as f32
+        } else {
+            self.layout.column_width(window) as f32
+        }
     }
 
     /// The pointer moved while the sidebar's edge is held: follow it.
@@ -419,20 +435,21 @@ pub struct PageInsets {
     pub card: bool,
 }
 
-/// The page's place beside whatever is pinned. Full screen pins nothing;
-/// the page then covers the frame, or is a card with a gap all round where
-/// the card is kept there. As a card it has Search's 8 pt gap and radius
-/// 10; edge to edge it meets the sidebar (a hairline on the sidebar's edge)
-/// and the strip with no gap and square corners (`Metrics.cardGap`,
-/// `cardRadius`, `Browser.asCards`).
-pub fn page_insets(layout: &Layout, fullscreen: bool, window_width: f64) -> PageInsets {
+/// The page's place beside whatever is pinned, where `side` is the width
+/// the pinned column takes ([`pinned_side_width`], or less or more while it
+/// glides). Full screen pins nothing; the page then covers the frame, or is
+/// a card with a gap all round where the card is kept there. As a card it
+/// has Search's 8 pt gap and radius 10; edge to edge it meets the sidebar
+/// (a hairline on the sidebar's edge) and the strip with no gap and square
+/// corners (`Metrics.cardGap`, `cardRadius`, `Browser.asCards`).
+pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
     let cards = cards_in(layout, fullscreen);
     let radius = if cards { f64::from(CARD_RADIUS) } else { 0. };
     let gap = f64::from(PAGE_EDGE);
     let (side, top_pinned) = if fullscreen {
         (0., false)
     } else {
-        (pinned_side_width(layout, window_width), layout.top_pinned)
+        (side, layout.top_pinned)
     };
     if side == 0. && !top_pinned {
         let kept = fullscreen && cards;
@@ -474,7 +491,11 @@ impl WindowFrame {
     /// to the same radius, covers its inside. `None` while the page covers
     /// the frame or runs edge to edge.
     fn card_edge(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        let insets = page_insets(&self.layout, self.fullscreen, f64::from(self.window_width));
+        let insets = page_insets(
+            &self.layout,
+            self.fullscreen,
+            f64::from(self.pinned_width()),
+        );
         if !insets.card {
             return None;
         }
@@ -502,16 +523,21 @@ impl WindowFrame {
     }
 }
 
-/// Moves the window by the press that is under way, or on a double-click
-/// zooms it (or minimises, per System Settings).
-fn begin_move(host: Host, double: bool, window: &mut Window) {
-    match host {
-        Host::Frame if double => window.titlebar_double_click(),
-        Host::Frame => window.start_window_move(),
-        Host::Overlay => {
-            if let Some(view) = crate::shell::content_view(window) {
-                crate::mac::drag_parent(view, double);
-            }
+/// Moves the window by the press that is under way; a double-click does what
+/// a title bar's does (zooms, or minimises, or nothing, per System Settings)
+/// once the handler is done: it resizes the frame's windows, which GPUI
+/// must not hear of while it is dispatching the click.
+fn begin_move(host: Host, double: bool, window: &mut Window, cx: &mut App) {
+    let Some(view) = crate::shell::content_view(window) else {
+        return;
+    };
+    if double {
+        cx.spawn(async move |_| crate::mac::title_bar_double_click(view))
+            .detach();
+    } else {
+        match host {
+            Host::Frame => window.start_window_move(),
+            Host::Overlay => crate::mac::drag_parent(view),
         }
     }
 }
@@ -520,8 +546,8 @@ fn begin_move(host: Host, double: bool, window: &mut Window) {
 fn drag(host: Host) -> gpui::Div {
     div().h_full().on_mouse_down(
         MouseButton::Left,
-        move |event: &MouseDownEvent, window, _| {
-            begin_move(host, event.click_count >= 2, window);
+        move |event: &MouseDownEvent, window, cx| {
+            begin_move(host, event.click_count >= 2, window, cx);
         },
     )
 }
@@ -535,6 +561,8 @@ impl Render for WindowFrame {
             self.window_width = width;
             cx.notify();
         }
+        // The column's glide between full and icons only moves on here.
+        self.step_glide(window, cx);
         // The window's own buttons centre in the strip: lower in the full
         // one, higher in the shorter one (Search `Lights.swift`).
         let lights_y = if self.layout.top_pinned {

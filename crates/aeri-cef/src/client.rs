@@ -18,6 +18,7 @@ use cef::{
 
 use crate::downloads::download_handler;
 use crate::favicon;
+use crate::request_policy::{self, GpcHeader};
 use crate::{Signal, SignalSink};
 use aeri_core::keymap::{Chord, Shortcut};
 
@@ -61,7 +62,7 @@ wrap_client! {
         }
 
         fn request_handler(&self) -> Option<RequestHandler> {
-            Some(TabRequestHandler::new(self.tab, self.sink.clone()))
+            Some(TabRequestHandler::new(self.tab, self.sink.clone(), GpcHeader::handler()))
         }
 
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
@@ -174,6 +175,7 @@ wrap_request_handler! {
     struct TabRequestHandler {
         tab: TabId,
         sink: SignalSink,
+        gpc: cef::ResourceRequestHandler,
     }
 
     impl RequestHandler {
@@ -188,6 +190,32 @@ wrap_request_handler! {
                 tab: self.tab,
                 reason: format!("{status:?} ({error_code}) {}", text(error_string)).trim().to_owned(),
             });
+        }
+
+        // A top-level navigation with click identifiers loads clean instead.
+        fn on_before_browse(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            request: Option<&mut cef::Request>,
+            _user_gesture: ::std::os::raw::c_int,
+            _is_redirect: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            request_policy::reload_cleaned(frame, request) as _
+        }
+
+        // Global Privacy Control rides on every request while it is on.
+        fn resource_request_handler(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut cef::Request>,
+            _is_navigation: ::std::os::raw::c_int,
+            _is_download: ::std::os::raw::c_int,
+            _request_initiator: Option<&CefString>,
+            _disable_default_handling: Option<&mut ::std::os::raw::c_int>,
+        ) -> Option<cef::ResourceRequestHandler> {
+            request_policy::gpc_on().then(|| self.gpc.clone())
         }
 
         // A ⌘-, ⇧- or middle-clicked link. Chrome would open it as a tab of
@@ -210,7 +238,10 @@ wrap_request_handler! {
                 // proceeds in this tab.
                 _ => return 0,
             };
-            let url = text(target_url);
+            let mut url = text(target_url);
+            if let Some(clean) = request_policy::cleaned(&url) {
+                url = clean;
+            }
             tracing::debug!(opener = %self.tab, url, foreground, "link opens a tab");
             (self.sink)(Signal::OpenLink { opener: self.tab, url, foreground });
             1

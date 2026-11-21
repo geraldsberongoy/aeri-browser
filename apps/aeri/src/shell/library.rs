@@ -11,7 +11,7 @@ use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions
 use super::palette::{matches, words};
 use super::session::now;
 use super::trust::CLEAR_DATA_PAGE;
-use super::{AppMsg, SEARCH_TEMPLATE, Shell, content_view};
+use super::{AppMsg, Shell, content_view};
 use crate::library::{Library, LibraryItem, LibraryMsg, Section};
 use crate::mac;
 use crate::native_menu::Entry;
@@ -180,7 +180,9 @@ impl Shell {
         match msg {
             LibraryMsg::Query => {}
             LibraryMsg::Open(url) => {
-                if let Some(destination) = omnibox::classify(&url, SEARCH_TEMPLATE) {
+                if let Some(destination) =
+                    omnibox::classify(&url, &self.engine().omnibox_template())
+                {
                     self.open_for_library(profile, destination.url().to_string(), cx);
                 }
                 return;

@@ -163,7 +163,7 @@ impl Shell {
         rows.extend(self.layout_rows(&words));
         let ranked = suggest::rank(text, self.candidates(window_id, text), now());
         rows.extend(ranked.suggestions.iter().map(suggestion_row));
-        rows.extend(typed_row(text));
+        rows.extend(typed_row(text, self.engine()));
         rows
     }
 

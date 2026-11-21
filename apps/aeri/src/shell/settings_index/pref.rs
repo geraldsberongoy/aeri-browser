@@ -1,0 +1,251 @@
+//! The preferences Settings changes: what each reads from the model and
+//! how a choice edits the layout or the app-wide preferences
+//! (`aeri_core::prefs`).
+
+use aeri_core::layout::{Glyph, Layout, Side, TabPlace};
+use aeri_core::prefs::{AppPrefs, CloseAfter, Engine, NewTabPlace};
+
+use super::Value;
+use crate::shell::settings::SettingsModel;
+
+/// One preference Settings changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Pref {
+    /// Light, Dark, Auto.
+    Look,
+    /// Top, Left, Right, Icons only.
+    TabsLayout,
+    HideColumn,
+    Slides,
+    FoldIcons,
+    /// As a card, Edge to edge.
+    CardLook,
+    CardsFullScreen,
+    NavLeft,
+    CompactStrip,
+    Roomy,
+    /// Letters, Site icons.
+    Glyph,
+    HighContrast,
+    LightMotion,
+    ReduceAnimations,
+    /// Never, Later, Normal, Sooner.
+    Sleep,
+    TabNumbers,
+    AddressOnTab,
+    /// Aeri, an extension, off.
+    Provider,
+    ConfirmQuit,
+    DownloadsAsk,
+    DownloadsButton,
+    /// After current, then the two ends.
+    NewPlace,
+    FrontBeside,
+    NewAfterLast,
+    CloseGoesBack,
+    UndoReopens,
+    LazyBackground,
+    /// Never, then [`CloseAfter::ALL`].
+    CloseAfter,
+    /// The named engines, then Custom.
+    Engine,
+    CrossSite,
+    ClickIds,
+    Gpc,
+    Notifications,
+}
+
+/// Search's `SleepPace` waits, in minutes (Sleep.swift:57-63).
+pub const SLEEP_MINUTES: [Option<u64>; 4] = [None, Some(120), Some(30), Some(10)];
+
+/// The place of Custom in the engine menu.
+pub const CUSTOM_ENGINE: usize = Engine::NAMED.len();
+
+const NEW_PLACES: [NewTabPlace; 3] = [NewTabPlace::Next, NewTabPlace::Top, NewTabPlace::End];
+
+impl Pref {
+    pub fn get(self, m: &SettingsModel) -> Value {
+        let l = &m.layout;
+        let p = &m.prefs;
+        match self {
+            Self::Look => Value::Pick(m.look),
+            Self::TabsLayout => Value::Pick(match (l.tabs, l.rail, l.side) {
+                (TabPlace::Top, _, _) => 0,
+                (TabPlace::Side, true, _) => 3,
+                (TabPlace::Side, false, Side::Left) => 1,
+                (TabPlace::Side, false, Side::Right) => 2,
+            }),
+            Self::HideColumn => Value::On(!l.sidebar_pinned),
+            Self::Slides => Value::On(l.slides),
+            Self::FoldIcons => Value::On(l.fold_icons),
+            Self::CardLook => Value::Pick(usize::from(!l.cards)),
+            Self::CardsFullScreen => Value::On(l.cards_full_screen),
+            Self::NavLeft => Value::On(l.nav_left),
+            Self::CompactStrip => Value::On(l.compact_strip),
+            Self::Roomy => Value::On(l.roomy),
+            Self::Glyph => Value::Pick(usize::from(l.glyph == Glyph::Icons)),
+            Self::HighContrast => Value::On(l.high_contrast),
+            Self::LightMotion => Value::On(l.light_motion),
+            Self::ReduceAnimations => Value::On(l.reduce_animations),
+            Self::Sleep => Value::Pick(m.sleep),
+            Self::TabNumbers => Value::On(l.tab_numbers),
+            Self::AddressOnTab => Value::On(l.address_on_tab),
+            Self::Provider => Value::Pick(m.provider),
+            Self::ConfirmQuit => Value::On(p.general.confirm_quit),
+            Self::DownloadsAsk => Value::On(p.general.downloads_ask),
+            Self::DownloadsButton => Value::On(p.general.downloads_button_always),
+            Self::NewPlace => Value::Pick(
+                NEW_PLACES
+                    .iter()
+                    .position(|place| *place == p.tabs.new_place)
+                    .unwrap_or(0),
+            ),
+            Self::FrontBeside => Value::On(p.tabs.front_beside),
+            Self::NewAfterLast => Value::On(p.tabs.new_after_last),
+            Self::CloseGoesBack => Value::On(p.tabs.close_goes_back),
+            Self::UndoReopens => Value::On(p.tabs.undo_reopens),
+            Self::LazyBackground => Value::On(p.tabs.lazy_background),
+            Self::CloseAfter => Value::Pick(
+                CloseAfter::ALL
+                    .iter()
+                    .position(|after| *after == p.tabs.close_after_hours)
+                    .unwrap_or(0),
+            ),
+            Self::Engine => Value::Pick(
+                Engine::NAMED
+                    .iter()
+                    .position(|engine| *engine == p.browsing.engine)
+                    .unwrap_or(CUSTOM_ENGINE),
+            ),
+            Self::CrossSite => Value::On(p.privacy.prevent_cross_site_tracking),
+            Self::ClickIds => Value::On(p.privacy.strip_click_ids),
+            Self::Gpc => Value::On(p.privacy.gpc),
+            Self::Notifications => Value::On(p.privacy.notifications_ask),
+        }
+    }
+
+    /// Changes `layout` if this preference lives there; false if not.
+    pub fn edit_layout(self, layout: &mut Layout, value: Value) -> bool {
+        let on = value.on();
+        match self {
+            Self::TabsLayout => {
+                let was_top = layout.tabs == TabPlace::Top;
+                match value.index() {
+                    0 => {
+                        layout.tabs = TabPlace::Top;
+                        layout.top_pinned = true;
+                        layout.rail = false;
+                    }
+                    ix => {
+                        layout.tabs = TabPlace::Side;
+                        layout.rail = ix == 3;
+                        match ix {
+                            1 => layout.side = Side::Left,
+                            2 => layout.side = Side::Right,
+                            _ => {}
+                        }
+                        // The column was never hidden by choice up there.
+                        if was_top {
+                            layout.sidebar_pinned = true;
+                        }
+                    }
+                }
+            }
+            Self::HideColumn => layout.sidebar_pinned = !on,
+            Self::Slides => layout.slides = on,
+            Self::FoldIcons => layout.fold_icons = on,
+            Self::CardLook => layout.cards = value.index() == 0,
+            Self::CardsFullScreen => layout.cards_full_screen = on,
+            Self::NavLeft => layout.nav_left = on,
+            Self::CompactStrip => layout.compact_strip = on,
+            Self::Roomy => layout.roomy = on,
+            Self::Glyph => {
+                layout.glyph = if value.index() == 1 {
+                    Glyph::Icons
+                } else {
+                    Glyph::Letters
+                }
+            }
+            Self::HighContrast => layout.high_contrast = on,
+            Self::LightMotion => layout.light_motion = on,
+            Self::ReduceAnimations => layout.reduce_animations = on,
+            Self::TabNumbers => layout.tab_numbers = on,
+            Self::AddressOnTab => layout.address_on_tab = on,
+            _ => return false,
+        }
+        true
+    }
+
+    /// Changes the app-wide preferences if this preference lives there;
+    /// false if not.
+    pub fn edit_prefs(self, prefs: &mut AppPrefs, value: Value) -> bool {
+        let on = value.on();
+        let ix = value.index();
+        match self {
+            Self::ConfirmQuit => prefs.general.confirm_quit = on,
+            Self::DownloadsAsk => prefs.general.downloads_ask = on,
+            Self::DownloadsButton => prefs.general.downloads_button_always = on,
+            Self::NewPlace => {
+                prefs.tabs.new_place = NEW_PLACES.get(ix).copied().unwrap_or_default();
+            }
+            Self::FrontBeside => prefs.tabs.front_beside = on,
+            Self::NewAfterLast => prefs.tabs.new_after_last = on,
+            Self::CloseGoesBack => prefs.tabs.close_goes_back = on,
+            Self::UndoReopens => prefs.tabs.undo_reopens = on,
+            Self::LazyBackground => prefs.tabs.lazy_background = on,
+            Self::CloseAfter => {
+                prefs.tabs.close_after_hours = CloseAfter::ALL.get(ix).copied().unwrap_or_default();
+            }
+            Self::Engine => match Engine::NAMED.get(ix) {
+                Some(engine) => prefs.browsing.engine = engine.clone(),
+                None if matches!(prefs.browsing.engine, Engine::Custom(_)) => {}
+                None => prefs.browsing.engine = Engine::Custom(String::new()),
+            },
+            Self::CrossSite => prefs.privacy.prevent_cross_site_tracking = on,
+            Self::ClickIds => prefs.privacy.strip_click_ids = on,
+            Self::Gpc => prefs.privacy.gpc = on,
+            Self::Notifications => prefs.privacy.notifications_ask = on,
+            _ => return false,
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn choices_round_trip_through_the_preferences() {
+        let mut prefs = AppPrefs::default();
+        let mut model = SettingsModel::default();
+        for (pref, value) in [
+            (Pref::NewPlace, Value::Pick(2)),
+            (Pref::CloseAfter, Value::Pick(3)),
+            (Pref::Engine, Value::Pick(1)),
+            (Pref::Gpc, Value::On(false)),
+        ] {
+            assert!(pref.edit_prefs(&mut prefs, value));
+            model.prefs = prefs.clone();
+            assert_eq!(pref.get(&model), value);
+        }
+        assert_eq!(prefs.tabs.new_place, NewTabPlace::End);
+        assert_eq!(prefs.tabs.close_after_hours, CloseAfter::Week);
+        assert_eq!(prefs.browsing.engine, Engine::DuckDuckGo);
+    }
+
+    #[test]
+    fn custom_keeps_its_template_and_layout_prefs_are_not_stored() {
+        let mut prefs = AppPrefs::default();
+        prefs.browsing.engine = Engine::Custom("https://x.test/?q=%s".into());
+        assert!(Pref::Engine.edit_prefs(&mut prefs, Value::Pick(CUSTOM_ENGINE)));
+        assert_eq!(
+            prefs.browsing.engine,
+            Engine::Custom("https://x.test/?q=%s".into())
+        );
+        let before = prefs.clone();
+        assert!(!Pref::Roomy.edit_prefs(&mut prefs, Value::On(true)));
+        assert_eq!(prefs, before);
+        assert!(!Pref::ConfirmQuit.edit_layout(&mut Layout::default(), Value::On(true)));
+    }
+}

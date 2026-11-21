@@ -63,7 +63,7 @@ type Pending = Option<(bool, Retained<NSTimer>)>;
 
 #[derive(Default)]
 pub struct Reveal {
-    shown: [Cell<bool>; 2],
+    pub(super) shown: [Cell<bool>; 2],
     /// Called from the keyboard: stays until the pointer has been in and
     /// out, a click on the page, or another call.
     called: [Cell<bool>; 2],
@@ -108,10 +108,8 @@ fn install() -> Vec<Retained<AnyObject>> {
             frame.pointer(NSEventType::MouseMoved, None);
         }
     });
-    let mask = NSEventMask::MouseMoved
-        | NSEventMask::LeftMouseDown
-        | NSEventMask::RightMouseDown
-        | NSEventMask::LeftMouseDragged;
+    // A drag (a tab, a selection) never opens or closes chrome: not heard.
+    let mask = NSEventMask::MouseMoved | NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown;
     // Leaving the app hides whatever slid in.
     let resign = RcBlock::new(|_: NonNull<NSNotification>| {
         for frame in frames() {
@@ -142,7 +140,7 @@ fn install() -> Vec<Retained<AnyObject>> {
     }
 }
 
-fn frames() -> Vec<Rc<Frame>> {
+pub(super) fn frames() -> Vec<Rc<Frame>> {
     FRAMES.with_borrow(|frames| frames.iter().filter_map(Weak::upgrade).collect())
 }
 
@@ -153,7 +151,13 @@ fn on_event(event: &NSEvent) {
     let Some(window) = event.window(mtm) else {
         return;
     };
-    if let Some(frame) = frames().into_iter().find(|f| f.owns(&window)) {
+    let frame = FRAMES.with_borrow(|frames| {
+        frames
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find(|f| f.owns(&window))
+    });
+    if let Some(frame) = frame {
         frame.pointer(event.r#type(), Some(&window));
     }
 }
@@ -185,8 +189,10 @@ impl Frame {
         let Some(frame) = self.frame.borrow().clone() else {
             return;
         };
-        // A drag (a tab, a selection) never opens or closes chrome.
-        if kind == NSEventType::LeftMouseDragged {
+        // Pinned chrome has nothing to open: the default layout does no work
+        // for the pointer, which moves hundreds of times a second.
+        let layout = self.layout_now(&frame);
+        if !EDGES.into_iter().any(|edge| slides(&layout, edge)) {
             return;
         }
         // Over other apps' windows only while Aeri is the front app.
@@ -199,7 +205,6 @@ impl Frame {
         let rect = frame.frame();
         let at = NSEvent::mouseLocation();
         let y = rect.origin.y + rect.size.height - at.y;
-        let layout = self.layout_now(&frame);
         // How far the pointer is inside the sidebar's own window edge,
         // whichever side it is on; negative beyond it.
         let x = match layout.side {
@@ -307,6 +312,7 @@ impl Frame {
             return;
         };
         overlay.setIgnoresMouseEvents(!shown);
+        crate::chrome_overlay::set_overlay_shown(self.window_id, edge, shown);
         let duration = match self.motion_now() {
             Motion::Off => {
                 overlay.setAlphaValue(if shown { 1.0 } else { 0.0 });

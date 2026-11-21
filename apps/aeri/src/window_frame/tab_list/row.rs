@@ -175,12 +175,12 @@ impl WindowFrame {
             })
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, _| {
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                     let mut state = this.tab_list.inner.borrow_mut();
                     state.pressed = (!active).then_some(id);
                     drop(state);
                     if !active {
-                        this.select(id);
+                        this.press_select(id, cx);
                     }
                 }),
             )

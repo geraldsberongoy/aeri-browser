@@ -105,7 +105,13 @@ impl Shell {
         let downloads = self
             .window(window_id)
             .and_then(|w| self.open.get(&w.profile))
-            .and_then(|open| downloads_label(&open.downloads));
+            .and_then(|open| downloads_label(&open.downloads))
+            .or_else(|| {
+                self.prefs
+                    .general
+                    .downloads_button_always
+                    .then(|| "↓".to_owned())
+            });
         (popup, downloads)
     }
 

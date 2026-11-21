@@ -6,14 +6,17 @@
 //! what a choice does is `Shell::set_pref` and `Shell::settings_action`.
 //! Wording is Search's, with Aeri for Search, wherever Aeri does the same.
 
-use aeri_core::layout::{Glyph, Layout, Side, TabPlace};
+use aeri_core::prefs::AppPrefs;
 
 use super::settings::SettingsModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Page {
+    General,
     Appearance,
     Tabs,
+    Browsing,
+    Spaces,
     Passwords,
     Privacy,
     Extensions,
@@ -22,9 +25,12 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [
+    pub const ALL: [Page; 10] = [
+        Self::General,
         Self::Appearance,
         Self::Tabs,
+        Self::Browsing,
+        Self::Spaces,
         Self::Passwords,
         Self::Privacy,
         Self::Extensions,
@@ -33,8 +39,14 @@ impl Page {
     ];
 
     /// The rail's three blocks (Settings.swift:80-83).
-    pub const BLOCKS: [&'static [Page]; 3] = [
-        &[Self::Appearance, Self::Tabs],
+    const BLOCKS: [&'static [Page]; 3] = [
+        &[
+            Self::General,
+            Self::Appearance,
+            Self::Tabs,
+            Self::Browsing,
+            Self::Spaces,
+        ],
         &[
             Self::Passwords,
             Self::Privacy,
@@ -44,11 +56,30 @@ impl Page {
         &[Self::About],
     ];
 
+    /// The blocks as the rail shows them: a page with no row to draw is
+    /// left out, and a block with no page with it.
+    pub fn blocks() -> Vec<Vec<Page>> {
+        Self::BLOCKS
+            .iter()
+            .map(|block| block.iter().copied().filter(|p| p.shown()).collect())
+            .filter(|block: &Vec<Page>| !block.is_empty())
+            .collect()
+    }
+
+    /// The page has something to draw: rows, an extra, or its own header.
+    pub fn shown(self) -> bool {
+        self == Self::About
+            || groups_of(self).any(|g| g.extra != Extra::None || items_in(g.id).next().is_some())
+    }
+
     /// What `app.db` keeps as the last page.
     pub fn key(self) -> &'static str {
         match self {
+            Self::General => "general",
             Self::Appearance => "appearance",
             Self::Tabs => "tabs",
+            Self::Browsing => "browsing",
+            Self::Spaces => "spaces",
             Self::Passwords => "passwords",
             Self::Privacy => "privacy",
             Self::Extensions => "extensions",
@@ -57,14 +88,26 @@ impl Page {
         }
     }
 
+    /// A page that is shown, by its key; the old names too (Settings.swift
+    /// :45-84: `downloads` is General, `shortcuts` and `mouse` Keyboard).
     pub fn from_key(key: &str) -> Option<Page> {
-        Self::ALL.into_iter().find(|page| page.key() == key)
+        let key = match key {
+            "downloads" => "general",
+            "shortcuts" | "mouse" => "keyboard",
+            other => other,
+        };
+        Self::ALL
+            .into_iter()
+            .find(|page| page.key() == key && page.shown())
     }
 
     pub fn title(self) -> &'static str {
         match self {
+            Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Tabs => "Tabs",
+            Self::Browsing => "Browsing",
+            Self::Spaces => "Spaces & Pins",
             Self::Passwords => "Passwords",
             Self::Privacy => "Privacy",
             Self::Extensions => "Extensions",
@@ -76,8 +119,11 @@ impl Page {
     /// Settings.swift:56-70.
     pub fn icon(self) -> &'static str {
         match self {
+            Self::General => "gearshape",
             Self::Appearance => "paintbrush",
             Self::Tabs => "square.on.square",
+            Self::Browsing => "globe",
+            Self::Spaces => "square.stack",
             Self::Passwords => "key",
             Self::Privacy => "hand.raised",
             Self::Extensions => "puzzlepiece.extension",
@@ -127,121 +173,6 @@ impl Value {
     }
 }
 
-/// One preference Settings changes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Pref {
-    /// Light, Dark, Auto.
-    Look,
-    /// Top, Left, Right, Icons only.
-    TabsLayout,
-    HideColumn,
-    Slides,
-    FoldIcons,
-    /// As a card, Edge to edge.
-    CardLook,
-    CardsFullScreen,
-    NavLeft,
-    CompactStrip,
-    Roomy,
-    /// Letters, Site icons.
-    Glyph,
-    HighContrast,
-    LightMotion,
-    ReduceAnimations,
-    /// Never, Later, Normal, Sooner.
-    Sleep,
-    TabNumbers,
-    AddressOnTab,
-    /// Aeri, an extension, off.
-    Provider,
-}
-
-/// Search's `SleepPace` waits, in minutes (Sleep.swift:57-63).
-pub const SLEEP_MINUTES: [Option<u64>; 4] = [None, Some(120), Some(30), Some(10)];
-
-impl Pref {
-    pub fn get(self, m: &SettingsModel) -> Value {
-        let l = &m.layout;
-        match self {
-            Self::Look => Value::Pick(m.look),
-            Self::TabsLayout => Value::Pick(match (l.tabs, l.rail, l.side) {
-                (TabPlace::Top, _, _) => 0,
-                (TabPlace::Side, true, _) => 3,
-                (TabPlace::Side, false, Side::Left) => 1,
-                (TabPlace::Side, false, Side::Right) => 2,
-            }),
-            Self::HideColumn => Value::On(!l.sidebar_pinned),
-            Self::Slides => Value::On(l.slides),
-            Self::FoldIcons => Value::On(l.fold_icons),
-            Self::CardLook => Value::Pick(usize::from(!l.cards)),
-            Self::CardsFullScreen => Value::On(l.cards_full_screen),
-            Self::NavLeft => Value::On(l.nav_left),
-            Self::CompactStrip => Value::On(l.compact_strip),
-            Self::Roomy => Value::On(l.roomy),
-            Self::Glyph => Value::Pick(usize::from(l.glyph == Glyph::Icons)),
-            Self::HighContrast => Value::On(l.high_contrast),
-            Self::LightMotion => Value::On(l.light_motion),
-            Self::ReduceAnimations => Value::On(l.reduce_animations),
-            Self::Sleep => Value::Pick(m.sleep),
-            Self::TabNumbers => Value::On(l.tab_numbers),
-            Self::AddressOnTab => Value::On(l.address_on_tab),
-            Self::Provider => Value::Pick(m.provider),
-        }
-    }
-
-    /// Changes `layout` if this preference lives there; false if not.
-    pub fn edit_layout(self, layout: &mut Layout, value: Value) -> bool {
-        let on = value.on();
-        match self {
-            Self::TabsLayout => {
-                let was_top = layout.tabs == TabPlace::Top;
-                match value.index() {
-                    0 => {
-                        layout.tabs = TabPlace::Top;
-                        layout.top_pinned = true;
-                        layout.rail = false;
-                    }
-                    ix => {
-                        layout.tabs = TabPlace::Side;
-                        layout.rail = ix == 3;
-                        match ix {
-                            1 => layout.side = Side::Left,
-                            2 => layout.side = Side::Right,
-                            _ => {}
-                        }
-                        // The column was never hidden by choice up there.
-                        if was_top {
-                            layout.sidebar_pinned = true;
-                        }
-                    }
-                }
-            }
-            Self::HideColumn => layout.sidebar_pinned = !on,
-            Self::Slides => layout.slides = on,
-            Self::FoldIcons => layout.fold_icons = on,
-            Self::CardLook => layout.cards = value.index() == 0,
-            Self::CardsFullScreen => layout.cards_full_screen = on,
-            Self::NavLeft => layout.nav_left = on,
-            Self::CompactStrip => layout.compact_strip = on,
-            Self::Roomy => layout.roomy = on,
-            Self::Glyph => {
-                layout.glyph = if value.index() == 1 {
-                    Glyph::Icons
-                } else {
-                    Glyph::Letters
-                }
-            }
-            Self::HighContrast => layout.high_contrast = on,
-            Self::LightMotion => layout.light_motion = on,
-            Self::ReduceAnimations => layout.reduce_animations = on,
-            Self::TabNumbers => layout.tab_numbers = on,
-            Self::AddressOnTab => layout.address_on_tab = on,
-            Self::Look | Self::Sleep | Self::Provider => return false,
-        }
-        true
-    }
-}
-
 /// A button's work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -254,6 +185,8 @@ pub enum Action {
     ClearData,
     SiteSettings,
     WebStore,
+    /// Choose the folder downloads are saved to.
+    ChooseDownloads,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -289,12 +222,31 @@ pub enum Control {
         pref: Pref,
         picks: &'static [(Picture, &'static str)],
     },
-    /// A native pop-up button.
+    /// A native pop-up button; its choices may follow the model.
     Menu {
         pref: Pref,
-        labels: &'static [&'static str],
+        labels: fn(&SettingsModel) -> &'static [&'static str],
     },
     Pills(&'static [Pill]),
+    /// A pill that is a check once what it did holds ("Make default").
+    #[allow(dead_code, reason = "no row needs a done state yet")]
+    State {
+        pill: Pill,
+        done: fn(&SettingsModel) -> bool,
+    },
+    /// A stepper over a range (page zoom): `Value::Pick(value)`; clicking
+    /// the value goes `home`.
+    #[allow(dead_code, reason = "page zoom has no effect yet, so no row")]
+    Steps {
+        pref: Pref,
+        min: u16,
+        max: u16,
+        step: u16,
+        home: u16,
+    },
+    /// "Always on": a row about something that has no switch.
+    #[allow(dead_code, reason = "no row is only a note yet")]
+    Always,
 }
 
 /// A dependent row counts only while `holds`; Find shows it dimmed with
@@ -320,6 +272,21 @@ pub struct Item {
     pub need: Option<Need>,
     /// A detail that follows the state (the profile's name, say).
     pub live_detail: Option<fn(&SettingsModel) -> String>,
+    /// A text field under the row while `holds`.
+    pub under: Option<Under>,
+}
+
+/// A text field under a row (Search `textInset`): the engine's own address.
+pub struct Under {
+    pub holds: fn(&SettingsModel) -> bool,
+    pub placeholder: &'static str,
+    pub text: fn(&SettingsModel) -> String,
+    /// Keeps what was typed.
+    pub apply: fn(&mut AppPrefs, &str),
+    /// What is typed is usable.
+    pub valid: fn(&str) -> bool,
+    /// Said under the field while what is typed is not.
+    pub invalid: &'static str,
 }
 
 impl Item {
@@ -385,7 +352,9 @@ pub fn find(typed: &str) -> Vec<&'static Item> {
 }
 
 mod data;
+mod pref;
 pub use data::{GROUPS, ITEMS};
+pub use pref::{Pref, SLEEP_MINUTES};
 
 #[cfg(test)]
 mod tests {
@@ -404,5 +373,24 @@ mod tests {
         assert!(find("dark").iter().any(|i| i.id == "look"));
         assert!(find("dark zzzz").is_empty());
         assert!(find("   ").is_empty());
+    }
+
+    #[test]
+    fn pages_without_rows_stay_out_of_the_rail() {
+        let shown: Vec<Page> = Page::blocks().into_iter().flatten().collect();
+        assert!(shown.contains(&Page::General));
+        assert!(shown.contains(&Page::Browsing));
+        assert!(!shown.contains(&Page::Spaces));
+        assert_eq!(Page::from_key("downloads"), Some(Page::General));
+        assert_eq!(Page::from_key("spaces"), None);
+    }
+
+    #[test]
+    fn dependent_rows_follow_their_parent() {
+        let mut model = SettingsModel::default();
+        let beside = ITEMS.iter().find(|i| i.id == "tabs.frontBeside").unwrap();
+        assert!(beside.counts(&model));
+        model.prefs.tabs.new_place = aeri_core::prefs::NewTabPlace::End;
+        assert!(!beside.counts(&model));
     }
 }

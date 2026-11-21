@@ -59,6 +59,12 @@ pub fn swap() -> Animation {
     Animation::new(Duration::from_millis(220)).with_easing(ease_in_out)
 }
 
+/// Zen's address bar card opening (Firefox `urlbar-grow`): 150 ms on
+/// `cubic-bezier(.07, .95, 0, 1)`, scaling from 99 % by 98 % to full size.
+pub fn urlbar_grow() -> Animation {
+    Animation::new(Duration::from_millis(150)).with_easing(|t| cubic_bezier(0.07, 0.95, 0., 1., t))
+}
+
 /// A cubic Bézier timing curve from (0, 0) through (x1, y1) and (x2, y2) to
 /// (1, 1), solved for x = `t` by Newton steps with a bisection fallback.
 fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {

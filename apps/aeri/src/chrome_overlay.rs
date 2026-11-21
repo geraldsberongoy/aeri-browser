@@ -9,6 +9,12 @@
 //! shadow (black at .14, radius 20, 4 pt away from the page), so the
 //! column's rows are never rasterised for the shadow.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::time::Duration;
+
+use futures::StreamExt;
+use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::{BoxShadow, Context, Entity, IntoElement, Render, Window, div, point, prelude::*, px};
 
 use crate::mac::{Edge, SIDE_OVERLAY_EXTRA};
@@ -20,20 +26,114 @@ use crate::window_frame::{Host, WindowFrame};
 const SHADOW_RADIUS: f32 = 20.;
 const SHADOW_AWAY: f32 = 4.;
 
+/// How long an overlay told to hide keeps its content: the strip fades out
+/// over at most 0.18 s, and must not go blank while it does.
+const HIDE_AFTER: Duration = Duration::from_millis(250);
+
+thread_local! {
+    /// The wake channel of every overlay, by (window, edge index).
+    static WAKES: RefCell<HashMap<(u64, usize), UnboundedSender<bool>>> =
+        RefCell::default();
+}
+
+/// Tells window `window`'s overlay at `edge` that it is about to be seen
+/// (`true`, before its alpha goes up) or has been sent away (`false`).
+/// While hidden an overlay draws an empty root instead of the whole sidebar
+/// or strip on every change of the frame view. Call on the main thread.
+pub fn set_overlay_shown(window: u64, edge: Edge, shown: bool) {
+    WAKES.with(|wakes| {
+        if let Some(tx) = wakes.borrow().get(&(window, edge as usize)) {
+            let _ = tx.unbounded_send(shown);
+        }
+    });
+}
+
 pub struct ChromeOverlay {
     frame: Entity<WindowFrame>,
     edge: Edge,
+    /// Whether the overlay draws its content: true from the moment it is
+    /// about to show until a little after it has gone.
+    shown: bool,
+    /// Bumped by every wake, so a late hide yields to a newer show.
+    wake_gen: u64,
+    key: Option<(u64, usize)>,
 }
 
 impl ChromeOverlay {
     pub fn new(frame: Entity<WindowFrame>, edge: Edge) -> Self {
-        Self { frame, edge }
+        Self {
+            frame,
+            edge,
+            shown: false,
+            wake_gen: 0,
+            key: None,
+        }
+    }
+
+    /// First render: registers the wake channel and listens on it.
+    fn listen(&mut self, window: u64, cx: &mut Context<Self>) {
+        let (tx, mut rx) = unbounded();
+        let key = (window, self.edge as usize);
+        WAKES.with(|wakes| wakes.borrow_mut().insert(key, tx));
+        self.key = Some(key);
+        cx.spawn(async move |this, cx| {
+            while let Some(shown) = rx.next().await {
+                if this.update(cx, |this, cx| this.wanted(shown, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn wanted(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.wake_gen += 1;
+        if shown {
+            if !self.shown {
+                self.shown = true;
+                cx.notify();
+            }
+            return;
+        }
+        let generation = self.wake_gen;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HIDE_AFTER).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.wake_gen == generation && this.shown {
+                    this.shown = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+}
+
+impl Drop for ChromeOverlay {
+    fn drop(&mut self) {
+        if let Some(key) = self.key {
+            WAKES.with(|wakes| wakes.borrow_mut().remove(&key));
+        }
     }
 }
 
 impl Render for ChromeOverlay {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.frame.read(cx).window_id();
+        if self.key.is_none() {
+            self.listen(window, cx);
+        }
+        // Hidden (alpha 0): nothing to draw, so a change of the frame view
+        // costs this window next to nothing.
+        if !self.shown {
+            return div().size_full().into_any_element();
+        }
+        self.draw(window, cx).into_any_element()
+    }
+}
+
+impl ChromeOverlay {
+    fn draw(&mut self, window: u64, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme::tokens_in(window, cx);
         let edge = self.edge;
         let right = self.frame.read(cx).on_right();

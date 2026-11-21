@@ -7,10 +7,12 @@
 //! keying GPUI windows re-enters GPUI.
 
 mod appearance;
+mod blur;
 mod fold;
 mod frame;
 mod lights;
 mod modifiers;
+mod panels;
 mod power;
 mod pressure;
 mod reveal;
@@ -31,11 +33,11 @@ use crate::native_menu;
 pub use self::appearance::{
     accessibility, set_app_appearance, system_is_dark, watch as watch_appearance,
 };
-pub use self::frame::{
-    BAR_HEIGHT, Frame, MAX_VISIBLE_SUGGESTIONS, SIDE_OVERLAY_EXTRA, SUGGESTION_CHROME,
-    SUGGESTION_HEIGHT,
-};
+pub use self::blur::{Blur, CardRect};
+pub use self::fold::glide_column;
+pub use self::frame::{BAR_HEIGHT, Frame, SIDE_OVERLAY_EXTRA};
 pub use self::modifiers::watch_command;
+pub use self::panels::{choose_folder, confirm_quit};
 pub use self::power::saving_power;
 pub use self::pressure::{Pressure, watch_memory_pressure};
 pub use self::reveal::Edge;
@@ -58,20 +60,28 @@ pub fn bring_to_front(view: *mut c_void) {
 }
 
 /// From a press in an overlay of a frame (a child window): moves the frame
-/// with the pointer, or on a double-click zooms it. Call inside the mouse
-/// down handler, while AppKit's current event is that press.
-pub fn drag_parent(view: *mut c_void, double_click: bool) {
+/// with the pointer. Call inside the mouse down handler, while AppKit's
+/// current event is that press.
+pub fn drag_parent(view: *mut c_void) {
     let Some(parent) = window_of(view).and_then(|w| w.parentWindow()) else {
         return;
     };
-    if double_click {
-        parent.zoom(None);
-        return;
-    }
     let mtm = objc2::MainThreadMarker::from(&*parent);
     if let Some(event) = objc2_app_kit::NSApplication::sharedApplication(mtm).currentEvent() {
         parent.performWindowDragWithEvent(&event);
     }
+}
+
+/// A double-click on empty chrome of the frame whose content view (or whose
+/// overlay's) is `view`: what the Mac does for a title bar, per System
+/// Settings (see [`frame::double_click_action`]). Not inside a GPUI update:
+/// zooming resizes GPUI's windows.
+pub fn title_bar_double_click(view: *mut c_void) {
+    let Some(window) = window_of(view) else {
+        return;
+    };
+    let target = window.parentWindow().unwrap_or(window);
+    frame::double_click_action(&target);
 }
 
 /// A native menu with its top-left at (`x`, `y`) in a GPUI window's

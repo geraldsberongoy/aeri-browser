@@ -11,7 +11,9 @@ mod downloads;
 mod extensions;
 mod favicon;
 mod orphan;
+mod preferences;
 mod profile;
+mod request_policy;
 mod resources;
 mod runtime;
 mod signals;
@@ -29,11 +31,13 @@ use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::keymap::{Chord, Keymap, Shortcut};
 
 pub use devtools::DevTools;
-pub use downloads::cancel_download;
+pub use downloads::{cancel_download, set_download_ask, set_download_dir};
 pub use extensions::Extension;
+pub use preferences::{PrefSet, PrefValue};
 pub use profile::{ExtensionsWatch, ProfileContext};
+pub use request_policy::set_request_policy;
 pub use resources::{Task, TaskKind, TaskMonitor};
-pub use runtime::{Runtime, RuntimeConfig, load};
+pub use runtime::{Runtime, RuntimeConfig, add_list_switch_item, add_switch, load};
 pub use window::{TabObserver, TabWindow};
 
 thread_local! {

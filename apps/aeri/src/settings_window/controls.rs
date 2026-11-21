@@ -309,3 +309,108 @@ pub fn menu_button(
         }))
         .into_any_element()
 }
+
+/// Steps: an outlined capsule, 24 high, holding − value + (Settings.swift
+/// :1514-1553). Clicking the value goes `home`; the ends stop at `min` and
+/// `max`.
+#[allow(clippy::too_many_arguments)]
+pub fn steps(
+    id: SharedString,
+    value: u16,
+    (min, max, step, home): (u16, u16, u16, u16),
+    t: &Tokens,
+    cx: &mut View<'_>,
+    f: impl Fn(&mut SettingsWindow, u16, &mut View<'_>) + Clone + 'static,
+) -> AnyElement {
+    let button =
+        |name: &'static str, symbol_name: &'static str, to: u16, live: bool, cx: &mut View<'_>| {
+            let f = f.clone();
+            div()
+                .id(SharedString::from(format!("{id}-{name}")))
+                .role(gpui::Role::Button)
+                .aria_label(name)
+                .flex_none()
+                .size(px(20.))
+                .rounded_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(live, |b| {
+                    b.cursor_pointer().hover(|s| s.bg(theme::c(t.hover)))
+                })
+                .when(!live, |b| b.opacity(0.35))
+                .child(symbol(symbol_name, 9., Weight::Semibold, t.text))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if live {
+                        f(this, to, cx)
+                    }
+                }))
+                .into_any_element()
+        };
+    let less = button(
+        "Less",
+        "minus",
+        value.saturating_sub(step).max(min),
+        value > min,
+        cx,
+    );
+    let more = button(
+        "More",
+        "plus",
+        value.saturating_add(step).min(max),
+        value < max,
+        cx,
+    );
+    let home_f = f.clone();
+    div()
+        .id(id.clone())
+        .role(gpui::Role::SpinButton)
+        .aria_label(SharedString::from(format!("{value} percent")))
+        .flex_none()
+        .flex()
+        .items_center()
+        .h(px(24.))
+        .px(px(2.))
+        .rounded_full()
+        .bg(theme::c(t.panel))
+        .border_1()
+        .border_color(theme::c(t.separator))
+        .child(less)
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-value")))
+                .min_w(px(36.))
+                .flex()
+                .justify_center()
+                .cursor_pointer()
+                .text_size(px(11.5))
+                .text_color(theme::c(t.text))
+                .child(SharedString::from(format!("{value}%")))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| home_f(this, home, cx))),
+        )
+        .child(more)
+        .into_any_element()
+}
+
+/// "Always on": the badge of a row that has no switch (Settings.swift
+/// :1265-1277).
+pub fn always_on(t: &Tokens) -> AnyElement {
+    div()
+        .flex_none()
+        .px(px(8.))
+        .py(px(3.))
+        .rounded_full()
+        .bg(theme::c(t.field))
+        .text_size(px(11.))
+        .text_color(theme::c(t.text_disabled))
+        .child("Always on")
+        .into_any_element()
+}
+
+/// The check a pill becomes once what it did holds.
+pub fn done_mark(t: &Tokens) -> AnyElement {
+    div()
+        .flex_none()
+        .child(symbol("checkmark", 12., Weight::Semibold, t.text))
+        .into_any_element()
+}

@@ -1,8 +1,9 @@
-//! The Settings window (Search `Settings.swift`, as a window of its own):
+//! Settings (Search `Settings.swift`, `asTab`), the view of the Settings tab:
 //! a rail of pages on the left, the chosen page down the middle, and a
-//! "Find a setting" field that filters the same index. Like the library it
-//! is a native GPUI window; the shell builds the model and applies every
-//! message. Every row and control comes from `shell::settings_index`.
+//! "Find a setting" field that filters the same index. It is a native GPUI
+//! window that the shell places at the page's rect while the tab is shown;
+//! the shell builds the model and applies every message. Every row and
+//! control comes from `shell::settings_index`.
 
 mod content;
 mod controls;
@@ -10,8 +11,10 @@ mod extras;
 mod keys;
 mod pictures;
 mod rail;
+mod shortcuts;
+mod under;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use aeri_core::keymap::Shortcut;
@@ -21,7 +24,7 @@ use gpui::{
 };
 
 use crate::motion;
-use crate::shell::settings_index::{Page, Pref, Value};
+use crate::shell::settings_index::{self, Page, Pref, Value};
 use crate::shell::{AppMsg, SettingsModel, SettingsMsg};
 use crate::text_input::{InputEvent, TextInput};
 use crate::theme;
@@ -30,6 +33,8 @@ use crate::theme;
 const LIT_FOR: Duration = Duration::from_millis(1400);
 
 pub struct SettingsWindow {
+    /// The browser window whose tab this is.
+    window: u64,
     model: SettingsModel,
     tx: UnboundedSender<AppMsg>,
     page: Page,
@@ -49,22 +54,21 @@ pub struct SettingsWindow {
     opened: HashSet<&'static str>,
     /// The row Find took the Person to.
     lit: Option<&'static str>,
+    /// The text fields under rows, by the id of their row.
+    fields: HashMap<&'static str, Entity<TextInput>>,
     lit_epoch: u64,
     focus: FocusHandle,
 }
 
 impl SettingsWindow {
     pub fn new(
+        window_id: u64,
+        page: Page,
         model: SettingsModel,
         tx: UnboundedSender<AppMsg>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let closed = tx.clone();
-        window.on_window_should_close(cx, move |_, _| {
-            let _ = closed.unbounded_send(AppMsg::Settings(SettingsMsg::Closed));
-            true
-        });
         let find = cx.new(|cx| TextInput::new("Find a setting", cx));
         cx.subscribe(&find, |this, input, event: &InputEvent, cx| match event {
             InputEvent::Edited(text) => {
@@ -93,10 +97,30 @@ impl SettingsWindow {
             _ => {}
         })
         .detach();
-        let page = Page::from_key(&model.page).unwrap_or(Page::Appearance);
+        let mut fields = HashMap::new();
+        for item in settings_index::ITEMS {
+            let Some(under) = &item.under else {
+                continue;
+            };
+            let input = under::field(under, &(under.text)(&model), cx);
+            let id = item.id;
+            cx.subscribe(&input, move |this, _, event: &InputEvent, cx| {
+                if let InputEvent::Edited(text) = event {
+                    (under.apply)(&mut this.model.prefs, text);
+                    this.send(SettingsMsg::Text {
+                        field: id,
+                        text: text.clone(),
+                    });
+                    cx.notify();
+                }
+            })
+            .detach();
+            fields.insert(id, input);
+        }
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         Self {
+            window: window_id,
             model,
             tx,
             page,
@@ -111,6 +135,7 @@ impl SettingsWindow {
             lit: None,
             lit_epoch: 0,
             focus,
+            fields,
         }
     }
 
@@ -145,7 +170,10 @@ impl SettingsWindow {
     }
 
     fn send(&self, msg: SettingsMsg) {
-        let _ = self.tx.unbounded_send(AppMsg::Settings(msg));
+        let _ = self.tx.unbounded_send(AppMsg::Settings {
+            window: self.window,
+            msg,
+        });
     }
 
     fn searching(&self) -> bool {
@@ -158,7 +186,8 @@ impl SettingsWindow {
         self.model.layout.reduce_animations || motion::still(0, cx)
     }
 
-    fn go(&mut self, page: Page, cx: &mut Context<Self>) {
+    /// Another page, from the rail, Find, or the address field.
+    pub fn go(&mut self, page: Page, cx: &mut Context<Self>) {
         if self.page != page {
             self.page = page;
             self.recording = None;
@@ -169,12 +198,29 @@ impl SettingsWindow {
 
     /// Shows a choice at once and hands it to the shell.
     fn set(&mut self, pref: Pref, value: Value, cx: &mut Context<Self>) {
-        if !pref.edit_layout(&mut self.model.layout, value) {
+        if !pref.edit_layout(&mut self.model.layout, value)
+            && !pref.edit_prefs(&mut self.model.prefs, value)
+        {
             match pref {
                 Pref::Look => self.model.look = value.index(),
                 Pref::Sleep => self.model.sleep = value.index(),
                 Pref::Provider => self.model.provider = value.index(),
                 _ => {}
+            }
+        }
+        // A choice can change what a field under a row holds (Custom
+        // again after another engine).
+        for item in settings_index::ITEMS {
+            let Some(under) = &item.under else {
+                continue;
+            };
+            if let Some(input) = self.fields.get(item.id) {
+                let text = (under.text)(&self.model);
+                input.update(cx, |input, cx| {
+                    if input.text() != text {
+                        input.set_text(text, cx);
+                    }
+                });
             }
         }
         self.send(SettingsMsg::Set { pref, value });
@@ -290,7 +336,7 @@ impl Render for SettingsWindow {
         let still = self.still(cx);
         let rail = self.rail(&t, still, cx);
         let content = self.content(&t, still, window, cx);
-        div()
+        let root = div()
             .id("settings")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -309,6 +355,7 @@ impl Render for SettingsWindow {
                     .h_full()
                     .bg(theme::c(t.separator)),
             )
-            .child(content)
+            .child(content);
+        self.route_shortcuts(root, cx)
     }
 }

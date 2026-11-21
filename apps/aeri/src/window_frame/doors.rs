@@ -184,14 +184,14 @@ impl WindowFrame {
         let window = self.window_id;
         div().flex_1().min_h_0().w_full().on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, win, _| {
+            cx.listener(move |this, event: &MouseDownEvent, win, cx| {
                 if event.click_count >= 2 {
                     this.send(AppMsg::Shortcut {
                         window,
                         shortcut: Shortcut::NewTab,
                     });
                 } else {
-                    begin_move(host, false, win);
+                    begin_move(host, false, win, cx);
                 }
             }),
         )

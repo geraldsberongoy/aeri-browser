@@ -5,6 +5,8 @@ use futures::channel::mpsc::UnboundedSender;
 use aeri_core::ids::ProfileId;
 use gpui::App;
 
+use crate::mac;
+
 use super::{AppMsg, Shell};
 
 /// Write end of the pipe [`on_quit_signal`] wakes the quit thread through.
@@ -45,12 +47,30 @@ pub(super) fn quit_on_signals(tx: UnboundedSender<AppMsg>) {
         // SAFETY: reading one byte into a live buffer from our own pipe.
         while unsafe { libc::read(read_fd, (&raw mut byte).cast(), 1) } == 1 {
             tracing::info!("quit requested by signal");
-            let _ = tx.unbounded_send(AppMsg::Quit);
+            let _ = tx.unbounded_send(AppMsg::QuitNow);
         }
     });
 }
 
 impl Shell {
+    /// Quit from the menu, ⌘Q or the Dock: with `confirm_quit` on, the
+    /// Person is asked first.
+    pub(super) fn request_quit(&mut self, cx: &mut App) {
+        if self.quitting {
+            return;
+        }
+        if !self.prefs.general.confirm_quit {
+            self.quit(cx);
+            return;
+        }
+        let tx = self.tx.clone();
+        self.later(move |_| {
+            if mac::confirm_quit() {
+                let _ = tx.unbounded_send(AppMsg::QuitNow);
+            }
+        });
+    }
+
     /// Orderly quit: close every window; CEF shuts down once all are gone.
     pub(super) fn quit(&mut self, cx: &mut App) {
         if self.quitting {

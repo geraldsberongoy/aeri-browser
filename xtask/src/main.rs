@@ -1,9 +1,11 @@
 //! Developer tasks.
 //!
-//! - `cargo xtask bundle` — builds `aeri` and `aeri-helper` and assembles
-//!   `target/bundle/Aeri.app` with the CEF framework and helper apps in
-//!   place. CEF finds its framework and child processes through this
-//!   layout, so the app cannot run outside it on macOS.
+//! - `cargo xtask bundle [--release]` — builds `aeri` and `aeri-helper` and
+//!   assembles `target/bundle/aeri.app` (development build) or, with
+//!   `--release`, an optimised `target/release-bundle/aeri.app`, the one to
+//!   use day to day: motion in a development build stutters. The CEF
+//!   framework and helper apps are put in place; CEF finds them through
+//!   this layout, so the app cannot run outside it on macOS.
 //! - `cargo xtask isolation` — profile isolation checks against a local
 //!   test site, on the bundled app (see `isolation.rs`).
 
@@ -14,17 +16,22 @@ use anyhow::{Result, bail};
 fn main() -> Result<()> {
     let task = std::env::args().nth(1).unwrap_or_default();
     match task.as_str() {
-        "bundle" => bundle(),
+        "bundle" => bundle(std::env::args().nth(2).as_deref() == Some("--release")),
         "isolation" => isolation::run(),
-        _ => bail!("usage: cargo xtask bundle | isolation"),
+        _ => bail!("usage: cargo xtask bundle [--release] | isolation"),
     }
 }
 
 #[cfg(target_os = "macos")]
-fn bundle() -> Result<()> {
+fn bundle(release: bool) -> Result<()> {
     use cef::build_util::mac::{BundleInfo, build_bundle};
+    use cef::build_util::metadata::get_cargo_metadata;
 
-    let out_dir = std::path::PathBuf::from("target/bundle");
+    let out_dir = std::path::PathBuf::from(if release {
+        "target/release-bundle"
+    } else {
+        "target/bundle"
+    });
     // Never overwrite executables in place: macOS caches code signatures per
     // file and kills the new binary ("load code signature error 2").
     let app = out_dir.join("aeri.app");
@@ -39,7 +46,31 @@ fn bundle() -> Result<()> {
         "en",
         semver::Version::parse(env!("CARGO_PKG_VERSION"))?,
     );
-    let app = match build_bundle(&out_dir, "aeri", info) {
+    let built = if release {
+        // cef-rs's `build_bundle` only builds the development profile.
+        let metadata = get_cargo_metadata().map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let helper = metadata
+            .parse_bundle_metadata("aeri")
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let status = std::process::Command::new(env!("CARGO"))
+            .args(["build", "--release", "--bin", "aeri", "--bin"])
+            .arg(&helper.helper_name)
+            .status()?;
+        if !status.success() {
+            bail!("release build failed: {status}");
+        }
+        cef::build_util::mac::bundle(
+            &out_dir,
+            &metadata.target_directory().join("release"),
+            "aeri",
+            &helper.helper_name,
+            helper.resources_path,
+            info,
+        )
+    } else {
+        build_bundle(&out_dir, "aeri", info)
+    };
+    let app = match built {
         Ok(app) => app,
         Err(err) => bail!("bundling failed: {err:?}"),
     };
@@ -81,6 +112,39 @@ fn bundle() -> Result<()> {
     ] {
         let status = std::process::Command::new("plutil")
             .args(["-replace", key, "-string", text])
+            .arg(&plist)
+            .status()?;
+        if !status.success() {
+            bail!("could not set {key}: {status}");
+        }
+    }
+    // App icon (Light/Dark/Tinted): the Icon Composer document is compiled
+    // by actool into Assets.car + AppIcon.icns inside the bundle; the two
+    // Info.plist keys point macOS at them. Regenerate the glyph asset with
+    // apps/aeri/resources/icon/make_icon.py.
+    let partial = out_dir.join("AppIcon-partial.plist");
+    let status = std::process::Command::new("xcrun")
+        .args(["actool", "apps/aeri/resources/AppIcon.icon", "--compile"])
+        .arg(app.join("Contents/Resources"))
+        .args([
+            "--platform",
+            "macosx",
+            "--minimum-deployment-target",
+            "11.0",
+            "--app-icon",
+            "AppIcon",
+            "--output-partial-info-plist",
+        ])
+        .arg(&partial)
+        .stdout(std::process::Stdio::null())
+        .status()?;
+    if !status.success() {
+        bail!("actool failed: {status}");
+    }
+    std::fs::remove_file(&partial)?;
+    for key in ["CFBundleIconName", "CFBundleIconFile"] {
+        let status = std::process::Command::new("plutil")
+            .args(["-replace", key, "-string", "AppIcon"])
             .arg(&plist)
             .status()?;
         if !status.success() {

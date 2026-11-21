@@ -12,12 +12,13 @@ use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::resources::{Candidate, awake_reason, idle_rests, pressure_rests};
 use aeri_core::store::AppDb;
 use aeri_core::trust::site_of;
+use aeri_core::workspace::Item;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{App, WindowHandle};
 
 use super::tabs::TabEntry;
 use super::windows::Spot;
-use super::{AppMsg, Shell};
+use super::{AppMsg, NEW_TAB_URL, Shell};
 use crate::mac::{self, Pressure};
 use crate::resource_view::ResourceView;
 
@@ -76,6 +77,29 @@ impl Resting {
             monitor: None,
         }
     }
+}
+
+/// Whether a tab left alone this long closes (Settings › Tabs › Close tabs
+/// you leave alone). What stays is what the Person said to keep: a pinned
+/// tab, a named one, a site kept awake; and what is in use: on screen,
+/// playing, capturing, holding something typed. A blank tab holds nothing.
+fn left_alone(
+    item: &Item<TabEntry>,
+    shown: &HashSet<TabId>,
+    keep_awake: &HashSet<String>,
+    now: Instant,
+    wait: Duration,
+) -> bool {
+    let entry = &item.value;
+    let url = entry.url();
+    let kept = site_of(url).is_some_and(|site| keep_awake.contains(&site));
+    !item.pinned
+        && entry.name.is_none()
+        && !shown.contains(&item.id)
+        && url != NEW_TAB_URL
+        && entry.internal().is_none()
+        && awake_reason(&entry.model, false, kept).is_none()
+        && now.duration_since(entry.last_seen) >= wait
 }
 
 /// A tab with a page: shown tabs are seen now; others may be candidates.
@@ -159,6 +183,7 @@ impl Shell {
     /// Each minute: tabs unseen past the period rest, and while memory stays
     /// short, more of them.
     pub(super) fn rest_check(&mut self, cx: &mut App) {
+        self.close_left_alone(cx);
         let candidates = self.rest_candidates();
         let mut picks = match self.resting.after {
             Some(after) => idle_rests(&candidates, after),
@@ -182,6 +207,58 @@ impl Shell {
         let candidates = self.rest_candidates();
         for tab in pressure_rests(&candidates, level == Pressure::Critical) {
             self.rest_tab(tab, cx);
+        }
+    }
+
+    /// Closes the tabs left alone past the Person's time, as ⌘W would: each
+    /// goes to the closed stack, where ⇧⌘T finds it. A window keeps its last
+    /// tab, and what is on screen stays.
+    fn close_left_alone(&mut self, cx: &mut App) {
+        let Some(hours) = self.prefs().tabs.close_after_hours.hours() else {
+            return;
+        };
+        let wait = Duration::from_secs(u64::from(hours) * 3600);
+        let shown = self.shown_tabs();
+        let now = Instant::now();
+        let mut due: Vec<(Spot, TabId)> = Vec::new();
+        for w in self.windows.iter().filter(|w| !w.closing) {
+            let Some(open) = self.open.get(&w.profile) else {
+                continue;
+            };
+            let going = w
+                .tabs
+                .iter()
+                .filter(|item| left_alone(item, &shown, &open.keep_awake, now, wait))
+                .map(|item| (Spot::Window(w.id), item.id));
+            due.extend(going.take(w.tabs.len().saturating_sub(1)));
+        }
+        for (&profile, open) in &self.open {
+            for (&space, parked) in &open.parked {
+                let going = parked
+                    .tabs
+                    .iter()
+                    .filter(|item| left_alone(item, &shown, &open.keep_awake, now, wait))
+                    .map(|item| (Spot::Parked(profile, space), item.id));
+                due.extend(going);
+            }
+        }
+        let mut windows = Vec::new();
+        for (spot, tab) in due {
+            let Some((item, _)) = self.take_tab(spot, tab) else {
+                continue;
+            };
+            tracing::info!(%tab, "tab left alone closes");
+            if let Spot::Window(id) = spot
+                && !windows.contains(&id)
+            {
+                windows.push(id);
+            }
+            if let Some(page) = item.value.cef {
+                self.later(move |_| page.close());
+            }
+        }
+        for window in windows {
+            self.refresh_window(window, cx);
         }
     }
 

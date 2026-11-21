@@ -148,7 +148,8 @@ impl WindowFrame {
         } else {
             0.
         };
-        let plan = plan(&self.tabs);
+        let adjusted = self.chosen_tabs();
+        let plan = plan(adjusted.as_deref().unwrap_or(&self.tabs));
         let numbers = self.layout.tab_numbers && self.command_held;
         let tile = ICON_TILE as f32;
         let mut inner = div().relative().w_full().flex_none().h(px(plan.total));
@@ -259,10 +260,10 @@ impl WindowFrame {
             .tooltip(move |_, cx| cx.new(|_| Tip(tip.clone())).into())
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, _| {
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                     this.tab_list.press((!active).then_some(id));
                     if !active {
-                        this.select(id);
+                        this.press_select(id, cx);
                     }
                 }),
             )

@@ -17,6 +17,8 @@ pub(super) struct PrepaintState {
     line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
+    /// The text's own origin: the field's, moved left by the scroll.
+    origin: Bounds<Pixels>,
 }
 
 impl Element for TextElement {
@@ -59,6 +61,8 @@ impl Element for TextElement {
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
         let style = window.text_style();
+        let old_scroll = input.scroll;
+        let selecting = input.is_selecting;
 
         let omnibox = input.omnibox;
         let (display_text, text_color) = if content.is_empty() {
@@ -113,14 +117,37 @@ impl Element for TextElement {
             .text_system()
             .shape_line(display_text, font_size, &runs, None);
 
+        // Keep what is being edited in view (a selection shows its start,
+        // as Firefox's urlbar does), and never scroll past the text's end.
+        let width = bounds.size.width;
+        let focus_x = if selected_range.is_empty() || selecting {
+            line.x_for_index(cursor)
+        } else {
+            line.x_for_index(selected_range.start)
+        };
+        let slack = px(2.);
+        let mut scroll = old_scroll;
+        if line.width <= width {
+            scroll = px(0.);
+        } else {
+            if focus_x - scroll > width - slack {
+                scroll = focus_x - width + slack;
+            }
+            if focus_x < scroll {
+                scroll = focus_x;
+            }
+            scroll = scroll.max(px(0.)).min(line.width - width + slack);
+        }
+        // Everything below is placed on the text's own origin.
+        let origin = Bounds::new(point(bounds.left() - scroll, bounds.top()), bounds.size);
         let cursor_pos = line.x_for_index(cursor);
         let (selection, cursor) = if selected_range.is_empty() {
             (
                 None,
                 Some(fill(
                     Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
-                        size(px(2.), bounds.bottom() - bounds.top()),
+                        point(origin.left() + cursor_pos, origin.top()),
+                        size(px(2.), origin.bottom() - origin.top()),
                     ),
                     theme::c(t.accent),
                 )),
@@ -130,12 +157,12 @@ impl Element for TextElement {
                 Some(fill(
                     Bounds::from_corners(
                         point(
-                            bounds.left() + line.x_for_index(selected_range.start),
-                            bounds.top(),
+                            origin.left() + line.x_for_index(selected_range.start),
+                            origin.top(),
                         ),
                         point(
-                            bounds.left() + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
+                            origin.left() + line.x_for_index(selected_range.end),
+                            origin.bottom(),
                         ),
                     ),
                     if omnibox {
@@ -147,10 +174,12 @@ impl Element for TextElement {
                 None,
             )
         };
+        self.input.update(cx, |input, _| input.scroll = scroll);
         PrepaintState {
             line: Some(line),
             cursor,
             selection,
+            origin,
         }
     }
 
@@ -170,29 +199,35 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        if let Some(selection) = prepaint.selection.take() {
-            window.paint_quad(selection)
-        }
+        let origin = prepaint.origin;
+        let selection = prepaint.selection.take();
         let line = prepaint.line.take().unwrap();
-        line.paint(
-            bounds.origin,
-            window.line_height(),
-            gpui::TextAlign::Left,
-            None,
-            window,
-            cx,
-        )
-        .unwrap();
-
-        if focus_handle.is_focused(window)
-            && let Some(cursor) = prepaint.cursor.take()
-        {
-            window.paint_quad(cursor);
-        }
+        let cursor = prepaint
+            .cursor
+            .take()
+            .filter(|_| focus_handle.is_focused(window));
+        // Clipped to the field: long text scrolls under its edges.
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+            if let Some(selection) = selection {
+                window.paint_quad(selection);
+            }
+            line.paint(
+                origin.origin,
+                window.line_height(),
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            )
+            .unwrap();
+            if let Some(cursor) = cursor {
+                window.paint_quad(cursor);
+            }
+        });
 
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
-            input.last_bounds = Some(bounds);
+            input.last_bounds = Some(origin);
         });
     }
 }

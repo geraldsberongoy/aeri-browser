@@ -25,7 +25,7 @@ const RULE: f32 = 1.;
 /// Where the row for `page` starts, measured from the top of the blocks.
 fn row_top(page: Page) -> f32 {
     let mut y = 0.;
-    for block in Page::BLOCKS {
+    for block in Page::blocks() {
         if let Some(ix) = block.iter().position(|p| *p == page) {
             return y + BLOCK_PAD + ix as f32 * (ROW + GAP);
         }
@@ -95,7 +95,7 @@ impl SettingsWindow {
             });
 
         let mut blocks: Vec<AnyElement> = Vec::new();
-        for (b, block) in Page::BLOCKS.iter().enumerate() {
+        for (b, block) in Page::blocks().iter().enumerate() {
             if b > 0 {
                 blocks.push(
                     div()

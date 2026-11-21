@@ -34,9 +34,11 @@ fn section_of(shortcut: Shortcut) -> &'static str {
         | Shortcut::CommandPalette
         | Shortcut::Settings
         | Shortcut::Quit => "Aeri",
-        Shortcut::NewTab | Shortcut::NewWindow | Shortcut::CloseTab | Shortcut::ReopenClosedTab => {
-            "File"
-        }
+        Shortcut::NewTab
+        | Shortcut::NewWindow
+        | Shortcut::CloseTab
+        | Shortcut::ReopenClosedTab
+        | Shortcut::UndoCloseTab => "File",
         Shortcut::ToggleSidebar | Shortcut::ToggleFullScreen => "View",
         Shortcut::NextTab | Shortcut::PreviousTab | Shortcut::SelectTab(_) => "Tabs",
         Shortcut::PreviousSpace | Shortcut::NextSpace => "Spaces",

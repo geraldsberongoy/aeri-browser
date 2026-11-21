@@ -29,10 +29,14 @@ mod appearance;
 mod bar;
 mod chrome;
 mod favourites;
+mod general_prefs;
+mod internal;
 mod library;
 mod msg;
 mod palette;
 mod passwords;
+mod prefs;
+mod privacy;
 mod profiles;
 mod quit;
 mod resources;
@@ -88,8 +92,6 @@ use crate::mac;
 use crate::profile_manager::ProfileManager;
 use crate::space_editor::SpaceEditor;
 
-/// Neutral default search provider (stage 1, open question 1).
-const SEARCH_TEMPLATE: &str = "https://duckduckgo.com/?q={query}";
 const NEW_TAB_URL: &str = "about:blank";
 
 pub struct Config {
@@ -189,9 +191,14 @@ struct Shell {
     resting: Resting,
     /// Where the chrome sits (Phase 12).
     chrome: chrome::Chrome,
+    /// App-wide preferences (`prefs.rs`).
+    prefs: aeri_core::prefs::AppPrefs,
+    /// Where downloads go when no folder is chosen.
+    #[allow(dead_code, reason = "read by the preference effects")]
+    default_download_dir: PathBuf,
     /// Every command's keys (Phase 12).
     keymap: aeri_core::keymap::Keymap,
-    settings: Option<settings::Settings>,
+    settings: settings::Settings,
     tx: UnboundedSender<AppMsg>,
     quitting: bool,
     effects: RefCell<Vec<Effect>>,
@@ -214,7 +221,10 @@ pub fn reopen() {
 /// Starts CEF and the shell. Call inside GPUI's `run` callback.
 pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     std::fs::create_dir_all(&config.data_dir).context("creating the data directory")?;
-    let db = AppDb::open(&config.data_dir.join("app.db")).context("opening app.db")?;
+    let app_db = config.data_dir.join("app.db");
+    let existing_install = app_db.exists();
+    let db = AppDb::open(&app_db).context("opening app.db")?;
+    let prefs = prefs::load(&db, existing_install);
     // Chromium is not running yet, so deleted profiles can go now.
     remove_deleted_profiles(&db, &config.data_dir);
     // An explicit start address opens one window on it; otherwise each
@@ -245,7 +255,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         root_cache_path: root_cache_path.clone(),
         log_file: Some(config.data_dir.join("chromium.log")),
         remote_debugging_port: config.remote_debugging_port,
-        download_dir: config.download_dir.clone(),
+        download_dir: prefs::download_dir(&prefs, &config.download_dir),
     };
     let ready = tx.clone();
     let signals = tx.clone();
@@ -257,6 +267,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
             let _ = ready.unbounded_send(AppMsg::EngineReady);
         })
         .context("starting CEF")?;
+    aeri_cef::set_download_ask(prefs.general.downloads_ask);
 
     let keymap = settings::load_keymap(&db);
     settings::install_keymap(&keymap, cx);
@@ -310,8 +321,10 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         library: None,
         resting,
         chrome,
+        prefs,
+        default_download_dir: config.download_dir,
         keymap,
-        settings: None,
+        settings: settings::Settings::default(),
         tx,
         quitting: false,
         effects: RefCell::default(),
@@ -321,15 +334,10 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     cx.spawn(async move |cx| {
         while let Some(msg) = rx.next().await {
             let done = cx.update(|cx| shell.handle(msg, cx));
-            loop {
-                let effects = shell.effects.take();
-                if effects.is_empty() {
-                    break;
-                }
-                for effect in effects {
-                    effect(&mut shell);
-                }
-            }
+            shell.run_effects();
+            // Views of internal tabs follow the tabs the message left.
+            cx.update(|cx| shell.sync_internal_views(cx));
+            shell.run_effects();
             cx.update(|cx| shell.flush_sessions(cx));
             if done {
                 tracing::info!("all windows closed; shutting CEF down");
@@ -389,9 +397,23 @@ impl Shell {
         self.effects.borrow_mut().push(Box::new(effect));
     }
 
+    /// Runs the queued effects, and those they queue, outside the `App`
+    /// borrow.
+    fn run_effects(&mut self) {
+        loop {
+            let effects = self.effects.take();
+            if effects.is_empty() {
+                break;
+            }
+            for effect in effects {
+                effect(self);
+            }
+        }
+    }
+
     /// Returns true once quitting and every window has closed.
     fn handle(&mut self, msg: AppMsg, cx: &mut App) -> bool {
-        let changes_settings = self.settings.is_some()
+        let changes_settings = self.windows.iter().any(|w| w.settings.is_some())
             && matches!(
                 msg,
                 AppMsg::BarPick { .. }
@@ -432,7 +454,7 @@ impl Shell {
             AppMsg::BarQuery { window, text } => self.bar_query(window, text, cx),
             AppMsg::BarPick { window, pick } => self.bar_pick(window, pick, cx),
             AppMsg::Library(msg) => self.library_msg(msg, cx),
-            AppMsg::AddressDismissed { window } => self.hide_bar(window, cx),
+            AppMsg::AddressDismissed { window, session } => self.dismiss_bar(window, session, cx),
             AppMsg::Shortcut { window, shortcut } => self.shortcut(window, shortcut, cx),
             AppMsg::Tab {
                 window,
@@ -542,13 +564,17 @@ impl Shell {
                 target,
                 recipe,
             } => self.set_target_theme(window, target, recipe, cx),
-            AppMsg::Settings(msg) => self.settings_msg(msg, cx),
+            AppMsg::Settings { window, msg } => self.settings_msg(window, msg, cx),
             AppMsg::OpenSettings => {
                 if let Some(id) = self.windows.last().map(|w| w.id) {
                     self.show_settings(id, cx);
                 }
             }
-            AppMsg::Quit => self.quit(cx),
+            AppMsg::Quit => self.request_quit(cx),
+            AppMsg::QuitNow => self.quit(cx),
+            AppMsg::SetDownloadsDir(dir) => {
+                self.change_prefs(|p| p.general.downloads_dir = Some(dir), cx);
+            }
         }
         // Settings shows what the palette, the theme editor and the system
         // can also change.

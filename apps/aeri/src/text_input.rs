@@ -92,6 +92,8 @@ pub struct TextInput {
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    /// How far the text is scrolled left to keep the caret in the field.
+    scroll: Pixels,
     is_selecting: bool,
     /// Search's omnibox inks: placeholder and selection are the text colour
     /// at low alpha instead of the tertiary text and accent.
@@ -111,6 +113,7 @@ impl TextInput {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
+            scroll: Pixels::default(),
             is_selecting: false,
             omnibox: false,
         }

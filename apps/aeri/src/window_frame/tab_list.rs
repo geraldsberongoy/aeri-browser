@@ -139,8 +139,10 @@ impl WindowFrame {
         } else {
             0.
         };
-        let favourites: Vec<&SidebarTab> = self.tabs.iter().filter(|t| t.favourite).collect();
-        let others: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
+        let adjusted = self.chosen_tabs();
+        let tabs: &[SidebarTab] = adjusted.as_deref().unwrap_or(&self.tabs);
+        let favourites: Vec<&SidebarTab> = tabs.iter().filter(|t| t.favourite).collect();
+        let others: Vec<&SidebarTab> = tabs.iter().filter(|t| !t.favourite).collect();
         let pinned = others.iter().filter(|t| t.pinned).count();
         let plan = plan(&favourites, &others, pinned, room, self.layout.roomy);
         let numbers = self.layout.tab_numbers && self.command_held;
@@ -281,9 +283,9 @@ impl WindowFrame {
             .tooltip(move |_, cx| cx.new(|_| Tip(label.clone())).into())
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, _| {
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                     if !active {
-                        this.select(id);
+                        this.press_select(id, cx);
                     }
                 }),
             );
@@ -389,6 +391,49 @@ impl WindowFrame {
                 spring(pace.settle, y, pace.still),
                 |d, v| d.top(px(v)),
             )
+    }
+
+    /// The tabs with a press's choice drawn as the shown one, while the
+    /// shell has not answered it; none when there is nothing to adjust.
+    pub(super) fn chosen_tabs(&self) -> Option<Vec<SidebarTab>> {
+        let shell = self.tabs.iter().find(|t| t.active).map(|t| t.id);
+        let id = self.tab_list.chosen(shell)?;
+        self.tabs.iter().any(|t| t.id == id).then(|| {
+            self.tabs
+                .iter()
+                .cloned()
+                .map(|mut t| {
+                    t.active = t.id == id;
+                    t
+                })
+                .collect()
+        })
+    }
+
+    /// A press on a tab: it is drawn as the shown one at once, and the
+    /// shell is asked to show it. The shell's state replaces the guess when
+    /// it arrives; a refusal is undone when the patience of the guess runs
+    /// out.
+    pub(super) fn press_select(&self, tab: TabId, cx: &mut Context<Self>) {
+        let base = self.tabs.iter().find(|t| t.active).map(|t| t.id);
+        self.tab_list.choose(tab, base);
+        self.select(tab);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(plan::CHOICE_PATIENCE + Duration::from_millis(20))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                // Only a guess still standing needs a redraw.
+                let shell = this.tabs.iter().find(|t| t.active).map(|t| t.id);
+                if this.tab_list.inner.borrow().chosen.is_some()
+                    && this.tab_list.chosen(shell).is_none()
+                {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Selects a tab.

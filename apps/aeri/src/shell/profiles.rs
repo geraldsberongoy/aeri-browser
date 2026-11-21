@@ -139,6 +139,7 @@ impl Shell {
         });
         open.extensions = open.context.extensions();
         apply_password_provider(profile, open);
+        self.apply_profile_privacy(profile);
         self.load_workspace(profile);
         let Some(open) = self.open.get_mut(&profile) else {
             return;
@@ -169,8 +170,11 @@ impl Shell {
     }
 
     /// Opens uBlock Origin Lite's store page in a new tab, once per profile,
-    /// if it is not installed yet.
-    fn offer_blocker(&mut self, profile: ProfileId, cx: &mut App) {
+    /// if it is not installed yet and ad blocking is on.
+    pub(super) fn offer_blocker(&mut self, profile: ProfileId, cx: &mut App) {
+        if !self.prefs.privacy.block_ads {
+            return;
+        }
         let installed = self
             .open
             .get(&profile)
