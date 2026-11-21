@@ -559,6 +559,7 @@ impl Render for AddressBar {
 
         div()
             .size_full()
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .relative()
             .on_action(cx.listener(|this, _: &FocusAddressBar, window, cx| {
                 let place = this.place;

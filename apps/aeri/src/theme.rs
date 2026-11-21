@@ -17,6 +17,11 @@ use gpui::{
     div, linear_color_stop, linear_gradient, point, px, size,
 };
 
+/// AppKit's line height for the system font, as a share of its size (SF
+/// Pro 13 pt: ascender 12.38 + descender 3.13 = 15.5): GPUI's own default
+/// (1.618) sets text a third taller than Search's.
+pub const LINE_HEIGHT: f32 = 1.19;
+
 pub struct Theme {
     pub app: AppAppearance,
     pub recipe: Recipe,

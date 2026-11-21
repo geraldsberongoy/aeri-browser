@@ -51,6 +51,7 @@ pub(crate) fn changed(
     urls: Vec<String>,
 ) {
     let turn = next_turn(tab);
+    tracing::debug!(%tab, count = urls.len(), first = urls.first().map(String::as_str), "favicon urls");
     if urls.is_empty() {
         sink(Signal::Engine(Event::FaviconChanged {
             tab,
@@ -101,7 +102,9 @@ wrap_download_image_callback! {
             if !is_current(self.tab, self.turn) {
                 return;
             }
+            let present = image.is_some();
             let favicon = image.and_then(bitmap);
+            tracing::debug!(tab = %self.tab, status = _http_status_code, present, decoded = favicon.is_some(), "favicon downloaded");
             if favicon.is_none() && !self.fallbacks.is_empty() {
                 fetch(
                     self.host.clone(),

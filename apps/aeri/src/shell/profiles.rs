@@ -107,6 +107,12 @@ impl Shell {
                         downloads: Vec::new(),
                         keep_awake,
                         theme,
+                        icons: super::site_icons::SiteIcons::new(
+                            self.data_dir
+                                .join("Profiles")
+                                .join(profile.to_string())
+                                .join("icons"),
+                        ),
                     },
                 );
             }
@@ -148,15 +154,17 @@ impl Shell {
         self.offer_blocker(profile, cx);
     }
 
-    pub(super) fn extensions_changed(&mut self, profile: ProfileId) {
+    pub(super) fn extensions_changed(&mut self, profile: ProfileId, cx: &mut App) {
         let Some(open) = self.open.get_mut(&profile) else {
             return;
         };
         let extensions = open.context.extensions();
         if extensions != open.extensions {
-            // The foot's Extensions door lists them when it is pressed.
+            // The foot's Extensions door lists them when it is pressed, and
+            // shows only while there are some.
             tracing::info!(%profile, count = extensions.len(), "extensions changed");
             open.extensions = extensions;
+            self.refresh_profile_windows(profile, cx);
         }
     }
 
@@ -344,6 +352,9 @@ impl Shell {
                     frame.set_profile(profile, cx);
                 });
             }
+        }
+        for w in &self.windows {
+            self.refresh_window(w.id, cx);
         }
         self.refresh_manager(cx);
     }

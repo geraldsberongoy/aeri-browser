@@ -29,7 +29,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSTimer};
 
-use super::frame::{Frame, pinned_side_width};
+use super::frame::Frame;
 use crate::window_frame::strip_height;
 use aeri_core::appearance::Motion;
 use aeri_core::layout::{Layout, Side, TabPlace};
@@ -220,12 +220,7 @@ impl Frame {
         let strip_h = strip_height(&layout);
         let side_top = if layout.top_pinned { strip_h } else { 0.0 };
         let top_slides = slides(&layout, Edge::Top);
-        let reach = layout.sidebar_width_in(rect.size.width);
-        // A pinned rail is its own lane: resting on it opens the sidebar.
-        let side_lane = match pinned_side_width(&layout, rect.size.width) {
-            0.0 => EDGE,
-            rail => rail,
-        };
+        let reach = layout.column_width(rect.size.width);
         for edge in EDGES {
             if !slides(&layout, edge) {
                 continue;
@@ -239,7 +234,7 @@ impl Frame {
                 Edge::Top => (in_window && y <= TOP_EDGE, in_window && y <= strip_h),
                 Edge::Side => {
                     let below = tall && y >= side_top && !(top_slides && y <= TOP_EDGE);
-                    (below && at_edge(side_lane), below && at_edge(reach))
+                    (below && at_edge(EDGE), below && at_edge(reach))
                 }
             };
             let i = edge as usize;
@@ -388,13 +383,12 @@ impl Frame {
 }
 
 /// Whether the chrome at `edge` slides in under this layout: it is not
-/// pinned, or it is a rail that opens into the sidebar. As in Search, a
-/// strip only exists for tabs along the top: with tabs in the sidebar, the
-/// sidebar's band carries the lights and history, and nothing comes down
-/// from the top edge.
+/// pinned. As in Search, a strip only exists for tabs along the top: with
+/// tabs in the sidebar, the sidebar's band carries the lights and history,
+/// and nothing comes down from the top edge.
 fn slides(layout: &Layout, edge: Edge) -> bool {
     match edge {
-        Edge::Side => !layout.sidebar_pinned || (layout.rail && layout.rail_expands),
+        Edge::Side => !layout.sidebar_pinned,
         Edge::Top => !layout.top_pinned && layout.tabs == TabPlace::Top,
     }
 }

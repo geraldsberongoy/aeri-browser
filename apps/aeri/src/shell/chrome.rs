@@ -41,11 +41,10 @@ pub enum LayoutChoice {
     Favourites(FavouriteStyle),
     Bar(BarPlace),
     WindowButtons,
-    RailExpands,
 }
 
 impl LayoutChoice {
-    const ALL: [LayoutChoice; 13] = [
+    const ALL: [LayoutChoice; 12] = [
         Self::Preset(Preset::PageFirst),
         Self::Preset(Preset::Sidebar),
         Self::Preset(Preset::SidebarAndTop),
@@ -58,7 +57,6 @@ impl LayoutChoice {
         Self::Bar(BarPlace::Centre),
         Self::Bar(BarPlace::Upper),
         Self::WindowButtons,
-        Self::RailExpands,
     ];
 
     fn title(self) -> String {
@@ -71,7 +69,6 @@ impl LayoutChoice {
             Self::Bar(BarPlace::Centre) => "Address Bar in the Centre".to_owned(),
             Self::Bar(BarPlace::Upper) => "Address Bar Near the Top".to_owned(),
             Self::WindowButtons => "Show Window Buttons".to_owned(),
-            Self::RailExpands => "Open Collapsed Sidebar on Hover".to_owned(),
         }
     }
 
@@ -83,7 +80,6 @@ impl LayoutChoice {
             Self::Favourites(style) => layout.favourites == style,
             Self::Bar(place) => layout.bar == place,
             Self::WindowButtons => layout.window_buttons,
-            Self::RailExpands => layout.rail_expands,
         }
     }
 
@@ -94,7 +90,6 @@ impl LayoutChoice {
             Self::Favourites(style) => layout.favourites = style,
             Self::Bar(place) => layout.bar = place,
             Self::WindowButtons => layout.window_buttons = !layout.window_buttons,
-            Self::RailExpands => layout.rail_expands = !layout.rail_expands,
         }
     }
 }
@@ -197,7 +192,8 @@ impl Shell {
     pub(super) fn toggle_sidebar(&mut self, window_id: u64, cx: &mut App) {
         let layout = self.chrome.layout;
         // "⌘S makes the column icons only": the sidebar stays and its
-        // width folds to the rail and back (Search `Preferences.shrinks`).
+        // width folds to the column of icons and back (Search
+        // `Preferences.shrinks`, `Fold.swift`).
         if layout.fold_icons && layout.sidebar_pinned && layout.tabs == TabPlace::Side {
             self.change_layout(|layout| layout.rail = !layout.rail, cx);
             return;
@@ -206,7 +202,7 @@ impl Shell {
             return;
         };
         let frame = w.frame.clone();
-        if !(layout.sidebar_pinned && !layout.rail) {
+        if !layout.sidebar_pinned {
             self.later(move |_| {
                 frame.call(Edge::Side);
             });
@@ -233,10 +229,7 @@ impl Shell {
                 tracing::info!(?edge, pinned, "chrome pinned");
                 self.change_layout(
                     |layout| match edge {
-                        Edge::Side => {
-                            layout.sidebar_pinned = pinned;
-                            layout.rail = false;
-                        }
+                        Edge::Side => layout.sidebar_pinned = pinned,
                         Edge::Top => layout.top_pinned = pinned,
                     },
                     cx,

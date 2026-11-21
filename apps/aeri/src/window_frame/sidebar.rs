@@ -1,19 +1,16 @@
 //! The sidebar of a window frame, after Search's column (`Side.swift`): a
 //! 52 pt band with the window's lights and the history doors, the tabs
 //! (`tab_list`), and a foot of 26 pt doors. Pinned, its inner edge drags to
-//! resize. And the icon rail it collapses to.
+//! resize. As icons only it is `icons`.
 
-use aeri_core::appearance::Rgba;
-use aeri_core::keymap::Shortcut;
 use aeri_core::layout::Side;
 use gpui::{
-    AnimationExt, ClickEvent, Context, CursorStyle, ElementId, FontWeight, MouseButton,
-    MouseDownEvent, SharedString, div, prelude::*, px,
+    AnimationExt, ClickEvent, Context, CursorStyle, ElementId, MouseButton, MouseDownEvent, div,
+    prelude::*, px,
 };
 
-use super::doors::{DOOR, body, door, symbol_door};
-use super::tab_items::Metrics;
-use super::{COLUMN_PAD, Host, RAIL_WIDTH, STRIP_HEIGHT, SidebarTab, WindowFrame, avatar, drag};
+use super::doors::{DOOR, symbol_door};
+use super::{COLUMN_PAD, Host, STRIP_HEIGHT, WindowFrame, drag};
 use crate::motion;
 use crate::native_menu::Align;
 use crate::shell::AppMsg;
@@ -40,9 +37,17 @@ impl WindowFrame {
     /// row; with one, the strip holds the lights and the column starts
     /// below it. The band's empty parts drag the window. Pinned, the
     /// column's inner edge drags to resize and a double-click on it resets.
-    pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if self.layout.icon_column() {
+            self.icon_column(host, cx).into_any_element()
+        } else {
+            self.full_sidebar(host, cx).into_any_element()
+        }
+    }
+
+    fn full_sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
-        let width = self.sidebar_width();
+        let width = self.column_width();
         // Search: `lights = fullScreen ? 0 : max(0, min(80, width - 20 - 86))`.
         let room = if self.lights_hidden() {
             0.
@@ -92,12 +97,12 @@ impl WindowFrame {
 
     /// The page runs edge to edge beside this column of the frame: no card
     /// (so no gap, and the column is not on the frame's wash).
-    fn flat(&self, host: Host) -> bool {
+    pub(super) fn flat(&self, host: Host) -> bool {
         host == Host::Frame && !self.cards_now()
     }
 
     /// The 1 pt hairline on the column's inner edge.
-    fn inner_hairline(&self, t: &aeri_core::appearance::Tokens) -> gpui::Div {
+    pub(super) fn inner_hairline(&self, t: &aeri_core::appearance::Tokens) -> gpui::Div {
         let line = div()
             .absolute()
             .top_0()
@@ -111,10 +116,12 @@ impl WindowFrame {
         }
     }
 
-    /// The foot: 26 pt doors 2 pt apart, 10 pt from the left and the
-    /// bottom. The profile, the shown space, the extensions, and the
-    /// downloads and blocked popups while there are any. Each opens a menu
-    /// that hangs above it.
+    /// The foot (Search `SideFoot`, `Side.swift:1419`): 26 pt doors 2 pt
+    /// apart, 10 pt from the left and the bottom. In Search's order: the
+    /// profile (with several profiles), the shown space (with several
+    /// spaces), the extensions (when some are installed), bookmarks, and
+    /// downloads while there are some; then Aeri's blocked popups. Each
+    /// menu hangs above its door.
     fn foot(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let t = theme::tokens_in(window, cx);
@@ -122,7 +129,7 @@ impl WindowFrame {
         // below a pinned strip an overlay starts lower.
         let right = self.layout.side == Side::Right;
         let origin = if right {
-            self.window_width - self.sidebar_width()
+            self.window_width - self.column_width()
         } else {
             0.
         };
@@ -132,9 +139,15 @@ impl WindowFrame {
             0.
         };
         // A menu hangs above its door: its bottom edge on the door's top.
-        let hang = move |nth: usize, win: &gpui::Window| {
-            let x = origin + COLUMN_PAD + nth as f32 * (DOOR + 2.);
-            (x, f32::from(win.viewport_size().height) - FOOT + dy)
+        let hang = move |nth: usize| {
+            move |_: &ClickEvent, win: &gpui::Window| {
+                let x = origin + COLUMN_PAD + nth as f32 * (DOOR + 2.);
+                (
+                    x,
+                    f32::from(win.viewport_size().height) - FOOT + dy,
+                    Align::Above,
+                )
+            }
         };
         let mut foot = div()
             .flex()
@@ -143,94 +156,24 @@ impl WindowFrame {
             .gap(px(2.))
             .w_full()
             .px(px(COLUMN_PAD))
-            .pb(px(COLUMN_PAD))
-            .child(
-                door("profile", "Profile", t)
-                    .child(avatar(&self.profile, 18.))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
-                        let (x, y) = hang(0, win);
-                        this.send(AppMsg::ProfileMenu {
-                            window,
-                            x,
-                            y,
-                            align: Align::Above,
-                        });
-                    })),
-            );
-        let mut nth = 1;
-        if let Some(space) = self.spaces.iter().find(|s| s.current) {
-            // Search `SpaceDot`: the space's colour at 0.14, 0.24 under the
-            // pointer; an `sf:` icon is a symbol, 12 pt medium, in it.
-            let tint = Rgba::rgb(space.colour);
-            let mark: gpui::AnyElement = match crate::space_look::symbol_of(&space.icon) {
-                Some(name) => crate::symbol::symbol(name, 12., crate::symbol::Weight::Medium, tint)
-                    .into_any_element(),
-                None => SharedString::from(match space.icon.as_str() {
-                    "" => space
-                        .name
-                        .chars()
-                        .next()
-                        .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect::<String>()),
-                    icon => icon.to_owned(),
-                })
-                .into_any_element(),
-            };
-            let (at_rest, hovered) = (
-                theme::c(tint.with_alpha(0.14)),
-                theme::c(tint.with_alpha(0.24)),
-            );
-            let at = nth;
-            foot = foot.child(
-                body("space", "Space, open menu")
-                    .cursor_pointer()
-                    .bg(at_rest)
-                    .hover(move |style| style.bg(hovered))
-                    .text_size(px(12.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme::c(tint))
-                    .child(mark)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
-                        let (x, y) = hang(at, win);
-                        this.send(AppMsg::SpaceMenu {
-                            window,
-                            x,
-                            y,
-                            align: Align::Above,
-                        });
-                    })),
-            );
+            .pb(px(COLUMN_PAD));
+        let mut nth = 0;
+        if let Some(badge) = self.profile_badge(hang(nth), cx) {
+            foot = foot.child(badge);
             nth += 1;
         }
-        let at = nth;
-        foot = foot.child(
-            symbol_door("extensions", "Extensions", "puzzlepiece.extension", true, t).on_click(
-                cx.listener(move |this, _: &ClickEvent, win, _| {
-                    let (x, y) = hang(at, win);
-                    this.send(AppMsg::ExtensionsMenu {
-                        window,
-                        x,
-                        y,
-                        align: Align::Above,
-                    });
-                }),
-            ),
-        );
+        if let Some(dot) = self.space_dot(hang(nth), cx) {
+            foot = foot.child(dot);
+            nth += 1;
+        }
+        if let Some(puzzle) = self.extensions_door(hang(nth), cx) {
+            foot = foot.child(puzzle);
+            nth += 1;
+        }
+        foot = foot.child(self.bookmark_door(cx));
         nth += 1;
-        if self.downloads.is_some() {
-            let at = nth;
-            foot = foot.child(
-                symbol_door("downloads", "Downloads", "arrow.down.circle", true, t).on_click(
-                    cx.listener(move |this, _: &ClickEvent, win, _| {
-                        let (x, y) = hang(at, win);
-                        this.send(AppMsg::DownloadsMenu {
-                            window,
-                            x,
-                            y,
-                            align: Align::Above,
-                        });
-                    }),
-                ),
-            );
+        if let Some(fetch) = self.downloads_door(hang(nth), cx) {
+            foot = foot.child(fetch);
             nth += 1;
         }
         if self.popup_blocked {
@@ -243,13 +186,13 @@ impl WindowFrame {
                     true,
                     t,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
-                    let (x, y) = hang(at, win);
+                .on_click(cx.listener(move |this, event: &ClickEvent, win, _| {
+                    let (x, y, align) = hang(at)(event, win);
                     this.send(AppMsg::PopupMenu {
                         window,
                         x,
                         y,
-                        align: Align::Above,
+                        align,
                     });
                 })),
             );
@@ -313,81 +256,11 @@ impl WindowFrame {
                     if event.click_count >= 2 {
                         this.reset_width(cx);
                     } else {
-                        this.resizing = Some((f32::from(event.position.x), this.sidebar_width()));
+                        this.resizing = Some((f32::from(event.position.x), this.column_width()));
                         cx.notify();
                     }
                 }),
             )
             .child(pill)
-    }
-
-    /// The collapsed sidebar: New Tab, the favourites and the space's tabs
-    /// as icons. Resting on it opens the full sidebar over the page.
-    pub(crate) fn rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let window = self.window_id;
-        let t = theme::tokens_in(self.window_id, cx);
-        let m = Metrics::of(self.window_id, cx);
-        let favourites: Vec<&SidebarTab> = self.tabs.iter().filter(|t| t.favourite).collect();
-        let tabs: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
-        let mut rail = div()
-            .id("rail")
-            .flex()
-            .flex_col()
-            .items_center()
-            .flex_none()
-            .h_full()
-            .min_h_0()
-            .w(px(RAIL_WIDTH as f32))
-            .gap(px(6.))
-            .pb(px(COLUMN_PAD))
-            .overflow_y_scroll()
-            .when(!self.layout.top_pinned, |rail| {
-                rail.child(
-                    self.lights(Host::Frame, RAIL_WIDTH as f32)
-                        .h(px(STRIP_HEIGHT as f32)),
-                )
-            })
-            .child(
-                div()
-                    .id("rail-new-tab")
-                    .role(gpui::Role::Button)
-                    .aria_label("New Tab")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .size(px(m.cell))
-                    .rounded(px(8.))
-                    .text_size(px(m.text + 4.))
-                    .text_color(theme::c(if self.layout.high_contrast {
-                        t.text
-                    } else {
-                        t.text_tertiary
-                    }))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                        this.send(AppMsg::Shortcut {
-                            window,
-                            shortcut: Shortcut::NewTab,
-                        });
-                    }))
-                    .child("+"),
-            );
-        for (index, tab) in favourites.iter().enumerate() {
-            rail = rail.child(self.tab_cell(index, tab, 0., cx));
-        }
-        if !favourites.is_empty() {
-            rail = rail.child(
-                div()
-                    .flex_none()
-                    .h(px(1.))
-                    .w(px(m.cell))
-                    .bg(theme::c(t.separator)),
-            );
-        }
-        for (index, tab) in tabs.iter().enumerate() {
-            rail = rail.child(self.tab_cell(index, tab, 0., cx));
-        }
-        rail
     }
 }

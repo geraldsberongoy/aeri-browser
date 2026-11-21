@@ -11,6 +11,12 @@ pub const DEFAULT_SIDEBAR: u16 = 232;
 pub const MAX_SIDEBAR: u16 = 440;
 /// The page keeps at least this much width beside the sidebar.
 pub const MIN_PAGE: f64 = 320.;
+/// The column as icons only: its fixed width, one tab's tile in it, and the
+/// band the three window buttons take stacked at its top (Search
+/// `Metrics.iconColumn`, `iconTile`, `iconLights`; `SideIcons.swift`).
+pub const ICON_COLUMN: f64 = 52.;
+pub const ICON_TILE: f64 = 32.;
+pub const ICON_LIGHTS: f64 = 80.;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -66,10 +72,9 @@ pub struct Layout {
     pub side: Side,
     /// The full sidebar's width, in points.
     pub sidebar_width: u16,
-    /// A pinned sidebar shows only icons.
+    /// The column shows only icons (Search `sidebar.icons`, `Prefs.swift`):
+    /// a tile per tab at a fixed width. Nothing opens under the pointer.
     pub rail: bool,
-    /// The rail opens into the full sidebar under the pointer.
-    pub rail_expands: bool,
     pub tabs: TabPlace,
     pub favourites: FavouriteStyle,
     pub bar: BarPlace,
@@ -121,7 +126,6 @@ impl Default for Layout {
             side: Side::Left,
             sidebar_width: DEFAULT_SIDEBAR,
             rail: false,
-            rail_expands: true,
             tabs: TabPlace::Side,
             favourites: FavouriteStyle::Grid,
             bar: BarPlace::Centre,
@@ -152,7 +156,7 @@ pub enum Preset {
     /// strip slides in.
     Sidebar,
     SidebarAndTop,
-    /// An icon rail that opens into the sidebar under the pointer.
+    /// The column as icons only, at a fixed width.
     Collapsed,
     /// Tabs across the top, as in a classic browser.
     TopTabs,
@@ -228,6 +232,22 @@ impl Layout {
             .min(window_width - MIN_PAGE)
             .max(f64::from(MIN_SIDEBAR))
     }
+
+    /// The column is showing as icons now: tabs down a side, and asked for
+    /// (Search `Preferences.iconColumn`).
+    pub fn icon_column(&self) -> bool {
+        self.rail && self.tabs == TabPlace::Side
+    }
+
+    /// The column's width as drawn: fixed with icons only, the chosen one
+    /// otherwise (Search `Preferences.columnWidth`).
+    pub fn column_width(&self, window_width: f64) -> f64 {
+        if self.icon_column() {
+            ICON_COLUMN
+        } else {
+            self.sidebar_width_in(window_width)
+        }
+    }
 }
 
 /// A width the Person dragged to, kept in range.
@@ -287,5 +307,22 @@ mod tests {
         assert_eq!(layout.sidebar_width_in(1280.), 360.);
         assert_eq!(layout.sidebar_width_in(600.), 280.);
         assert_eq!(layout.sidebar_width_in(400.), f64::from(MIN_SIDEBAR));
+    }
+
+    #[test]
+    fn the_column_of_icons_is_fixed_and_only_beside_side_tabs() {
+        let icons = Layout {
+            rail: true,
+            ..Layout::default()
+        };
+        assert!(icons.icon_column());
+        assert_eq!(icons.column_width(1280.), ICON_COLUMN);
+        assert_eq!(icons.column_width(300.), ICON_COLUMN);
+        let top = Layout {
+            tabs: TabPlace::Top,
+            ..icons
+        };
+        assert!(!top.icon_column());
+        assert_eq!(top.column_width(1280.), f64::from(DEFAULT_SIDEBAR));
     }
 }

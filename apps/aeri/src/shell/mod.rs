@@ -41,6 +41,7 @@ mod session;
 mod settings;
 pub mod settings_index;
 mod shortcuts;
+mod site_icons;
 mod space_settings;
 mod spaces;
 mod tab_look;
@@ -154,6 +155,8 @@ struct OpenProfile {
     keep_awake: HashSet<String>,
     /// The profile's own theme, over the app's.
     theme: Option<aeri_core::appearance::Recipe>,
+    /// Site icons kept on disk, by host.
+    icons: site_icons::SiteIcons,
 }
 
 struct Shell {
@@ -438,7 +441,7 @@ impl Shell {
             } => self.tab_command(window, tab, command, cx),
             AppMsg::TabMenu { window, tab, x, y } => self.tab_menu(window, tab, x, y),
             AppMsg::OpenInProfile { profile, url } => self.open_in_profile(profile, url, cx),
-            AppMsg::ExtensionsChanged { profile } => self.extensions_changed(profile),
+            AppMsg::ExtensionsChanged { profile } => self.extensions_changed(profile, cx),
             AppMsg::Nav { window, nav } => self.nav(window, nav),
             AppMsg::ExtensionAction { window, extension } => {
                 self.extension_action(window, extension, cx)

@@ -148,7 +148,6 @@ impl Frame {
         *self.frame.borrow_mut() = Some(frame.clone());
         *self.bar.borrow_mut() = Some(bar);
         *self.overlays.borrow_mut() = Some([side, strip]);
-        show_window_buttons(&frame, self.layout.get().window_buttons);
         self.observe(&frame);
         reveal::register(self);
         self.layout();
@@ -286,9 +285,6 @@ impl Frame {
             return;
         }
         self.hide_chrome();
-        if let Some(frame) = self.frame.borrow().as_ref() {
-            show_window_buttons(frame, layout.window_buttons);
-        }
         self.layout();
     }
 
@@ -325,7 +321,7 @@ impl Frame {
             // A pinned strip stays; the sliding sidebar comes in below it.
             let strip_h = strip_height(&layout);
             let below = if layout.top_pinned { strip_h } else { 0.0 };
-            let width = layout.sidebar_width_in(rect.size.width) + SIDE_OVERLAY_EXTRA;
+            let width = layout.column_width(rect.size.width) + SIDE_OVERLAY_EXTRA;
             let x = match layout.side {
                 Side::Left => rect.origin.x,
                 Side::Right => rect.origin.x + rect.size.width - width,
@@ -500,8 +496,9 @@ impl Frame {
     }
 }
 
-/// Shows or hides the frame's own close, minimise and zoom buttons.
-fn show_window_buttons(frame: &NSWindow, shown: bool) {
+/// Shows or hides the frame's own close, minimise and zoom buttons
+/// ([`Frame::place_lights`] decides).
+pub(super) fn show_window_buttons(frame: &NSWindow, shown: bool) {
     for kind in [
         NSWindowButton::CloseButton,
         NSWindowButton::MiniaturizeButton,
@@ -509,7 +506,27 @@ fn show_window_buttons(frame: &NSWindow, shown: bool) {
     ] {
         if let Some(button) = frame.standardWindowButton(kind) {
             button.setHidden(!shown);
+            button.setAlphaValue(1.0);
         }
+    }
+}
+
+/// Puts the frame's own buttons out of sight while the stacked group
+/// stands in for them ([`super::lights`]). The zoom button is only made
+/// transparent: AppKit hides every standalone zoom button of a window whose
+/// own one is hidden. It stays where GPUI keeps it, under the page.
+pub(super) fn stand_in_window_buttons(frame: &NSWindow) {
+    show_window_buttons(frame, true);
+    for kind in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+    ] {
+        if let Some(button) = frame.standardWindowButton(kind) {
+            button.setHidden(true);
+        }
+    }
+    if let Some(zoom) = frame.standardWindowButton(NSWindowButton::ZoomButton) {
+        zoom.setAlphaValue(0.0);
     }
 }
 

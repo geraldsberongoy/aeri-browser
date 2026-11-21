@@ -436,7 +436,12 @@ impl Shell {
             host: host_of(item.value.url()),
             url: item.value.url().to_owned(),
             icon: item.value.icon.clone(),
-            favicon: item.value.favicon.as_ref().map(|icon| icon.image.clone()),
+            favicon: item
+                .value
+                .favicon
+                .as_ref()
+                .map(|icon| icon.image.clone())
+                .or_else(|| open.icons.get(&host_of(item.value.url()))),
             pinned: item.pinned,
             favourite,
             active: Some(item.id) == shown,
@@ -462,21 +467,26 @@ impl Shell {
             .collect();
         let model = self.shown_model(w);
         let (popup_blocked, downloads) = self.strip_notices(window_id);
+        // Only web and file pages can be bookmarked.
+        let bookmarked = model.as_ref().and_then(|tab| {
+            records_history(&tab.url).then(|| {
+                open.db
+                    .as_ref()
+                    .is_some_and(|db| db.is_bookmarked(&tab.url).unwrap_or(false))
+            })
+        });
+        let several = self.profiles.len() > 1;
+        let extensions = !open.extensions.is_empty();
         let _ = w.frame_window.update(cx, |frame, _, cx| {
             frame.set_tabs(tabs, cx);
             frame.set_spaces(spaces, cx);
             frame.set_notices(popup_blocked, downloads, cx);
+            frame.set_doors(several, extensions, bookmarked == Some(true), cx);
             if let Some(tab) = &model {
                 frame.show_history(tab.can_go_back, tab.can_go_forward, cx);
             }
         });
         if let Some(tab) = model {
-            // Only web and file pages can be bookmarked.
-            let bookmarked = records_history(&tab.url).then(|| {
-                open.db
-                    .as_ref()
-                    .is_some_and(|db| db.is_bookmarked(&tab.url).unwrap_or(false))
-            });
             let _ = w
                 .bar
                 .update(cx, |bar, _, cx| bar.show_tab(&tab, bookmarked, cx));

@@ -432,6 +432,7 @@ impl Render for Library {
             .pb(px(12.))
             .bg(theme::c(t.panel))
             .text_color(theme::c(t.text))
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .child(
                 div()
                     .text_size(px(12.))

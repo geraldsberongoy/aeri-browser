@@ -350,6 +350,7 @@ impl Shell {
         let mut changed = false;
         // An icon replaced or cleared leaves GPUI's sprite atlas too.
         let mut dropped = None;
+        let mut kept = None;
         match &event {
             Event::AddressChanged { url, .. } => {
                 changed |= item.value.blocked_popup.take().is_some();
@@ -375,6 +376,11 @@ impl Shell {
                         favicon.as_ref().and_then(|icon| SiteIcon::new(host, icon)),
                     );
                     changed = true;
+                    kept = item
+                        .value
+                        .favicon
+                        .as_ref()
+                        .map(|icon| (icon.host.clone(), icon.image.clone()));
                 }
             }
             _ => {}
@@ -396,6 +402,18 @@ impl Shell {
             }
         ) && model.load == LoadState::Loaded;
         let (url, title) = (model.url.clone(), model.title.clone());
+        // A fresh icon is kept for its site, on disk too.
+        if let (
+            Event::FaviconChanged {
+                favicon: Some(icon),
+                ..
+            },
+            Some(shown),
+        ) = (&event, kept)
+            && let Some(open) = self.open.get(&profile)
+        {
+            open.icons.put(&shown.0, shown.1, icon, cx);
+        }
         if !changed {
             return;
         }

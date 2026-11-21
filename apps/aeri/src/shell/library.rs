@@ -200,6 +200,12 @@ impl Shell {
                         Err(err) => tracing::warn!(%err, "could not clear history"),
                     }
                 }
+                // Search's Clear History drops the kept site icons too.
+                if since == 0
+                    && let Some(open) = self.open.get(&profile)
+                {
+                    open.icons.clear(cx);
+                }
             }
             LibraryMsg::Menu { item, x, y } => {
                 self.library_menu(item, x, y, cx);

@@ -556,6 +556,7 @@ impl Render for ThemeEditor {
             .flex_col()
             .bg(c(t.panel))
             .text_color(c(t.text))
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .child(
                 div()
                     .id("theme-editor-scroll")

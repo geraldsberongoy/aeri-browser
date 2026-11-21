@@ -28,7 +28,9 @@ mod row;
 
 pub(super) use self::plan::TabListState;
 use self::plan::{DIVIDER, Item, Kind, LEAVE, TILE, plan};
-use self::row::{ghost, number_badge, shortcut_number, title_size};
+pub(super) use self::row::site_line;
+use self::row::{ghost, title_size};
+pub(super) use self::row::{number_badge, shortcut_number};
 use super::tab_items::mark;
 use super::{Host, SidebarTab, WindowFrame};
 use crate::motion;
@@ -40,7 +42,7 @@ fn mix(space: i64, extra: u64) -> u64 {
     (space as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ extra
 }
 
-fn spring(config: SpringConfig, target: f32, still: bool) -> SpringAnimation<f32> {
+pub(super) fn spring(config: SpringConfig, target: f32, still: bool) -> SpringAnimation<f32> {
     let spring = SpringAnimation::new(config).to(target).with_epsilon(0.02);
     if still {
         spring.playback(SpringPlayback::Completed)
@@ -50,7 +52,7 @@ fn spring(config: SpringConfig, target: f32, still: bool) -> SpringAnimation<f32
 }
 
 /// A tab's title in a tooltip.
-struct Tip(SharedString);
+pub(super) struct Tip(pub(super) SharedString);
 
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -62,13 +64,35 @@ impl Render for Tip {
             .bg(theme::c(t.tooltip))
             .text_color(theme::c(t.text_on_tooltip))
             .text_size(px(12.))
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .child(self.0.clone())
     }
 }
 
+/// What a tile of the column of icons says in its tooltip (Search
+/// `IconTiles.tip`): the title, the address a row would have said at rest
+/// on the shown tab, and what the tab is doing.
+pub(super) fn icon_tip(tab: &SidebarTab, layout: &aeri_core::layout::Layout) -> SharedString {
+    let mut lines = vec![if tab.label.is_empty() {
+        "New Tab".to_owned()
+    } else {
+        tab.label.clone()
+    }];
+    if layout.address_on_tab
+        && tab.active
+        && let Some(rest) = at_rest::at_rest(&tab.url)
+    {
+        lines.push(format!("{}{}{}", rest.lead, rest.name, rest.tail));
+    }
+    if tab.audible && !tab.loading {
+        lines.push("Playing sound".to_owned());
+    }
+    SharedString::from(lines.join("\n"))
+}
+
 /// Search's `Ring`: a stroke of 1.4 over 78 % of a circle, turning once
 /// every 0.85 s.
-fn ring(size: f32, color: Rgba) -> impl IntoElement {
+pub(super) fn ring(size: f32, color: Rgba) -> impl IntoElement {
     let color = theme::c(color);
     div().flex_none().size(px(size)).with_animation(
         "ring",
@@ -108,7 +132,7 @@ impl WindowFrame {
         let t = theme::tokens_in(window, cx);
         let pace = motion::Pace::of(window, cx);
         let still = pace.still;
-        let room = (self.sidebar_width() - 20.).max(20.);
+        let room = (self.column_width() - 20.).max(20.);
         let space = self.spaces.iter().find(|s| s.current).map_or(0, |s| s.id.0);
         let dy = if host == Host::Overlay && self.layout.top_pinned {
             super::strip_height(&self.layout) as f32
@@ -368,7 +392,7 @@ impl WindowFrame {
     }
 
     /// Selects a tab.
-    fn select(&self, tab: TabId) {
+    pub(super) fn select(&self, tab: TabId) {
         self.send(AppMsg::Tab {
             window: self.window_id,
             tab,

@@ -37,6 +37,14 @@ fn is_main(frame: Option<&mut Frame>) -> bool {
     frame.is_some_and(|frame| frame.is_main() != 0)
 }
 
+/// The strings of a list CEF lends. `CefStringList::clone` copies it as a
+/// read-only borrow, which its iterator can't read (it yields nothing), so
+/// iterate a mutable borrow of CEF's own list instead.
+fn strings(list: &mut CefStringList) -> Vec<String> {
+    let raw: *mut cef::sys::_cef_string_list_t = list.into();
+    CefStringList::from(raw).into_iter().collect()
+}
+
 wrap_client! {
     struct TabClient {
         tab: TabId,
@@ -143,7 +151,7 @@ wrap_display_handler! {
                 .main_frame()
                 .map(|frame| CefString::from(&frame.url()).to_string())
                 .unwrap_or_default();
-            let urls = icon_urls.map(|list| list.clone().into_iter().collect()).unwrap_or_default();
+            let urls = icon_urls.map(strings).unwrap_or_default();
             favicon::changed(host, self.tab, self.sink.clone(), page_url, urls);
         }
 

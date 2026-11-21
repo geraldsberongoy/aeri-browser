@@ -1,10 +1,10 @@
-//! A tab as the chrome shows it outside the sidebar list: an icon tile (the
-//! rail) or a pill among the top tabs, after Search's `TabPill` and icon
-//! column (`TabBar.swift`, `SideIcons.swift`). They share what every form of
-//! a tab does: a menu on a right click, close on a middle click, drag to a
-//! new place. The sidebar's own rows and squares are in `tab_list`.
+//! A tab as the chrome shows it outside the sidebar list: a pill among the
+//! top tabs, after Search's `TabPill` (`TabBar.swift`). Every form of a tab
+//! shares what it does: a menu on a right click, close on a middle click,
+//! drag to a new place. The sidebar's own rows and squares are in
+//! `tab_list`, the column of icons' tiles in `icons`.
 
-use aeri_core::appearance::{Density, Tokens};
+use aeri_core::appearance::Tokens;
 use aeri_core::ids::TabId;
 use aeri_core::layout::{Glyph, Layout};
 use gpui::{
@@ -12,6 +12,7 @@ use gpui::{
     SharedString, Stateful, Window, div, img, prelude::*, px,
 };
 
+use super::tab_list::site_line;
 use super::{SidebarTab, WindowFrame};
 use crate::shell::{AppMsg, TabCommand};
 use crate::theme;
@@ -34,43 +35,11 @@ impl Render for DraggedTab {
             .bg(theme::c(t.raised))
             .text_size(px(12.5))
             .text_color(theme::c(t.text))
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .overflow_hidden()
             .text_ellipsis()
             .whitespace_nowrap()
             .child(self.label.clone())
-    }
-}
-
-/// Sizes the rail's New Tab tile follows the theme's density for
-/// (design §4.4).
-#[derive(Clone, Copy)]
-pub(super) struct Metrics {
-    pub text: f32,
-    pub cell: f32,
-}
-
-impl Metrics {
-    pub fn of(window: u64, cx: &gpui::App) -> Self {
-        let resolved = cx.global::<theme::Theme>().resolved_in(window);
-        let large = resolved.ui_size == aeri_core::appearance::UiSize::Large;
-        let mut metrics = match resolved.density {
-            Density::Compact => Self {
-                text: 12.,
-                cell: 30.,
-            },
-            Density::Standard => Self {
-                text: 13.,
-                cell: 36.,
-            },
-            Density::Spacious => Self {
-                text: 13.,
-                cell: 42.,
-            },
-        };
-        if large {
-            metrics.text += 1.;
-        }
-        metrics
     }
 }
 
@@ -221,8 +190,8 @@ impl WindowFrame {
             }))
     }
 
-    /// Select on a click (the rail and the top tabs; the sidebar list
-    /// selects on the press).
+    /// Select on a click (the top tabs; the sidebar list selects on the
+    /// press).
     fn select_on_click(
         &self,
         base: Stateful<Div>,
@@ -240,58 +209,6 @@ impl WindowFrame {
         }))
     }
 
-    /// A square tile: the rail. Search's icon column (`SideIcons.swift`):
-    /// 32 points square, radius 9, the shown tab on the live pin ground.
-    pub(super) fn tab_cell(
-        &self,
-        index: usize,
-        tab: &SidebarTab,
-        dy: f32,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let t = theme::tokens_in(self.window_id, cx);
-        let base = self.tab_base("cell", index, tab, dy, cx);
-        self.select_on_click(base, tab, cx)
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(32.))
-            .rounded(px(9.))
-            .text_size(px(12.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(theme::c(if tab.active || self.layout.high_contrast {
-                t.text
-            } else {
-                t.quiet
-            }))
-            .bg(theme::c(if tab.active { t.pin_live } else { t.tile }))
-            .when(!tab.active, |cell| {
-                cell.hover(move |style| {
-                    style
-                        .bg(theme::c(t.hover))
-                        .text_color(theme::ca(t.text, 0.7))
-                })
-            })
-            .map(|cell| match shown_favicon(tab, &self.layout) {
-                // Search's icon column: the mark at 16 (`SideIcons.swift`).
-                Some(_) => cell.child(mark(tab, 16., &t, &self.layout)),
-                None => cell.child(SharedString::from(letter(tab))),
-            })
-            .when(tab.audible || tab.loading, |cell| {
-                cell.child(
-                    div()
-                        .absolute()
-                        .top(px(3.))
-                        .right(px(3.))
-                        .size(px(5.))
-                        .rounded_full()
-                        .bg(theme::c(t.accent)),
-                )
-            })
-    }
-
     /// A tab among the top tabs (Search's `TabPill`): 28 tall, radius 9,
     /// padding 11 / 7, mark 15, title 12.5; a loose tab is 186 wide and
     /// shrinks with the strip to 36, showing only its mark under 80 (it
@@ -304,7 +221,7 @@ impl WindowFrame {
     ) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
         let kept = tab.pinned || tab.favourite;
-        let base = self.tab_base("pill", index, tab, 0., cx);
+        let base = self.tab_base("pill", index, tab, 0., cx).group("pill");
         let base = self
             .select_on_click(base, tab, cx)
             .flex()
@@ -343,14 +260,34 @@ impl WindowFrame {
                 .pr(px(7.))
                 .gap(px(6.))
                 .child(mark(tab, 15., &t, &self.layout).flex_none())
+                .child(self.pill_title(tab, &t))
+        }
+    }
+
+    /// The pill's title, or on the shown tab with "Show the address on the
+    /// tab you're on" its site in the same place; the title returns under
+    /// the pointer (Search `TitleAtRest`, `TabPill.titled`).
+    fn pill_title(&self, tab: &SidebarTab, t: &Tokens) -> gpui::Div {
+        let label = div()
+            .w_full()
+            .overflow_hidden()
+            .text_ellipsis()
+            .whitespace_nowrap()
+            .child(SharedString::from(tab.label.clone()));
+        let slot = div().relative().flex_1().min_w_0();
+        let site = (self.layout.address_on_tab && tab.active)
+            .then(|| site_line(&tab.url, t))
+            .flatten();
+        match site {
+            Some(site) => slot
+                .child(label.opacity(0.).group_hover("pill", |s| s.opacity(1.)))
                 .child(
-                    div()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .whitespace_nowrap()
-                        .child(SharedString::from(tab.label.clone())),
-                )
+                    site.absolute()
+                        .top_0()
+                        .left_0()
+                        .group_hover("pill", |s| s.opacity(0.)),
+                ),
+            None => slot.child(label),
         }
     }
 }

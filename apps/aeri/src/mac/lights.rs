@@ -23,7 +23,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
-use super::frame::{Frame, pinned_side_width};
+use super::frame::{Frame, pinned_side_width, show_window_buttons, stand_in_window_buttons};
 use crate::window_frame::strip_height;
 use aeri_core::layout::Side;
 static ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
@@ -108,6 +108,9 @@ fn borrow_active_appearance(window: &NSWindow) {
 /// and from the window's top (AppKit's own, with the frame's
 /// `traffic_light_position` of 19 pt).
 const CENTRE: f64 = 26.0;
+/// The close button's centre from the window's top with the three stacked
+/// (Search `Lights.stackTop`).
+const STACK_TOP: f64 = 22.0;
 /// The buttons' pitch when the frame's own are not there to copy.
 const PITCH: f64 = 20.0;
 
@@ -194,9 +197,27 @@ impl Group {
     }
 }
 
+/// How a group lays its three buttons out.
+#[derive(Clone, Copy)]
+pub(super) enum Arrange {
+    /// Along a row, centred `centre_y` points from the window's top.
+    Row { centre_y: f64 },
+    /// One above the other, the close button's centre [`STACK_TOP`] from
+    /// the window's top (Search `Lights.stackTop`).
+    Stack,
+}
+
 /// One group of the three buttons, a subview of a window's content view.
 pub(super) struct Lights {
     group: Retained<Group>,
+    buttons: Vec<Retained<NSButton>>,
+    /// Each button's x along the row, from the close button's.
+    offsets: Vec<f64>,
+    /// The group's size along a row.
+    row: NSSize,
+    /// Distance between the buttons' origins down a stack: AppKit's own
+    /// spacing, as Search keeps it.
+    pitch: f64,
     /// Half the close button's width: its centre is [`CENTRE`] from the
     /// band's left.
     half: f64,
@@ -224,17 +245,24 @@ impl Lights {
             })
             .collect();
         let (mut width, mut height) = (0.0_f64, 0.0_f64);
+        let mut offsets = Vec::new();
         for (index, button) in buttons.iter().enumerate() {
             let size = button.frame().size;
             let x = match (real[0], real[index]) {
                 (Some(close), Some(own)) => own - close,
                 _ => PITCH * index as f64,
             };
-            button.setFrameOrigin(NSPoint::new(x, 0.0));
+            offsets.push(x);
             width = width.max(x + size.width);
             height = height.max(size.height);
         }
         let half = buttons[0].frame().size.width / 2.0;
+        // Search reads AppKit's spacing once and keeps it (`Lights.spacing`).
+        let pitch = if (16.0..=32.0).contains(&offsets[1]) {
+            offsets[1]
+        } else {
+            PITCH
+        };
         // The buttons act on the frame, as its own do.
         let target: &AnyObject = frame;
         let zoom = frame.standardWindowButton(NSWindowButton::ZoomButton);
@@ -258,7 +286,8 @@ impl Lights {
                 }
             }
         }
-        let group = Group::new(mtm, NSRect::new(NSPoint::ZERO, NSSize::new(width, height)));
+        let row = NSSize::new(width, height);
+        let group = Group::new(mtm, NSRect::new(NSPoint::ZERO, row));
         for (button, kind) in buttons.iter().zip(KINDS) {
             // Standalone buttons carry tag -1; the widget asks its window
             // about the kind in its tag, as the titlebar's own do.
@@ -267,18 +296,45 @@ impl Lights {
         }
         group.setHidden(true);
         content.addSubview(&group);
-        Some(Self { group, half })
+        Some(Self {
+            group,
+            buttons,
+            offsets,
+            row,
+            pitch,
+            half,
+        })
     }
 
     /// Puts the close button's centre [`CENTRE`] points from `band_left`
-    /// (from `host`'s left edge) and `centre_y` from the window's top (half
-    /// the band's height), and shows them.
-    pub(super) fn show_at(&self, host: &NSWindow, band_left: f64, centre_y: f64) {
+    /// (from `host`'s left edge), laid out as `arrange` says, and shows
+    /// them.
+    pub(super) fn show_at(&self, host: &NSWindow, band_left: f64, arrange: Arrange) {
         let Some(content) = host.contentView() else {
             return;
         };
-        let size = self.group.frame().size;
-        let top = centre_y - size.height / 2.0;
+        let button = self.buttons[0].frame().size;
+        let (size, top) = match arrange {
+            Arrange::Row { centre_y } => {
+                for (button, x) in self.buttons.iter().zip(&self.offsets) {
+                    button.setFrameOrigin(NSPoint::new(*x, 0.0));
+                }
+                (self.row, centre_y - self.row.height / 2.0)
+            }
+            Arrange::Stack => {
+                let height = button.height + self.pitch * (self.buttons.len() - 1) as f64;
+                for (index, button_view) in self.buttons.iter().enumerate() {
+                    // The group is not flipped: the close button is at the top.
+                    let y = height - button.height - self.pitch * index as f64;
+                    button_view.setFrameOrigin(NSPoint::new(0.0, y));
+                }
+                (
+                    NSSize::new(button.width, height),
+                    STACK_TOP - button.height / 2.0,
+                )
+            }
+        };
+        self.group.setFrameSize(size);
         let y = if content.isFlipped() {
             top
         } else {
@@ -323,8 +379,10 @@ impl Frame {
     /// Shows the groups where the page covers the frame's real buttons:
     /// in the side overlay's band and in the strip overlay (unless a pinned
     /// strip holds the real ones), and in the frame's band when a pinned
-    /// sidebar or rail is on the right. Hidden in full screen and with the
-    /// buttons turned off.
+    /// sidebar is on the right. With the column as icons only the three
+    /// are stacked down its band (Search `Lights`, `vertical`): the frame's
+    /// own are put away for the frame's group, which stacks them wherever
+    /// the column is. Hidden in full screen and with the buttons turned off.
     pub(super) fn place_lights(&self, frame: &NSWindow) {
         let lights = self.lights.borrow();
         let overlays = self.overlays.borrow();
@@ -336,24 +394,54 @@ impl Frame {
         let layout = self.layout_now(frame);
         let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
         let shown = layout.window_buttons && !fullscreen && !layout.top_pinned;
+        let stacked = layout.icon_column();
         let width = frame.frame().size.width;
+        let column = layout.column_width(width);
         if shown {
             // The sidebar's edge is the overlay's left, or on the right the
             // overlay's width less the column's (the rest is fold shadow).
             let left = match layout.side {
                 Side::Left => 0.0,
-                Side::Right => (side.frame().size.width - layout.sidebar_width_in(width)).max(0.0),
+                Side::Right => (side.frame().size.width - column).max(0.0),
             };
-            side_lights.show_at(side, left, CENTRE);
-            strip_lights.show_at(strip, 0.0, strip_height(&layout) / 2.0);
+            let arrange = if stacked {
+                Arrange::Stack
+            } else {
+                Arrange::Row { centre_y: CENTRE }
+            };
+            side_lights.show_at(side, left, arrange);
+            strip_lights.show_at(
+                strip,
+                0.0,
+                Arrange::Row {
+                    centre_y: strip_height(&layout) / 2.0,
+                },
+            );
         } else {
             side_lights.hide();
             strip_lights.hide();
         }
-        if shown && layout.side == Side::Right && layout.sidebar_pinned {
-            frame_lights.show_at(frame, width - pinned_side_width(&layout, width), CENTRE);
+        // The frame's group takes the place of the real buttons for a
+        // pinned column of icons, and stands in for them on the right.
+        let in_frame = shown && layout.sidebar_pinned && (stacked || layout.side == Side::Right);
+        if in_frame {
+            let left = match layout.side {
+                Side::Left => 0.0,
+                Side::Right => width - pinned_side_width(&layout, width),
+            };
+            let arrange = if stacked {
+                Arrange::Stack
+            } else {
+                Arrange::Row { centre_y: CENTRE }
+            };
+            frame_lights.show_at(frame, left, arrange);
         } else {
             frame_lights.hide();
+        }
+        if in_frame && stacked {
+            stand_in_window_buttons(frame);
+        } else {
+            show_window_buttons(frame, layout.window_buttons);
         }
     }
 
@@ -361,31 +449,6 @@ impl Frame {
     pub(super) fn redraw_lights(&self) {
         for lights in self.lights.borrow().iter().flatten() {
             lights.redraw();
-        }
-        // The frame's own titlebar buttons. The keyboard lives in a page or
-        // the address bar, child windows that can be neither main nor
-        // speak for the frame, so AppKit draws the frame inactive: grey
-        // buttons, as if Aeri were behind another app. While Aeri is in
-        // front and the keyboard is in the frame's family, the frame keeps
-        // a main window's look (private `_setForceMainAppearance:`).
-        if let Some(frame) = self.frame.borrow().as_ref() {
-            let app =
-                objc2_app_kit::NSApplication::sharedApplication(MainThreadMarker::from(&**frame));
-            let ours = app.keyWindow().is_some_and(|key| {
-                *key == **frame
-                    || key.parentWindow().as_deref() == Some(&**frame)
-                    || self.tabs.borrow().iter().any(|(_, tab)| **tab == *key)
-            });
-            let force = app.isActive() && ours;
-            // SAFETY: NSWindow's private setter, guarded by
-            // `respondsToSelector:`, sent on the main thread.
-            unsafe {
-                let can: Bool =
-                    msg_send![&**frame, respondsToSelector: sel!(_setForceMainAppearance:)];
-                if can.as_bool() {
-                    let _: () = msg_send![&**frame, _setForceMainAppearance: Bool::new(force)];
-                }
-            }
         }
     }
 

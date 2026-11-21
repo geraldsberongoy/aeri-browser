@@ -583,6 +583,7 @@ impl Render for Picker {
                 inset: false,
             }])
             .text_color(theme::c(t.text))
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .child(preview)
             .child(
                 div()

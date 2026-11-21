@@ -85,6 +85,19 @@ pub(in super::super) struct TabListState {
     pub(super) inner: RefCell<State>,
 }
 
+impl TabListState {
+    /// A press began on `tab` (none: on the shown tab, which only a click
+    /// that follows it counts).
+    pub(in super::super) fn press(&self, tab: Option<TabId>) {
+        self.inner.borrow_mut().pressed = tab;
+    }
+
+    /// The click that ends a press that already selected `tab`.
+    pub(in super::super) fn took_press(&self, tab: TabId) -> bool {
+        self.inner.borrow_mut().pressed.take() == Some(tab)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub(super) space: Option<i64>,

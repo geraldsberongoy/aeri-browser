@@ -42,6 +42,7 @@ impl Render for Tip {
             .bg(theme::c(t.tooltip))
             .text_color(theme::c(t.text_on_tooltip))
             .text_size(px(12.))
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .child(self.0.clone())
     }
 }

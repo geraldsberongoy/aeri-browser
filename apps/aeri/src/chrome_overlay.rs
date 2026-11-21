@@ -56,6 +56,7 @@ impl Render for ChromeOverlay {
                 };
                 div()
                     .size_full()
+                    .line_height(gpui::relative(theme::LINE_HEIGHT))
                     .flex()
                     .when(right, |row| row.flex_row_reverse())
                     .child(
@@ -81,6 +82,7 @@ impl Render for ChromeOverlay {
             }
             // A bar across the top, its lower edge marked.
             Edge::Top => theme::opaque_backdrop_in(div().size_full().flex(), window, cx)
+                .line_height(gpui::relative(theme::LINE_HEIGHT))
                 .border_b_1()
                 .border_color(theme::c(t.separator))
                 .child(part),

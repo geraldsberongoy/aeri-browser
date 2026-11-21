@@ -45,7 +45,7 @@ naming the Search file they come from.
 | Slice | State |
 | --- | --- |
 | 1 | done (`5e40c86`, `c96deb5`); motion not yet observed |
-| 2 | built; screenshots pending (the owner was using the Mac) |
+| 2 | done (`dd9f167`); parity pass against Search.app side by side (below) |
 | 3 | pending |
 | 4 | pending |
 
@@ -64,17 +64,24 @@ naming the Search file they come from.
 | The top strip no longer comes down from the top edge unless tabs run along the top | Implemented | `reveal::slides`; not driven live |
 | Shown tab says its site; live row, letter tiles and the native lights in the default layout | Observed | fresh profile, window capture: "chromewebstore.google.com" in the live row |
 | Search's wash maths (five colours, six presets, opacities per strength) | Tested | `wash` tests |
-| Settings rows, preferences on screen, site icons, space looks | Not observed | built and compiled; the Mac's screen went to another Space mid-run |
+| Settings rows, preferences on screen, space looks | Not observed | built and compiled |
+| Reference: Search.app run in its own test world (`SEARCH_PROBE=aeriref`, separate settings and stores), window captures of sidebar, icons only, top tabs, ⌘L field, Settings | Observed | captures beside Aeri's of the same states |
+| Icons-only column matches Search: 52 wide, the three window buttons stacked (centres 22/45/68), Back/Forward/Reload stacked, 32 tiles with the site's icon, live ground, plus after the tiles, bookmark door at the foot; nothing grows under the pointer | Observed | side-by-side capture of both columns |
+| Sidebar foot shows only the doors that apply (profile with several profiles, space with several spaces, puzzle with extensions, bookmarks) | Observed | fresh profile: bookmark door alone, as Search's |
+| Settings text at AppKit's line height (1.19), not GPUI's 1.618 | Observed | Settings rows now as dense as Search's (row "Hide the column…" ≈ 52 pt in both) |
+| Site icons arrive and are kept per host on disk; restored tabs wear them | Observed | log: github favicon downloaded 200; restored apple.com tabs show the Apple icon in the column |
 
 ## Residual risks
 
 - GPUI cannot scale a view: rows arrive by growing in height and fading,
   not by Search's 0.94 scale.
-- Window buttons drew grey in every window capture, even with Aeri in
-  front: after the keyboard moves to a page (a child window) the frame was
-  neither key nor main. `redraw_lights` now makes the frame main again and
-  asks its theme frame to update the buttons (`_updateButtonState`);
-  coloured buttons not yet seen.
+- Window buttons are grey in every capture because the Mac uses the
+  Graphite accent; Search's are grey too.
+- The stacked frame group needs the frame's own zoom button unhidden (only
+  transparent, under the page): AppKit hides a window's standalone zoom
+  buttons when its own is hidden.
+- Restored tabs whose sites were never seen since the icon cache arrived
+  keep their letter until they load.
 - Settings stays a window; Search shows it as a tab.
 - The site line uses a small built-in list of two-part suffixes, not the
   public suffix list.

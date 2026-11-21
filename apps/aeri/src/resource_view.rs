@@ -271,6 +271,7 @@ impl Render for ResourceView {
             .pb(px(12.))
             .bg(theme::c(t.panel))
             .text_color(theme::c(t.text))
+            .line_height(gpui::relative(theme::LINE_HEIGHT))
             .child(header)
             .child(
                 div()

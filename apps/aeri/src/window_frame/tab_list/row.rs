@@ -41,7 +41,7 @@ pub(super) fn idle_ink(t: &Tokens, layout: &Layout) -> Rgba {
 
 /// The number ⌘ shows on the tab at `index` of `count`: 1 to 8, and 9 for
 /// the last (what ⌘1 to ⌘9 select).
-pub(super) fn shortcut_number(index: usize, count: usize) -> Option<u8> {
+pub(in crate::window_frame) fn shortcut_number(index: usize, count: usize) -> Option<u8> {
     if index < 8 {
         Some(index as u8 + 1)
     } else if index + 1 == count {
@@ -53,7 +53,7 @@ pub(super) fn shortcut_number(index: usize, count: usize) -> Option<u8> {
 
 /// Search's `TabShortcutNumber`: 11 medium digits, ink at 0.65, in a 15 by
 /// 15 slot.
-pub(super) fn number_badge(number: u8, t: &Tokens) -> gpui::Div {
+pub(in crate::window_frame) fn number_badge(number: u8, t: &Tokens) -> gpui::Div {
     div()
         .flex()
         .flex_none()
@@ -115,6 +115,12 @@ fn address_line(rest: &AtRest, t: &Tokens) -> gpui::Div {
                 .child(SharedString::from(rest.tail.clone())),
         )
     }
+}
+
+/// The site the shown tab says at rest, for a tab with somewhere to say it
+/// (the top tabs' pill uses it as the sidebar's live row does).
+pub(in crate::window_frame) fn site_line(url: &str, t: &Tokens) -> Option<gpui::Div> {
+    at_rest(url).map(|rest| address_line(&rest, t))
 }
 
 impl WindowFrame {

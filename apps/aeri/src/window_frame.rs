@@ -8,6 +8,7 @@
 //! the page in its own windows (`chrome_overlay`), drawn by the same view.
 
 mod doors;
+mod icons;
 mod sidebar;
 mod strip;
 mod tab_items;
@@ -34,9 +35,6 @@ pub const STRIP_HEIGHT: f64 = 52.0;
 /// The strip with tabs along the top and "Shorter tab bar" on (Search
 /// `Metrics.strip` compact, `Design.swift`).
 const COMPACT_STRIP: f64 = 36.0;
-/// Width of the collapsed sidebar (icon rail), in points: room for the
-/// window buttons above it.
-pub const RAIL_WIDTH: f64 = 84.0;
 /// The close button's frame origin. Search centres it at (26, strip / 2)
 /// (`Lights.swift`); AppKit's button is about 14 x 14, so its origin is the
 /// centre less 7. The integrator checks this against a screenshot.
@@ -97,6 +95,13 @@ pub struct WindowFrame {
     popup_blocked: bool,
     /// The profile's downloads this session, as the strip labels them.
     downloads: Option<String>,
+    /// More than one profile exists (Search `Profiles.shared.several`): the
+    /// profile badge shows.
+    several_profiles: bool,
+    /// The profile has extensions installed (Search `ExtensionSlot`).
+    has_extensions: bool,
+    /// The shown page is bookmarked: the bookmark door is filled.
+    bookmarked: bool,
     /// The frame is in full screen, and its width (overlays draw from this
     /// view but can't ask their own window).
     fullscreen: bool,
@@ -148,6 +153,9 @@ impl WindowFrame {
             layout: Layout::default(),
             popup_blocked: false,
             downloads: None,
+            several_profiles: false,
+            has_extensions: false,
+            bookmarked: false,
             fullscreen: false,
             window_width: 1280.,
             resizing: None,
@@ -204,9 +212,9 @@ impl WindowFrame {
         self.layout.side == Side::Right
     }
 
-    /// The full sidebar's width in this window.
-    fn sidebar_width(&self) -> f32 {
-        self.layout.sidebar_width_in(f64::from(self.window_width)) as f32
+    /// The column's width in this window: fixed with icons only.
+    fn column_width(&self) -> f32 {
+        self.layout.column_width(f64::from(self.window_width)) as f32
     }
 
     /// The pointer moved while the sidebar's edge is held: follow it.
@@ -279,6 +287,23 @@ impl WindowFrame {
         }
     }
 
+    /// Which doors the profile has use for: the badge (several profiles),
+    /// the puzzle (extensions installed), and whether the shown page is
+    /// kept.
+    pub fn set_doors(
+        &mut self,
+        several_profiles: bool,
+        has_extensions: bool,
+        bookmarked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let now = (several_profiles, has_extensions, bookmarked);
+        if (self.several_profiles, self.has_extensions, self.bookmarked) != now {
+            (self.several_profiles, self.has_extensions, self.bookmarked) = now;
+            cx.notify();
+        }
+    }
+
     /// The browser window this frame belongs to.
     pub fn window_id(&self) -> u64 {
         self.window_id
@@ -331,25 +356,6 @@ impl WindowFrame {
         }
     }
 
-    /// The window's profile: its avatar as a door (the sidebar's foot has
-    /// the same). A click opens the profile menu under it.
-    fn profile_door(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let window = self.window_id;
-        let strip = strip_height(&self.layout) as f32;
-        let t = theme::tokens_in(self.window_id, cx);
-        doors::door("profile", "Profile", t)
-            .child(avatar(&self.profile, 18.))
-            .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
-                // The menu hangs from the door, right edges aligned.
-                let _ = this.tx.unbounded_send(AppMsg::ProfileMenu {
-                    window,
-                    x: f32::from(win.viewport_size().width) - PAGE_EDGE,
-                    y: strip - 6.,
-                    align: Align::Right,
-                });
-            }))
-    }
-
     fn send(&self, msg: AppMsg) {
         let _ = self.tx.unbounded_send(msg);
     }
@@ -389,13 +395,13 @@ pub fn cards_in(layout: &Layout, fullscreen: bool) -> bool {
     layout.tabs == TabPlace::Side && layout.cards && (!fullscreen || layout.cards_full_screen)
 }
 
-/// Width a pinned sidebar (or rail) keeps beside the page; 0 when the
-/// sidebar slides in.
+/// Width a pinned sidebar (or column of icons) keeps beside the page; 0
+/// when the sidebar slides in.
 pub fn pinned_side_width(layout: &Layout, window_width: f64) -> f64 {
-    match (layout.sidebar_pinned, layout.rail) {
-        (false, _) => 0.0,
-        (true, true) => RAIL_WIDTH,
-        (true, false) => layout.sidebar_width_in(window_width),
+    if layout.sidebar_pinned {
+        layout.column_width(window_width)
+    } else {
+        0.0
     }
 }
 
@@ -545,6 +551,7 @@ impl Render for WindowFrame {
             self.window_id,
             cx,
         )
+        .line_height(gpui::relative(theme::LINE_HEIGHT))
         .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
             this.resize_to(event, cx);
         }))
@@ -553,16 +560,12 @@ impl Render for WindowFrame {
             cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_resize(cx)),
         );
         // With nothing pinned the page covers the frame: draw nothing more.
-        let side = self.layout.sidebar_pinned.then(|| {
-            if self.layout.rail {
-                self.rail(cx).into_any_element()
-            } else {
-                self.sidebar(Host::Frame, cx).into_any_element()
-            }
-        });
+        let side = self
+            .layout
+            .sidebar_pinned
+            .then(|| self.sidebar(Host::Frame, cx));
         frame
             .children(self.card_edge(cx))
-            .children(self.flat_rail(cx))
             .when(self.layout.top_pinned, |frame| {
                 frame.child(self.strip(Host::Frame, cx))
             })
@@ -576,33 +579,5 @@ impl Render for WindowFrame {
                     })
                     .children(side),
             )
-    }
-}
-
-impl WindowFrame {
-    /// An icon rail with the page edge to edge beside it: its own strip of
-    /// the page's ground with a hairline on the inner edge (the full
-    /// sidebar does the same in `sidebar`), under the rail's tiles.
-    fn flat_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        if !(self.layout.sidebar_pinned && self.layout.rail) || self.cards_now() {
-            return None;
-        }
-        let t = theme::tokens_in(self.window_id, cx);
-        let top = if self.layout.top_pinned {
-            strip_height(&self.layout) as f32
-        } else {
-            0.
-        };
-        let ground = div()
-            .absolute()
-            .top(px(top))
-            .bottom_0()
-            .w(px(RAIL_WIDTH as f32))
-            .bg(theme::c(t.panel))
-            .border_color(theme::c(t.separator));
-        Some(match self.layout.side {
-            Side::Left => ground.left_0().border_r_1(),
-            Side::Right => ground.right_0().border_l_1(),
-        })
     }
 }
