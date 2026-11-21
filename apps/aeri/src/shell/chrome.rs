@@ -3,7 +3,7 @@
 //! the palette and Aeri's own window buttons. By default the sidebar is
 //! pinned beside the page, as in Search.
 
-use aeri_core::layout::{BarPlace, FavouriteStyle, Layout, Preset, Side};
+use aeri_core::layout::{BarPlace, FavouriteStyle, Layout, Preset, Side, TabPlace};
 use aeri_core::store::AppDb;
 use gpui::{
     App, AppContext, Bounds, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
@@ -139,6 +139,7 @@ impl Shell {
     /// Shows window `window_id`'s chrome as the layout says: the frame view
     /// draws what is pinned, the AppKit frame fits the page beside it.
     pub(super) fn apply_layout(&mut self, window_id: u64, cx: &mut App) {
+        crate::motion::set_prefs(&self.chrome.layout, cx);
         let Some(w) = self.window(window_id) else {
             return;
         };
@@ -160,14 +161,30 @@ impl Shell {
 
     /// Changes the layout for every window, keeps it, and shows it.
     pub(super) fn change_layout(&mut self, change: impl FnOnce(&mut Layout), cx: &mut App) {
+        let before = self.chrome.layout;
         change(&mut self.chrome.layout);
         if let Err(err) = self.db.set_setting(LAYOUT, &self.chrome.layout.to_json()) {
             tracing::warn!(%err, "could not save the layout");
         }
-        for w in &mut self.windows {
-            w.sidebar_hidden = false;
+        // A column put away with ⌘S comes back only when where it lives
+        // changes, not for a colour or motion preference.
+        let after = self.chrome.layout;
+        let placement = |l: Layout| (l.tabs, l.side, l.rail, l.sidebar_pinned, l.fold_icons);
+        if placement(before) != placement(after) {
+            for w in &mut self.windows {
+                w.sidebar_hidden = false;
+            }
         }
         self.apply_layout_everywhere(cx);
+    }
+
+    /// ⌘ went down or up: the frames show or hide the tab numbers.
+    pub(super) fn command_held(&mut self, held: bool, cx: &mut App) {
+        for w in &self.windows {
+            let _ = w
+                .frame_window
+                .update(cx, |frame, _, cx| frame.set_command_held(held, cx));
+        }
     }
 
     /// ⌘S: a pinned sidebar steps aside until the next ⌘S (the layout
@@ -179,6 +196,12 @@ impl Shell {
     /// and the page shrinks once. ⌘S while it slides out turns it round.
     pub(super) fn toggle_sidebar(&mut self, window_id: u64, cx: &mut App) {
         let layout = self.chrome.layout;
+        // "⌘S makes the column icons only": the sidebar stays and its
+        // width folds to the rail and back (Search `Preferences.shrinks`).
+        if layout.fold_icons && layout.sidebar_pinned && layout.tabs == TabPlace::Side {
+            self.change_layout(|layout| layout.rail = !layout.rail, cx);
+            return;
+        }
         let Some(w) = self.window_mut(window_id) else {
             return;
         };

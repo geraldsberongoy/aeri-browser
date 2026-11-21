@@ -264,6 +264,8 @@ pub struct Resolved {
     pub motion: Motion,
     /// The accent was moved from the chosen colour to stay readable.
     pub adjusted: bool,
+    /// A space's wash over the chrome; the tokens are not tinted for it.
+    pub wash: Option<super::wash::WashPaint>,
 }
 
 const TEXT: f32 = 4.5;
@@ -323,6 +325,7 @@ pub fn resolve(recipe: &Recipe, mode: Mode, accent: Option<Rgba>, a11y: Accessib
         headings: recipe.headings,
         motion,
         adjusted,
+        wash: recipe.wash.as_ref().map(|w| w.paint(mode == Mode::Dark)),
     }
 }
 

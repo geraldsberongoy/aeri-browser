@@ -1,25 +1,55 @@
-//! The Settings window: choices grouped by section on the left, the chosen
-//! section (or the keyboard shortcuts) on the right. Like the library it is a
-//! native GPUI window; the shell builds the model and applies every message.
+//! The Settings window (Search `Settings.swift`, as a window of its own):
+//! a rail of pages on the left, the chosen page down the middle, and a
+//! "Find a setting" field that filters the same index. Like the library it
+//! is a native GPUI window; the shell builds the model and applies every
+//! message. Every row and control comes from `shell::settings_index`.
 
-use aeri_core::appearance::Tokens;
-use aeri_core::keymap::{OnConflict, Shortcut};
+mod content;
+mod controls;
+mod extras;
+mod keys;
+mod pictures;
+mod rail;
+
+use std::collections::HashSet;
+use std::time::Duration;
+
+use aeri_core::keymap::Shortcut;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, FocusHandle, Focusable, KeyDownEvent, SharedString,
-    Stateful, Window, div, prelude::*, px,
+    App, Context, Entity, FocusHandle, Focusable, KeyDownEvent, Window, div, prelude::*, px,
 };
 
+use crate::motion;
+use crate::shell::settings_index::{Page, Pref, Value};
 use crate::shell::{AppMsg, SettingsModel, SettingsMsg};
+use crate::text_input::{InputEvent, TextInput};
 use crate::theme;
+
+/// How long a row stays lit after Find took the Person to it.
+const LIT_FOR: Duration = Duration::from_millis(1400);
 
 pub struct SettingsWindow {
     model: SettingsModel,
     tx: UnboundedSender<AppMsg>,
-    /// Index into `model.sections`; one past the last is the Keyboard pane.
-    selected: usize,
+    page: Page,
+    /// "Find a setting".
+    find: Entity<TextInput>,
+    query: String,
+    /// "Search commands or keys".
+    hunt: Entity<TextInput>,
+    hunt_query: String,
     /// The command whose keys the next key press records.
     recording: Option<Shortcut>,
+    /// The keys last recorded, to tell "press again" from a new choice.
+    last_keys: Option<(Shortcut, String)>,
+    /// What the key box says instead of "Type a shortcut".
+    key_hint: Option<&'static str>,
+    /// Rows whose (i) is open.
+    opened: HashSet<&'static str>,
+    /// The row Find took the Person to.
+    lit: Option<&'static str>,
+    lit_epoch: u64,
     focus: FocusHandle,
 }
 
@@ -35,53 +65,157 @@ impl SettingsWindow {
             let _ = closed.unbounded_send(AppMsg::Settings(SettingsMsg::Closed));
             true
         });
-        let mut this = Self {
+        let find = cx.new(|cx| TextInput::new("Find a setting", cx));
+        cx.subscribe(&find, |this, input, event: &InputEvent, cx| match event {
+            InputEvent::Edited(text) => {
+                this.query = text.clone();
+                cx.notify();
+            }
+            InputEvent::Cancelled => {
+                input.update(cx, |input, cx| input.set_text("", cx));
+                this.query.clear();
+                cx.notify();
+            }
+            _ => {}
+        })
+        .detach();
+        let hunt = cx.new(|cx| TextInput::new("Search commands or keys", cx));
+        cx.subscribe(&hunt, |this, input, event: &InputEvent, cx| match event {
+            InputEvent::Edited(text) => {
+                this.hunt_query = text.clone();
+                cx.notify();
+            }
+            InputEvent::Cancelled => {
+                input.update(cx, |input, cx| input.set_text("", cx));
+                this.hunt_query.clear();
+                cx.notify();
+            }
+            _ => {}
+        })
+        .detach();
+        let page = Page::from_key(&model.page).unwrap_or(Page::Appearance);
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        Self {
             model,
             tx,
-            selected: 0,
+            page,
+            find,
+            query: String::new(),
+            hunt,
+            hunt_query: String::new(),
             recording: None,
-            focus: cx.focus_handle(),
-        };
-        this.selected = this.keyboard_index().min(this.selected);
-        this
+            last_keys: None,
+            key_hint: None,
+            opened: HashSet::new(),
+            lit: None,
+            lit_epoch: 0,
+            focus,
+        }
     }
 
-    /// Stores the shell's latest model. A conflict or error belongs to the
-    /// Keyboard pane, so it is shown there.
+    /// Stores the shell's latest model. A key conflict or error belongs to
+    /// Keyboard & Mouse, so it is shown there.
     pub fn set_model(&mut self, model: SettingsModel, cx: &mut Context<Self>) {
         let attention = model.conflict.is_some() || model.key_error.is_some();
-        self.model = model;
-        if attention {
-            self.selected = self.keyboard_index();
+        let fresh = model.key_error != self.model.key_error
+            || model
+                .conflict
+                .as_ref()
+                .map(|c| (c.shortcut, c.keys.clone()))
+                != self
+                    .model
+                    .conflict
+                    .as_ref()
+                    .map(|c| (c.shortcut, c.keys.clone()));
+        // A conflict keeps listening: pressing the same keys again takes
+        // them (Search's "press again").
+        if let Some(conflict) = &model.conflict {
+            self.recording = Some(conflict.shortcut);
+        } else if self.model.conflict.is_some() {
+            self.recording = None;
         }
-        if self.selected > self.keyboard_index() {
-            self.selected = self.keyboard_index();
+        self.model = model;
+        if attention && fresh {
+            self.query.clear();
+            self.find.update(cx, |input, cx| input.set_text("", cx));
+            self.go(Page::Keyboard, cx);
         }
         cx.notify();
-    }
-
-    fn keyboard_index(&self) -> usize {
-        self.model.sections.len()
     }
 
     fn send(&self, msg: SettingsMsg) {
         let _ = self.tx.unbounded_send(AppMsg::Settings(msg));
     }
 
-    fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.selected = ix;
-        self.recording = None;
+    fn searching(&self) -> bool {
+        !self.query.trim().is_empty()
+    }
+
+    /// Motion is off for this window: the theme's, Reduce Motion, or the
+    /// Person's Reduce animations.
+    fn still(&self, cx: &App) -> bool {
+        self.model.layout.reduce_animations || motion::still(0, cx)
+    }
+
+    fn go(&mut self, page: Page, cx: &mut Context<Self>) {
+        if self.page != page {
+            self.page = page;
+            self.recording = None;
+            self.send(SettingsMsg::Page(page));
+        }
         cx.notify();
     }
 
-    fn on_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    /// Shows a choice at once and hands it to the shell.
+    fn set(&mut self, pref: Pref, value: Value, cx: &mut Context<Self>) {
+        if !pref.edit_layout(&mut self.model.layout, value) {
+            match pref {
+                Pref::Look => self.model.look = value.index(),
+                Pref::Sleep => self.model.sleep = value.index(),
+                Pref::Provider => self.model.provider = value.index(),
+                _ => {}
+            }
+        }
+        self.send(SettingsMsg::Set { pref, value });
+        cx.notify();
+    }
+
+    /// Lights a row for a moment, then lets it fade.
+    fn light(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        self.lit = Some(id);
+        self.lit_epoch += 1;
+        let epoch = self.lit_epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(LIT_FOR).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.lit_epoch == epoch {
+                    this.lit = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.to_lowercase();
+        let m = &event.keystroke.modifiers;
         let Some(shortcut) = self.recording else {
+            if m.platform && key == "f" {
+                window.focus(&self.find.focus_handle(cx), cx);
+                cx.stop_propagation();
+            }
             return;
         };
         cx.stop_propagation();
-        let key = event.keystroke.key.to_lowercase();
         if key == "escape" {
             self.recording = None;
+            self.key_hint = None;
+            if self.model.conflict.is_some() {
+                self.send(SettingsMsg::Resolve(None));
+            }
             cx.notify();
             return;
         }
@@ -100,7 +234,18 @@ impl SettingsWindow {
         ) {
             return;
         }
-        let m = &event.keystroke.modifiers;
+        if matches!(key.as_str(), "backspace" | "delete") && !(m.platform || m.alt || m.control) {
+            self.recording = None;
+            self.key_hint = None;
+            self.send(SettingsMsg::Clear(shortcut));
+            cx.notify();
+            return;
+        }
+        if !(m.platform || m.alt || m.control) {
+            self.key_hint = Some("Add \u{2318}, \u{2325} or \u{2303}");
+            cx.notify();
+            return;
+        }
         let mut parts: Vec<&str> = Vec::new();
         if m.control {
             parts.push("ctrl");
@@ -116,311 +261,21 @@ impl SettingsWindow {
         }
         parts.push(&key);
         let keys = parts.join("-");
-        self.recording = None;
-        self.send(SettingsMsg::Record { shortcut, keys });
+        self.key_hint = None;
+        let again = self.model.conflict.is_some()
+            && self.last_keys.as_ref() == Some(&(shortcut, keys.clone()));
+        self.last_keys = Some((shortcut, keys.clone()));
+        if again {
+            self.recording = None;
+            self.send(SettingsMsg::Resolve(Some(
+                aeri_core::keymap::OnConflict::Replace,
+            )));
+        } else {
+            self.recording = None;
+            self.send(SettingsMsg::Record { shortcut, keys });
+        }
         cx.notify();
     }
-
-    fn nav_item(&self, ix: usize, title: &str, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
-        let t = *t;
-        let on = self.selected == ix;
-        div()
-            .id(SharedString::from(format!("nav-{ix}")))
-            .role(gpui::Role::Tab)
-            .aria_label(SharedString::from(title.to_owned()))
-            .aria_selected(on)
-            .flex_none()
-            .px(px(10.))
-            .h(px(28.))
-            .flex()
-            .items_center()
-            .rounded(px(7.))
-            .text_size(px(13.))
-            .text_color(theme::c(t.text))
-            .when(on, |d| d.bg(theme::c(t.selected)))
-            .when(!on, |d| d.hover(|s| s.bg(theme::c(t.hover))))
-            .child(SharedString::from(title.to_owned()))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.select(ix, cx)))
-            .into_any_element()
-    }
-
-    fn section_pane(&self, ix: usize, t: &Tokens, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let t = *t;
-        let Some(section) = self.model.sections.get(ix) else {
-            return Vec::new();
-        };
-        let mut out: Vec<AnyElement> = Vec::new();
-        let mut last: Option<&str> = None;
-        for (n, row) in section.rows.iter().enumerate() {
-            if last != Some(row.detail.as_str()) {
-                last = Some(row.detail.as_str());
-                if !row.detail.is_empty() {
-                    out.push(
-                        div()
-                            .flex_none()
-                            .pt(px(12.))
-                            .pb(px(4.))
-                            .px(px(10.))
-                            .text_size(px(11.))
-                            .text_color(theme::c(t.text_tertiary))
-                            .child(SharedString::from(row.detail.clone()))
-                            .into_any_element(),
-                    );
-                }
-            }
-            let pick = row.pick.clone();
-            out.push(
-                row_base(SharedString::from(format!("row-{ix}-{n}")), &t)
-                    .role(gpui::Role::Button)
-                    .aria_label(SharedString::from(row.title.clone()))
-                    .when(!row.detail.is_empty() || row.hint == "\u{2713}", |d| {
-                        let mut description = row.detail.clone();
-                        if row.hint == "\u{2713}" {
-                            if !description.is_empty() {
-                                description.push_str(", ");
-                            }
-                            description.push_str("selected");
-                        }
-                        d.aria_description(SharedString::from(description))
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .child(SharedString::from(row.title.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(theme::c(t.accent_text))
-                            .child(SharedString::from(row.hint.clone())),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                        this.send(SettingsMsg::Pick(pick.clone()))
-                    }))
-                    .into_any_element(),
-            );
-        }
-        out
-    }
-
-    fn keyboard_pane(
-        &self,
-        t: &Tokens,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let t = *t;
-        let mut out: Vec<AnyElement> = Vec::new();
-        out.push(
-            div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .px(px(10.))
-                .pb(px(6.))
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(11.))
-                        .text_color(theme::c(t.text_tertiary))
-                        .child("Click a shortcut, then type the new keys."),
-                )
-                .child(button("reset-all", "Reset All", &t).on_click(
-                    cx.listener(|this, _: &ClickEvent, _, _| this.send(SettingsMsg::ResetAll)),
-                ))
-                .into_any_element(),
-        );
-        if let Some(error) = &self.model.key_error {
-            out.push(
-                div()
-                    .flex_none()
-                    .mx(px(10.))
-                    .mb(px(6.))
-                    .px(px(10.))
-                    .py(px(6.))
-                    .rounded(px(7.))
-                    .bg(theme::c(t.warning_tint))
-                    .text_size(px(12.))
-                    .text_color(theme::c(t.warning))
-                    .child(SharedString::from(error.clone()))
-                    .into_any_element(),
-            );
-        }
-        if let Some(conflict) = &self.model.conflict {
-            out.push(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .mx(px(10.))
-                    .mb(px(6.))
-                    .px(px(10.))
-                    .py(px(8.))
-                    .rounded(px(7.))
-                    .bg(theme::c(t.warning_tint))
-                    .text_size(px(12.))
-                    .text_color(theme::c(t.text))
-                    .child(div().flex_1().child(SharedString::from(format!(
-                        "{} already runs {}.",
-                        conflict.keys, conflict.other
-                    ))))
-                    .child(button("conflict-swap", "Swap", &t).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, _| {
-                            this.send(SettingsMsg::Resolve(Some(OnConflict::Swap)))
-                        },
-                    )))
-                    .child(
-                        button("conflict-replace", "Replace", &t).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, _| {
-                                this.send(SettingsMsg::Resolve(Some(OnConflict::Replace)))
-                            },
-                        )),
-                    )
-                    .child(
-                        button("conflict-cancel", "Cancel", &t).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, _| this.send(SettingsMsg::Resolve(None)),
-                        )),
-                    )
-                    .into_any_element(),
-            );
-        }
-        for (n, key) in self.model.keys.iter().enumerate() {
-            let shortcut = key.shortcut;
-            let recording = self.recording == Some(shortcut);
-            let none = key.keys.is_empty();
-            let label = if recording {
-                "Type keys\u{2026}".to_owned()
-            } else if none {
-                "None".to_owned()
-            } else {
-                key.keys.clone()
-            };
-            let key_button = div()
-                .id(SharedString::from(format!("key-{n}")))
-                .role(gpui::Role::Button)
-                .aria_label(SharedString::from(format!(
-                    "{} shortcut, {}",
-                    key.title,
-                    if none { "None" } else { key.keys.as_str() }
-                )))
-                .flex_none()
-                .min_w(px(88.))
-                .h(px(24.))
-                .px(px(10.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.))
-                .border_1()
-                .border_color(if recording {
-                    theme::c(t.accent)
-                } else {
-                    theme::c(t.control_border)
-                })
-                .bg(theme::c(t.field))
-                .text_size(px(12.))
-                .text_color(if none && !recording {
-                    theme::c(t.text_tertiary)
-                } else {
-                    theme::c(t.text)
-                })
-                .hover(|s| s.bg(theme::c(t.hover)))
-                .child(SharedString::from(label))
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.recording = Some(shortcut);
-                    window.focus(&this.focus, cx);
-                    cx.notify();
-                }));
-            out.push(
-                row_base(SharedString::from(format!("keyrow-{n}")), &t)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .child(SharedString::from(key.title.clone())),
-                    )
-                    .child(key_button)
-                    .child(if key.changed {
-                        link(SharedString::from(format!("reset-{n}")), "Reset", &t)
-                            .aria_label(SharedString::from(format!("Reset {}", key.title)))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                                this.send(SettingsMsg::Reset(shortcut))
-                            }))
-                            .into_any_element()
-                    } else {
-                        div().w(px(40.)).into_any_element()
-                    })
-                    .child(if none {
-                        div().w(px(40.)).into_any_element()
-                    } else {
-                        link(SharedString::from(format!("clear-{n}")), "Clear", &t)
-                            .aria_label(SharedString::from(format!("Clear {}", key.title)))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                                this.send(SettingsMsg::Clear(shortcut))
-                            }))
-                            .into_any_element()
-                    })
-                    .into_any_element(),
-            );
-        }
-        let _ = window;
-        out
-    }
-}
-
-fn row_base(id: SharedString, t: &Tokens) -> Stateful<gpui::Div> {
-    let t = *t;
-    div()
-        .id(id)
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(10.))
-        .min_h(px(32.))
-        .px(px(10.))
-        .rounded(px(7.))
-        .text_size(px(13.))
-        .text_color(theme::c(t.text))
-        .hover(|style| style.bg(theme::c(t.hover)))
-}
-
-fn button(id: &'static str, label: &'static str, t: &Tokens) -> Stateful<gpui::Div> {
-    let t = *t;
-    div()
-        .id(id)
-        .role(gpui::Role::Button)
-        .aria_label(label)
-        .flex_none()
-        .px(px(12.))
-        .py(px(3.))
-        .rounded(px(7.))
-        .text_size(px(12.))
-        .text_color(theme::c(t.text))
-        .bg(theme::c(t.hover))
-        .hover(|s| s.bg(theme::c(t.pressed)))
-        .child(label)
-}
-
-fn link(id: SharedString, label: &'static str, t: &Tokens) -> Stateful<gpui::Div> {
-    let t = *t;
-    div()
-        .id(id)
-        .role(gpui::Role::Button)
-        .aria_label(label)
-        .flex_none()
-        .w(px(40.))
-        .text_size(px(12.))
-        .text_color(theme::c(t.accent_text))
-        .hover(|s| s.text_color(theme::c(t.text)))
-        .child(label)
 }
 
 impl Focusable for SettingsWindow {
@@ -432,58 +287,27 @@ impl Focusable for SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme::tokens(cx);
-        let keyboard = self.keyboard_index();
-        let selected = self.selected.min(keyboard);
-        let mut nav: Vec<AnyElement> = Vec::new();
-        let titles: Vec<&'static str> = self.model.sections.iter().map(|s| s.title).collect();
-        for (ix, title) in titles.into_iter().enumerate() {
-            nav.push(self.nav_item(ix, title, &t, cx));
-        }
-        nav.push(self.nav_item(keyboard, "Keyboard", &t, cx));
-        let pane = if selected == keyboard {
-            self.keyboard_pane(&t, window, cx)
-        } else {
-            self.section_pane(selected, &t, cx)
-        };
+        let still = self.still(cx);
+        let rail = self.rail(&t, still, cx);
+        let content = self.content(&t, still, window, cx);
         div()
             .id("settings")
             .track_focus(&self.focus)
-            .on_key_down(
-                cx.listener(|this, event: &KeyDownEvent, _, cx| this.on_key_down(event, cx)),
-            )
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.on_key_down(event, window, cx)
+            }))
             .size_full()
             .flex()
             .bg(theme::c(t.panel))
             .text_color(theme::c(t.text))
+            .child(rail)
             .child(
                 div()
-                    .flex()
-                    .flex_col()
                     .flex_none()
-                    .w(px(180.))
+                    .w(px(1.))
                     .h_full()
-                    .pt(px(40.))
-                    .px(px(8.))
-                    .gap(px(2.))
-                    .bg(theme::c(t.sidebar))
-                    .border_r_1()
-                    .border_color(theme::c(t.separator))
-                    .children(nav),
+                    .bg(theme::c(t.separator)),
             )
-            .child(
-                div()
-                    .id("settings-pane")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .pt(px(40.))
-                    .px(px(12.))
-                    .pb(px(12.))
-                    .gap(px(1.))
-                    .overflow_y_scroll()
-                    .children(pane),
-            )
+            .child(content)
     }
 }

@@ -34,7 +34,7 @@ use objc2_foundation::{NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer};
 use std::ptr::NonNull;
 
 use super::frame::Frame;
-use crate::motion::{FOLD_IN, FOLD_OUT};
+use crate::motion::{FOLD_IN, FOLD_OUT, ease_in, ease_in_out, ease_out};
 use crate::shell::AppMsg;
 use aeri_core::appearance::Motion;
 use aeri_core::keymap::Shortcut;
@@ -163,6 +163,20 @@ pub(super) struct Fold {
     landed: Cell<bool>,
     /// Counts slides, so a late hand-over knows it is stale.
     turn: Cell<u32>,
+    /// "Slide the column in and out": the slide in progress, on a timed
+    /// curve instead of the springs.
+    eased: Cell<Option<Eased>>,
+    /// Under Reduce Motion with that setting the column stays put and
+    /// fades.
+    fade: Cell<bool>,
+}
+
+/// A timed slide: from where it was, to its goal, from the first frame.
+#[derive(Clone, Copy)]
+struct Eased {
+    from: f32,
+    to: f32,
+    start: Option<f64>,
 }
 
 impl Fold {
@@ -198,7 +212,8 @@ impl Frame {
             position: 1.,
             velocity: 0.,
         });
-        self.place_side(1.);
+        fold.fade.set(self.fades());
+        self.show_position(1.);
         self.glide(false);
     }
 
@@ -264,17 +279,27 @@ impl Frame {
         let goal = fold.goal.get();
         let at_goal = (fold.state.get().position - goal).abs() < ARRIVED
             && fold.state.get().velocity.abs() < ARRIVED;
-        if self.motion.get() == Motion::Off || self.in_full_screen() || at_goal {
+        let fade = self.fades();
+        fold.fade.set(fade);
+        let instant = self.layout.get().reduce_animations
+            || (self.motion.get() == Motion::Off && !fade)
+            || self.in_full_screen();
+        if instant || at_goal {
             fold.stop();
             fold.state.set(SpringState {
                 position: goal,
                 velocity: 0.,
             });
-            self.place_side(goal);
+            self.show_position(goal);
             self.arrive();
             return;
         }
-        overlay.setAlphaValue(1.0);
+        fold.eased.set(self.layout.get().slides.then(|| Eased {
+            from: fold.state.get().position,
+            to: goal,
+            start: None,
+        }));
+        self.show_position(fold.state.get().position);
         fold.last.set(None);
         self.fold_run(&overlay);
     }
@@ -360,6 +385,38 @@ impl Frame {
             .replace(Some(at))
             .map_or(0., |last| (at - last).clamp(0., LONGEST_STEP));
         let goal = fold.goal.get();
+        if let Some(mut eased) = fold.eased.get() {
+            // Search's `Motion.slide` (`Design.swift:372`): out 0.26 s
+            // ease-out, in 0.22 s ease-in; under Reduce Motion the column
+            // fades over 0.2 s ease-in-out (`Motion.fade`).
+            let start = *eased.start.get_or_insert(at);
+            fold.eased.set(Some(eased));
+            let (seconds, curve): (f64, fn(f32) -> f32) = if fold.fade.get() {
+                (0.2, ease_in_out)
+            } else if goal > 0. {
+                (0.26, ease_out)
+            } else {
+                (0.22, ease_in)
+            };
+            let progress = ((at - start) / seconds).clamp(0., 1.) as f32;
+            if progress >= 1. {
+                fold.stop();
+                fold.state.set(SpringState {
+                    position: goal,
+                    velocity: 0.,
+                });
+                self.show_position(goal);
+                self.arrive();
+                return;
+            }
+            let position = eased.from + (eased.to - eased.from) * curve(progress);
+            fold.state.set(SpringState {
+                position,
+                velocity: 0.,
+            });
+            self.show_position(position);
+            return;
+        }
         let spring = if goal > 0. { FOLD_OUT } else { FOLD_IN };
         let next = spring.step(fold.state.get(), goal, delta as f32);
         if spring.is_settled(next, goal, ARRIVED) {
@@ -368,12 +425,31 @@ impl Frame {
                 position: goal,
                 velocity: 0.,
             });
-            self.place_side(goal);
+            self.show_position(goal);
             self.arrive();
             return;
         }
         fold.state.set(next);
-        self.place_side(next.position);
+        self.show_position(next.position);
+    }
+
+    /// Whether the column fades rather than moves: "Slide the column in
+    /// and out" under the Mac's Reduce Motion (Search `Motion.fadesColumn`).
+    fn fades(&self) -> bool {
+        let layout = self.layout.get();
+        layout.slides && !layout.reduce_animations && super::accessibility().reduce_motion
+    }
+
+    /// Shows the sidebar `position` of the way in: moved, or fading in
+    /// place.
+    fn show_position(&self, position: f32) {
+        let fade = self.fold.fade.get();
+        self.place_side(if fade { 1. } else { position });
+        if let Some(overlay) = self.side_overlay() {
+            // `hide_side` leaves the overlay transparent; a slide shows it
+            // whole from its first step.
+            overlay.setAlphaValue(if fade { f64::from(position) } else { 1.0 });
+        }
     }
 
     /// Puts the sidebar `position` of the way in: translates the overlay's
@@ -420,7 +496,7 @@ impl Frame {
 
     /// Re-applies the slide after the overlay was refitted.
     pub(super) fn replace_side(&self) {
-        self.place_side(self.fold.state.get().position);
+        self.show_position(self.fold.state.get().position);
     }
 }
 

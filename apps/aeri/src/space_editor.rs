@@ -4,14 +4,14 @@
 //! the keyboard to the page), hence a window of its own.
 
 use aeri_core::ids::{ProfileId, SpaceId};
-use aeri_core::store::ACCENTS;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     Context, Entity, FocusHandle, Focusable, FontWeight, SharedString, Window, div, prelude::*, px,
-    rgb,
 };
 
-use crate::shell::{AppMsg, SPACE_ICONS};
+use crate::shell::AppMsg;
+use crate::space_look::{ICONS, stored, symbol_of};
+use crate::symbol::{Weight, symbol};
 use crate::text_input::{InputEvent, TextInput};
 use crate::theme;
 use aeri_core::appearance::Tokens;
@@ -66,7 +66,7 @@ impl SpaceEditor {
         .detach();
         let emoji = cx.new(|cx| {
             let mut input = TextInput::new("Or type an emoji", cx);
-            if !icon.is_empty() && !SPACE_ICONS.contains(&icon.as_str()) {
+            if symbol_of(&icon).is_none() && !icon.is_empty() {
                 input.set_text(icon.clone(), cx);
             }
             input
@@ -148,56 +148,45 @@ impl Focusable for SpaceEditor {
 impl Render for SpaceEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme::tokens(cx);
-        let colours = div()
-            .flex()
-            .gap(px(6.))
-            .children(ACCENTS.into_iter().enumerate().map(|(ix, colour)| {
-                div()
-                    .id(("colour", ix))
-                    .size(px(20.))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(if colour == self.colour {
-                        theme::c(t.text)
-                    } else {
-                        theme::ca(t.text, 0.)
-                    })
-                    .p(px(2.))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.colour = colour;
-                        cx.notify();
-                    }))
-                    .child(div().size_full().rounded_full().bg(rgb(colour)))
-            }));
+        // Search's icon grid: 6 columns of 28 pt cells, 4 apart, icons 13 pt
+        // medium, ink when chosen and muted otherwise (SpaceSwipe.swift).
         let icons = div()
             .flex()
+            .flex_wrap()
+            .w(px(6. * 28. + 5. * 4.))
             .gap(px(4.))
-            .children(SPACE_ICONS.into_iter().enumerate().map(|(ix, icon)| {
-                let selected = self.icon == icon;
-                div()
-                    .id(("icon", ix))
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(6.))
-                    .text_size(px(14.))
-                    .text_color(theme::c(t.text))
-                    .when(selected, |d| d.bg(theme::c(t.pressed)))
-                    .when(!selected, |d| d.hover(|s| s.bg(theme::c(t.hover))))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.icon = icon.to_owned();
-                        this.emoji.update(cx, |input, cx| input.set_text("", cx));
-                        cx.notify();
-                    }))
-                    .child(SharedString::from(if icon.is_empty() {
-                        "–"
-                    } else {
-                        icon
-                    }))
-            }));
+            .children(
+                ICONS
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (name, symbol_name))| {
+                        let stored = stored(ix);
+                        let selected = self.icon == stored;
+                        div()
+                            .id(("icon", ix))
+                            .role(gpui::Role::Button)
+                            .aria_label(name)
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(7.))
+                            .when(selected, |d| d.bg(theme::c(t.pressed)))
+                            .when(!selected, |d| d.hover(|s| s.bg(theme::c(t.hover))))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.icon = stored.clone();
+                                this.emoji.update(cx, |input, cx| input.set_text("", cx));
+                                cx.notify();
+                            }))
+                            .child(symbol(
+                                symbol_name,
+                                13.,
+                                Weight::Medium,
+                                if selected { t.text } else { t.text_secondary },
+                            ))
+                    }),
+            );
         let label = |text: &'static str| {
             div()
                 .text_size(px(12.))
@@ -230,8 +219,6 @@ impl Render for SpaceEditor {
                     .line_height(px(20.))
                     .child(self.name.clone()),
             )
-            .child(label("Colour"))
-            .child(colours)
             .child(label("Icon"))
             .child(icons)
             .child(

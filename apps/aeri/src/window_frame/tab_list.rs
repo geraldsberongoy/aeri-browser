@@ -19,15 +19,18 @@ use aeri_core::keymap::Shortcut;
 use gpui::{
     Animation, AnimationExt, ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent,
     PathBuilder, SharedString, SpringAnimation, SpringConfig, SpringPlayback, Window, canvas, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px,
+    point, prelude::*, px,
 };
 
+mod at_rest;
 mod plan;
+mod row;
 
 pub(super) use self::plan::TabListState;
-use self::plan::{DIVIDER, Item, Kind, LEAVE, Placed, ROW, TILE, plan};
+use self::plan::{DIVIDER, Item, Kind, LEAVE, TILE, plan};
+use self::row::{ghost, number_badge, shortcut_number, title_size};
 use super::tab_items::mark;
-use super::{Host, STRIP_HEIGHT, SidebarTab, WindowFrame};
+use super::{Host, SidebarTab, WindowFrame};
 use crate::motion;
 use crate::shell::{AppMsg, TabCommand};
 use crate::symbol::{Weight, symbol};
@@ -103,18 +106,20 @@ impl WindowFrame {
     pub(crate) fn tab_list(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let t = theme::tokens_in(window, cx);
-        let still = motion::still(window, cx);
+        let pace = motion::Pace::of(window, cx);
+        let still = pace.still;
         let room = (self.sidebar_width() - 20.).max(20.);
         let space = self.spaces.iter().find(|s| s.current).map_or(0, |s| s.id.0);
         let dy = if host == Host::Overlay && self.layout.top_pinned {
-            STRIP_HEIGHT as f32
+            super::strip_height(&self.layout) as f32
         } else {
             0.
         };
         let favourites: Vec<&SidebarTab> = self.tabs.iter().filter(|t| t.favourite).collect();
         let others: Vec<&SidebarTab> = self.tabs.iter().filter(|t| !t.favourite).collect();
         let pinned = others.iter().filter(|t| t.pinned).count();
-        let plan = plan(&favourites, &others, pinned, room);
+        let plan = plan(&favourites, &others, pinned, room, self.layout.roomy);
+        let numbers = self.layout.tab_numbers && self.command_held;
         let changes = self.tab_list.inner.borrow_mut().sync(space, &plan.items);
         if changes.newly_leaving {
             cx.spawn(async move |this, cx| {
@@ -131,23 +136,31 @@ impl WindowFrame {
 
         // The shown tab's ground, under everything.
         if let Some(shown) = plan.items.iter().find(|i| i.tab.active) {
-            inner = inner.child(live_ground(
-                shown,
-                &t,
-                layout_key,
-                changes.pill_epoch,
-                still,
-            ));
+            inner = inner.child(live_ground(shown, &t, layout_key, changes.pill_epoch, pace));
         }
 
         for item in &plan.items {
             let fresh = changes.fresh.contains(&(item.tab.id, item.kind));
+            let number = numbers
+                .then(|| self.tabs.iter().position(|tab| tab.id == item.tab.id))
+                .flatten()
+                .and_then(|at| shortcut_number(at, self.tabs.len()));
             let element = match item.kind {
                 Kind::Square => self
-                    .square(item, &t, layout_key, fresh, still, dy, cx)
+                    .square(item, &t, layout_key, fresh, pace, number, dy, cx)
                     .into_any_element(),
                 Kind::Row => self
-                    .row(item, &t, space, fresh, still, dy, cx)
+                    .row(
+                        item,
+                        &t,
+                        space,
+                        fresh,
+                        pace,
+                        changes.swap_epoch,
+                        number,
+                        dy,
+                        cx,
+                    )
                     .into_any_element(),
             };
             inner = inner.child(element);
@@ -166,22 +179,22 @@ impl WindowFrame {
                     .child(div().h(px(1.)).w_full().bg(theme::c(t.separator)))
                     .with_spring(
                         ("tl-div", mix(space, 0)),
-                        spring(motion::SETTLE, y, still),
+                        spring(pace.settle, y, still),
                         |d, v| d.top(px(v)),
                     ),
             );
         }
-        inner = inner.child(self.new_tab_row(&t, plan.new_tab, space, still, cx));
+        inner = inner.child(self.new_tab_row(&t, plan.new_tab, plan.row, space, pace, cx));
 
         if !still {
             for gone in &changes.leaving {
-                inner = inner.child(ghost(gone, &t, space));
+                inner = inner.child(ghost(gone, &t, &self.layout, space));
             }
         }
 
         let inner = inner.with_spring(
             ("tl-height", mix(space, 1)),
-            spring(motion::SETTLE, plan.total, still),
+            spring(pace.settle, plan.total, still),
             |d, v| d.h(px(v)),
         );
         div()
@@ -208,7 +221,8 @@ impl WindowFrame {
         t: &Tokens,
         layout_key: u64,
         fresh: bool,
-        still: bool,
+        pace: motion::Pace,
+        number: Option<u8>,
         dy: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -218,6 +232,7 @@ impl WindowFrame {
         let t = *t;
         let scale = r.w.min(r.h);
         let active = tab.active;
+        let high = self.layout.high_contrast;
         let label = SharedString::from(tab.label.clone());
         let body = self
             .tab_base("pin", item.index, tab, dy, cx)
@@ -228,12 +243,15 @@ impl WindowFrame {
             .rounded(px(scale * 9. / TILE))
             .text_size(px(scale * 12. / TILE))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(theme::c(if active { t.text } else { t.quiet }))
+            .text_color(theme::c(if active || high { t.text } else { t.quiet }))
             .when(!active, |el| {
                 el.bg(theme::c(t.tile)).hover(move |style| {
-                    style
-                        .bg(theme::c(t.hover))
-                        .text_color(theme::ca(t.text, 0.7))
+                    let style = style.bg(theme::c(t.hover));
+                    if high {
+                        style
+                    } else {
+                        style.text_color(theme::ca(t.text, 0.7))
+                    }
                 })
             })
             .tooltip(move |_, cx| cx.new(|_| Tip(label.clone())).into())
@@ -245,14 +263,20 @@ impl WindowFrame {
                     }
                 }),
             );
-        let body = if tab.loading {
+        // What a square holds, first that applies (Search `PinSquare`): the
+        // ⌘ number, the loading ring, the site icon, the letter.
+        let body = if let Some(number) = number {
+            body.child(number_badge(number, &t))
+        } else if tab.loading {
             body.child(ring(scale * 11. / TILE, t.icon_muted.with_alpha(0.7)))
         } else if super::tab_items::is_blank(tab) {
             body
+        } else if super::tab_items::shown_favicon(tab, &self.layout).is_some() {
+            body.child(mark(tab, scale * 16. / TILE, &t, &self.layout))
         } else {
             body.child(SharedString::from(super::tab_items::letter(tab)))
         };
-        let mut opacity = spring(motion::SETTLE, 1., still);
+        let mut opacity = spring(pace.settle, 1., pace.still);
         if fresh {
             opacity = opacity.from(0.);
         }
@@ -263,17 +287,17 @@ impl WindowFrame {
             .child(body)
             .with_spring(
                 ("tl-sx", key),
-                spring(motion::SETTLE, r.x, still),
+                spring(pace.settle, r.x, pace.still),
                 |d, v| d.left(px(v)),
             )
             .with_spring(
                 ("tl-sy", key),
-                spring(motion::SETTLE, r.y, still),
+                spring(pace.settle, r.y, pace.still),
                 |s, v| s.map_element(|d| d.top(px(v))),
             )
             .with_spring(
                 ("tl-sw", key),
-                spring(motion::SETTLE, r.w, still),
+                spring(pace.settle, r.w, pace.still),
                 |s, v| s.map_element(|s| s.map_element(|d| d.w(px(v)))),
             )
             .with_spring(("tl-so", key), opacity, |s, v| {
@@ -281,227 +305,25 @@ impl WindowFrame {
             })
     }
 
-    /// A tab row (Search `SideRow`).
-    #[allow(clippy::too_many_arguments)]
-    fn row(
-        &self,
-        item: &Item,
-        t: &Tokens,
-        space: i64,
-        fresh: bool,
-        still: bool,
-        dy: f32,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let window = self.window_id;
-        let tab = item.tab;
-        let id = tab.id;
-        let t = *t;
-        let active = tab.active;
-        // The row's ground, for the title to fade into under the cross.
-        let ground = if active { t.live } else { t.hover }.over(t.sidebar.with_alpha(1.));
-        let status = tab.loading || tab.audible;
-        let body = self
-            .tab_base("tab", item.index, tab, dy, cx)
-            .group("row")
-            .relative()
-            .size_full()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .pl(px(10.))
-            .pr(px(if status { 30. } else { 10. }))
-            .rounded(px(9.))
-            .text_size(px(12.5))
-            .text_color(theme::c(if active { t.text } else { t.quiet }))
-            .when(!active, |el| {
-                el.hover(move |style| {
-                    style
-                        .bg(theme::c(t.hover))
-                        .text_color(theme::ca(t.text, 0.7))
-                })
-            })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, _| {
-                    let mut state = this.tab_list.inner.borrow_mut();
-                    state.pressed = (!active).then_some(id);
-                    drop(state);
-                    if !active {
-                        this.select(id);
-                    }
-                }),
-            )
-            .on_click(cx.listener(move |this, event: &ClickEvent, _, _| {
-                if event.is_keyboard() {
-                    this.select(id);
-                    return;
-                }
-                let took = this.tab_list.inner.borrow_mut().pressed.take() == Some(id);
-                if !took && active {
-                    // Search edits the address in the row; the bar stands in.
-                    this.send(AppMsg::Shortcut {
-                        window,
-                        shortcut: Shortcut::FocusAddressBar,
-                    });
-                }
-            }))
-            .child(mark(tab, 15., &t))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(tab.label.clone())),
-            )
-            // The title fades under the cross: 16 points of gradient and
-            // 26 of cut, so it is not truncated again.
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .right(px(26.))
-                    .w(px(16.))
-                    .opacity(0.)
-                    .group_hover("row", |s| s.opacity(1.))
-                    .bg(linear_gradient(
-                        90.,
-                        linear_color_stop(theme::ca(ground, 0.), 0.),
-                        linear_color_stop(theme::c(ground), 1.),
-                    )),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .right_0()
-                    .w(px(26.))
-                    .opacity(0.)
-                    .group_hover("row", |s| s.opacity(1.))
-                    .bg(theme::c(ground)),
-            )
-            .when(tab.loading, |el| {
-                el.child(
-                    div()
-                        .absolute()
-                        .top(px((ROW - 15.) / 2.))
-                        .right(px(7.))
-                        .size(px(15.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .group_hover("row", |s| s.opacity(0.))
-                        .child(ring(10., t.icon_muted.with_alpha(0.7))),
-                )
-            })
-            .when(tab.audible, |el| {
-                let rest = if tab.loading { 26. } else { 7. };
-                el.child(
-                    div()
-                        .absolute()
-                        .top(px((ROW - 15.) / 2.))
-                        .right(px(rest))
-                        .size(px(15.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .group_hover("row", |s| s.right(px(30.)))
-                        .child(symbol(
-                            "speaker.wave.2.fill",
-                            8.,
-                            Weight::Regular,
-                            t.icon_muted,
-                        )),
-                )
-            })
-            .child(self.close_cross(tab, &t, cx));
-        let mut opacity = spring(motion::SETTLE, 1., still);
-        if fresh {
-            opacity = opacity.from(0.);
-        }
-        let key = mix(space, id.0);
-        div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .h(px(ROW))
-            .child(body)
-            .with_spring(
-                ("tl-ry", key),
-                spring(motion::SETTLE, item.rect.y, still),
-                |d, v| d.top(px(v)),
-            )
-            .with_spring(("tl-ro", key), opacity, |s, v| {
-                s.map_element(|d| d.opacity(v))
-            })
-    }
-
-    /// The × (a pinned tab shows a minus): on row hover, a 15 point disc in
-    /// a 30 by 28 hit area at the trailing edge.
-    fn close_cross(
-        &self,
-        tab: &SidebarTab,
-        t: &Tokens,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let window = self.window_id;
-        let id = tab.id;
-        div()
-            .id(("close", id.0 as usize))
-            .role(gpui::Role::Button)
-            .aria_label(if tab.pinned { "Unpin Tab" } else { "Close Tab" })
-            .absolute()
-            .top_0()
-            .right_0()
-            .w(px(30.))
-            .h(px(ROW))
-            .pr(px(7.))
-            .flex()
-            .items_center()
-            .justify_end()
-            .opacity(0.)
-            .group_hover("row", |s| s.opacity(1.))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.send(AppMsg::Tab {
-                    window,
-                    tab: id,
-                    command: TabCommand::Close,
-                });
-            }))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(15.))
-                    .rounded_full()
-                    .bg(theme::ca(t.text, 0.07))
-                    .child(symbol(
-                        if tab.pinned { "minus" } else { "xmark" },
-                        8.,
-                        Weight::Semibold,
-                        t.icon_muted,
-                    )),
-            )
-    }
-
-    /// Search's `Quiet` row: a plus and "New tab", 2 points under the rows.
+    /// Search's `Quiet` row: a plus and "New tab", 2 points under the rows;
+    /// ink under "High contrast text".
     fn new_tab_row(
         &self,
         t: &Tokens,
         y: f32,
+        height: f32,
         space: i64,
-        still: bool,
+        pace: motion::Pace,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
         let t = *t;
+        let size = title_size(&self.layout);
+        let ink = if self.layout.high_contrast {
+            t.text
+        } else {
+            t.faint
+        };
         div()
             .id("new-tab")
             .role(gpui::Role::Button)
@@ -509,14 +331,14 @@ impl WindowFrame {
             .absolute()
             .left_0()
             .right_0()
-            .h(px(ROW))
+            .h(px(height))
             .pl(px(10.))
             .flex()
             .items_center()
             .gap(px(8.))
             .rounded(px(9.))
-            .text_size(px(12.5))
-            .text_color(theme::c(t.faint))
+            .text_size(px(size))
+            .text_color(theme::c(ink))
             .hover(move |style| {
                 style
                     .bg(theme::c(t.hover))
@@ -535,12 +357,12 @@ impl WindowFrame {
                     .items_center()
                     .justify_center()
                     .w(px(15.))
-                    .child(symbol("plus", 10., Weight::Medium, t.faint)),
+                    .child(symbol("plus", 10., Weight::Medium, ink)),
             )
             .child("New tab")
             .with_spring(
                 ("tl-new", mix(space, 2)),
-                spring(motion::SETTLE, y, still),
+                spring(pace.settle, y, pace.still),
                 |d, v| d.top(px(v)),
             )
     }
@@ -557,7 +379,14 @@ impl WindowFrame {
 
 /// Search's matched-geometry ground: one rounded rectangle whose place and
 /// size glide to the shown tab's, in the row ground or the live pin ground.
-fn live_ground(shown: &Item, t: &Tokens, key: u64, epoch: u64, still: bool) -> impl IntoElement {
+fn live_ground(
+    shown: &Item,
+    t: &Tokens,
+    key: u64,
+    epoch: u64,
+    pace: motion::Pace,
+) -> impl IntoElement {
+    let still = pace.still;
     let r = shown.rect;
     let (colour, radius) = match shown.kind {
         Kind::Row => (t.live, 9.),
@@ -581,64 +410,16 @@ fn live_ground(shown: &Item, t: &Tokens, key: u64, epoch: u64, still: bool) -> i
                     |d, t| d.opacity(t),
                 ),
         )
-        .with_spring(("tl-lx", key), spring(motion::GLIDE, r.x, still), |d, v| {
+        .with_spring(("tl-lx", key), spring(pace.glide, r.x, still), |d, v| {
             d.left(px(v))
         })
-        .with_spring(("tl-ly", key), spring(motion::GLIDE, r.y, still), |s, v| {
+        .with_spring(("tl-ly", key), spring(pace.glide, r.y, still), |s, v| {
             s.map_element(|d| d.top(px(v)))
         })
-        .with_spring(("tl-lw", key), spring(motion::GLIDE, r.w, still), |s, v| {
+        .with_spring(("tl-lw", key), spring(pace.glide, r.w, still), |s, v| {
             s.map_element(|s| s.map_element(|d| d.w(px(v))))
         })
-        .with_spring(("tl-lh", key), spring(motion::GLIDE, r.h, still), |s, v| {
+        .with_spring(("tl-lh", key), spring(pace.glide, r.h, still), |s, v| {
             s.map_element(|s| s.map_element(|s| s.map_element(|d| d.h(px(v)))))
         })
-}
-
-/// A closed tab fading out where it stood.
-fn ghost(gone: &Placed, t: &Tokens, space: i64) -> impl IntoElement {
-    let t = *t;
-    let r = gone.rect;
-    let base = div()
-        .absolute()
-        .left(px(r.x))
-        .top(px(r.y))
-        .w(px(r.w))
-        .h(px(r.h))
-        .flex()
-        .items_center()
-        .text_color(theme::c(t.quiet));
-    let key = mix(space, gone.tab.id.0 ^ (gone.kind as u64) << 60);
-    let face = match gone.kind {
-        Kind::Row => base
-            .rounded(px(9.))
-            .pl(px(10.))
-            .gap(px(8.))
-            .pr(px(10.))
-            .text_size(px(12.5))
-            .child(mark(&gone.tab, 15., &t))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(gone.tab.label.clone())),
-            ),
-        Kind::Square => {
-            let scale = r.w.min(r.h);
-            base.justify_center()
-                .rounded(px(scale * 9. / TILE))
-                .bg(theme::c(t.tile))
-                .text_size(px(scale * 12. / TILE))
-                .font_weight(FontWeight::MEDIUM)
-                .child(SharedString::from(super::tab_items::letter(&gone.tab)))
-        }
-    };
-    face.with_animation(
-        ("tl-out", key),
-        Animation::new(LEAVE).with_easing(motion::ease_out),
-        |d, t| d.opacity(1. - t),
-    )
 }

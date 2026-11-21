@@ -27,6 +27,14 @@ impl Command {
     }
 }
 
+/// A site icon's pixels: premultiplied BGRA, `width * height * 4` bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Favicon {
+    pub width: u32,
+    pub height: u32,
+    pub bgra: std::sync::Arc<[u8]>,
+}
+
 /// Something the engine reports about one tab.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -56,6 +64,12 @@ pub enum Event {
     TitleChanged {
         tab: TabId,
         title: String,
+    },
+    /// The page's site icon arrived (`None`: the page has none).
+    FaviconChanged {
+        tab: TabId,
+        page_url: String,
+        favicon: Option<Favicon>,
     },
     /// The page's renderer process died. Other tabs are unaffected.
     RendererGone {
@@ -92,6 +106,7 @@ impl Event {
             | Event::LoadFailed { tab, .. }
             | Event::AddressChanged { tab, .. }
             | Event::TitleChanged { tab, .. }
+            | Event::FaviconChanged { tab, .. }
             | Event::RendererGone { tab, .. }
             | Event::MediaAccessChanged { tab, .. }
             | Event::AudibleChanged { tab, .. }

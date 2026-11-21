@@ -6,10 +6,13 @@
 use serde::{Deserialize, Serialize};
 
 use super::color::Rgba;
+use super::wash::Wash;
 
 /// Largest theme file read, in bytes.
 pub const MAX_FILE_BYTES: usize = 16 * 1024;
 pub const FILE_VERSION: u32 = 1;
+/// The name of the theme a space stores when it only has a wash.
+const WASH_ONLY: &str = "Space look";
 pub const FILE_EXTENSION: &str = "aeritheme";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,6 +226,10 @@ pub struct Recipe {
     pub headings: Headings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub motion: Motion,
+    /// A space's colour or gradient wash over the chrome (Search's space
+    /// look). Absent in themes from before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wash: Option<Wash>,
 }
 
 impl Recipe {
@@ -243,7 +250,29 @@ impl Recipe {
             ui_size: UiSize::Standard,
             headings: Headings::System,
             motion: Motion::Standard,
+            wash: None,
         }
+    }
+
+    /// What a space stores when it has a wash and no theme of its own: the
+    /// look follows the profile's or app's theme, the wash goes over it.
+    pub fn wash_only(wash: Wash) -> Self {
+        Self {
+            name: WASH_ONLY.to_owned(),
+            wash: Some(wash),
+            ..Self::aeri()
+        }
+    }
+
+    /// This recipe is [`Recipe::wash_only`]'s.
+    pub fn is_wash_only(&self) -> bool {
+        self.wash.is_some()
+            && *self
+                == Self {
+                    wash: self.wash.clone(),
+                    name: WASH_ONLY.to_owned(),
+                    ..Self::aeri()
+                }
     }
 
     /// The rules JSON types cannot state; the first broken one.
@@ -260,6 +289,14 @@ impl Recipe {
                 .any(|c| c.is_control() || is_bidi_control(c));
         if !name_ok {
             return Err(ThemeError::Name);
+        }
+        if let Some(wash) = &self.wash
+            && !wash.is_valid()
+        {
+            return Err(ThemeError::Range(
+                "wash",
+                "one to three colours and an angle 0–359",
+            ));
         }
         if let Background::Gradient { angle, stops } = &self.background {
             if *angle > 359 {

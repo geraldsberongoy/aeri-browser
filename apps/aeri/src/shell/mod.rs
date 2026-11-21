@@ -39,6 +39,7 @@ mod resources;
 mod resting;
 mod session;
 mod settings;
+pub mod settings_index;
 mod shortcuts;
 mod space_settings;
 mod spaces;
@@ -74,7 +75,7 @@ pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand, ThemeEditorMsg};
 use self::profiles::remove_deleted_profiles;
 use self::quit::quit_on_signals;
 use self::resting::Resting;
-pub use self::settings::{SettingsModel, SettingsMsg};
+pub use self::settings::{KeyRow, SettingsModel, SettingsMsg};
 pub use self::spaces::SPACE_ICONS;
 use self::spaces::{Parked, SpaceInfo};
 use self::tabs::TabEntry;
@@ -277,6 +278,10 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         });
     });
     mac::intercept_termination(send(|| AppMsg::Quit));
+    let command = tx.clone();
+    mac::watch_command(move |held| {
+        let _ = command.unbounded_send(AppMsg::CommandHeld(held));
+    });
     quit_on_signals(tx.clone());
     let resting = Resting::start(&db, config.rest_after, tx.clone(), cx);
     let chrome = chrome::Chrome::load(&db);
@@ -383,6 +388,18 @@ impl Shell {
 
     /// Returns true once quitting and every window has closed.
     fn handle(&mut self, msg: AppMsg, cx: &mut App) -> bool {
+        let changes_settings = self.settings.is_some()
+            && matches!(
+                msg,
+                AppMsg::BarPick { .. }
+                    | AppMsg::Chrome(_)
+                    | AppMsg::ThemeEditor(_)
+                    | AppMsg::UseTheme { .. }
+                    | AppMsg::ImportTheme { .. }
+                    | AppMsg::ExportTheme { .. }
+                    | AppMsg::SetPasswordProvider { .. }
+                    | AppMsg::SystemAppearanceChanged
+            );
         match msg {
             AppMsg::EngineReady => self.engine_ready(cx),
             AppMsg::ProfileReady { profile } => self.profile_ready(profile, cx),
@@ -496,6 +513,7 @@ impl Shell {
                 confirmed,
             } => self.delete_space(window, space, confirmed, cx),
             AppMsg::SpaceEditorClosed => self.space_editor = None,
+            AppMsg::SpaceLook(msg) => self.space_look_msg(msg, cx),
             AppMsg::SetTabLook { tab, name, icon } => self.set_tab_look(tab, name, icon, cx),
             AppMsg::TabEditorClosed => self.tab_editor = None,
             AppMsg::WindowKey { window } => self.window_key(window, cx),
@@ -511,6 +529,7 @@ impl Shell {
             AppMsg::MemoryPressure(level) => self.memory_pressure(level, cx),
             AppMsg::Resources(msg) => self.resources_msg(msg, cx),
             AppMsg::SystemAppearanceChanged => self.system_appearance_changed(cx),
+            AppMsg::CommandHeld(held) => self.command_held(held, cx),
             AppMsg::Chrome(msg) => self.chrome_msg(msg, cx),
             AppMsg::ThemeEditor(msg) => self.theme_editor_msg(msg, cx),
             AppMsg::ImportTheme { window, path } => self.import_theme(window, &path, cx),
@@ -527,6 +546,15 @@ impl Shell {
                 }
             }
             AppMsg::Quit => self.quit(cx),
+        }
+        // Settings shows what the palette, the theme editor and the system
+        // can also change.
+        if changes_settings {
+            self.refresh_settings(cx);
+        }
+        // Wash rasters the views let go of while drawing.
+        for image in crate::space_look::paint::take_evicted() {
+            cx.drop_image(image, None);
         }
         self.quitting && self.windows.is_empty()
     }

@@ -9,9 +9,16 @@ use aeri_core::ids::TabId;
 
 use super::super::SidebarTab;
 
-/// Row height and the step between rows (Search `prefs.sideRow`, gap 2).
-pub(super) const ROW: f32 = 28.;
-pub(super) const PITCH: f32 = 30.;
+/// Row height (Search `prefs.sideRow`: 28, "Roomier tabs" 36) and the gap
+/// between rows (2).
+const ROW: f32 = 28.;
+const ROOMY_ROW: f32 = 36.;
+const ROW_GAP: f32 = 2.;
+
+/// A row's height in this layout.
+pub(super) fn row_height(roomy: bool) -> f32 {
+    if roomy { ROOMY_ROW } else { ROW }
+}
 /// Pinned squares (`PinGrid`): classic size, gap, most per row.
 pub(super) const TILE: f32 = 34.;
 pub(super) const GAP: f32 = 4.;
@@ -67,6 +74,8 @@ pub(super) struct Plan<'a> {
     pub(super) divider: Option<f32>,
     pub(super) new_tab: f32,
     pub(super) total: f32,
+    /// The height of a row, and of the New Tab row.
+    pub(super) row: f32,
 }
 
 /// What the list remembers between frames: where tabs were (so a closed one
@@ -87,6 +96,10 @@ pub(super) struct State {
     pub(super) pressed: Option<TabId>,
     pub(super) pill_shown: bool,
     pub(super) pill_epoch: u64,
+    /// The shown tab, and a count of changes of it: the site swaps in for
+    /// the title of each newly shown tab.
+    pub(super) shown: Option<TabId>,
+    pub(super) swap_epoch: u64,
 }
 
 /// What `State::sync` found this frame.
@@ -94,6 +107,7 @@ pub(super) struct Changes {
     pub(super) leaving: Vec<Placed>,
     pub(super) fresh: Vec<(TabId, Kind)>,
     pub(super) pill_epoch: u64,
+    pub(super) swap_epoch: u64,
     pub(super) newly_leaving: bool,
 }
 
@@ -151,10 +165,16 @@ impl State {
             self.pill_epoch += 1;
         }
         self.pill_shown = shown;
+        let shown_tab = items.iter().find(|i| i.tab.active).map(|i| i.tab.id);
+        if shown_tab != self.shown {
+            self.shown = shown_tab;
+            self.swap_epoch += 1;
+        }
         Changes {
             leaving: self.leaving.iter().map(|l| l.placed.clone()).collect(),
             fresh,
             pill_epoch: self.pill_epoch,
+            swap_epoch: self.swap_epoch,
             newly_leaving,
         }
     }
@@ -203,7 +223,10 @@ pub(super) fn plan<'a>(
     rows: &[&'a SidebarTab],
     pinned: usize,
     room: f32,
+    roomy: bool,
 ) -> Plan<'a> {
+    let row = row_height(roomy);
+    let pitch = row + ROW_GAP;
     let (cells, grid) = pin_cells(favourites.len(), room);
     let mut items = Vec::with_capacity(favourites.len() + rows.len());
     for (index, (tab, rect)) in favourites.iter().zip(cells).enumerate() {
@@ -231,19 +254,20 @@ pub(super) fn plan<'a>(
             kind: Kind::Row,
             rect: Rect {
                 x: 0.,
-                y: top + index as f32 * PITCH + skip,
+                y: top + index as f32 * pitch + skip,
                 w: room,
-                h: ROW,
+                h: row,
             },
             index,
         });
     }
-    let end = top + rows.len() as f32 * PITCH + if divided { DIVIDER_STEP } else { 0. };
+    let end = top + rows.len() as f32 * pitch + if divided { DIVIDER_STEP } else { 0. };
     Plan {
         items,
-        divider: divided.then_some(top + pinned as f32 * PITCH),
+        divider: divided.then_some(top + pinned as f32 * pitch),
         new_tab: end,
-        total: end + ROW + FOOT,
+        total: end + row + FOOT,
+        row,
     }
 }
 
@@ -257,6 +281,16 @@ mod tests {
         assert_eq!(pin_rows(7, 4), [4, 3]);
         assert_eq!(pin_rows(9, 4), [3, 3, 3]);
         assert_eq!(pin_rows(10, 4), [4, 3, 3]);
+    }
+
+    #[test]
+    fn roomy_rows_are_36_tall_with_the_new_tab_row_to_match() {
+        assert_eq!(row_height(false), 28.);
+        assert_eq!(row_height(true), 36.);
+        let plain = plan(&[], &[], 0, 200., false);
+        let roomy = plan(&[], &[], 0, 200., true);
+        assert_eq!((plain.new_tab, plain.total), (0., 28. + FOOT));
+        assert_eq!((roomy.new_tab, roomy.total), (0., 36. + FOOT));
     }
 
     #[test]

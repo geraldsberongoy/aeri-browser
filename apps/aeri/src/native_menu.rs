@@ -14,7 +14,15 @@ use objc2_foundation::{NSPoint, NSString};
 /// One row of a menu. Rows carry no images: on macOS 27 a pop-up menu does
 /// not draw item images (Observed: set, 16 × 16, never shown).
 pub enum Entry {
-    Item { title: String, checked: bool },
+    Item {
+        title: String,
+        checked: bool,
+    },
+    /// A row that opens a menu of its own.
+    Submenu {
+        title: String,
+        items: Vec<Entry>,
+    },
     Separator,
 }
 
@@ -76,31 +84,8 @@ pub fn pop_up(
     // SAFETY: plain NSObject initialisation of our subclass.
     let target: Retained<Target> = unsafe { msg_send![super(target), init] };
     let menu = NSMenu::new(mtm);
-    for (index, entry) in entries.iter().enumerate() {
-        let item = match entry {
-            Entry::Separator => NSMenuItem::separatorItem(mtm),
-            Entry::Item { title, checked } => {
-                // SAFETY: AppKit calls on the main thread; `pick:` exists on
-                // the target.
-                let item = unsafe {
-                    let item = NSMenuItem::initWithTitle_action_keyEquivalent(
-                        NSMenuItem::alloc(mtm),
-                        &NSString::from_str(title),
-                        Some(sel!(pick:)),
-                        &NSString::new(),
-                    );
-                    item.setTarget(Some(&target));
-                    item
-                };
-                item.setTag(index as isize);
-                if *checked {
-                    item.setState(NSControlStateValueOn);
-                }
-                item
-            }
-        };
-        menu.addItem(&item);
-    }
+    let mut index = 0;
+    fill(&menu, entries, &mut index, &target, mtm);
     TARGET.with_borrow_mut(|slot| *slot = Some(target));
     let x = match align {
         Align::Left | Align::Above => x,
@@ -116,4 +101,58 @@ pub fn pop_up(
         view.bounds().size.height - top
     };
     menu.popUpMenuPositioningItem_atLocation_inView(None, NSPoint::new(x, y), Some(view));
+}
+
+/// Adds `entries` to `menu`. Every entry, nested ones included, takes the
+/// next index in a depth-first walk (a submenu's own row counts, then its
+/// items), the tag `on_pick` is called with.
+fn fill(
+    menu: &NSMenu,
+    entries: &[Entry],
+    index: &mut isize,
+    target: &Retained<Target>,
+    mtm: MainThreadMarker,
+) {
+    for entry in entries {
+        let tag = *index;
+        *index += 1;
+        let item = match entry {
+            Entry::Separator => NSMenuItem::separatorItem(mtm),
+            Entry::Item { title, checked } => {
+                // SAFETY: AppKit calls on the main thread; `pick:` exists on
+                // the target.
+                let item = unsafe {
+                    let item = NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &NSString::from_str(title),
+                        Some(sel!(pick:)),
+                        &NSString::new(),
+                    );
+                    item.setTarget(Some(target));
+                    item
+                };
+                item.setTag(tag);
+                if *checked {
+                    item.setState(NSControlStateValueOn);
+                }
+                item
+            }
+            Entry::Submenu { title, items } => {
+                // SAFETY: AppKit calls on the main thread; no action.
+                let item = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &NSString::from_str(title),
+                        None,
+                        &NSString::new(),
+                    )
+                };
+                let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(title));
+                fill(&sub, items, index, target, mtm);
+                item.setSubmenu(Some(&sub));
+                item
+            }
+        };
+        menu.addItem(&item);
+    }
 }

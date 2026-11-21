@@ -10,6 +10,8 @@ mod appearance;
 mod fold;
 mod frame;
 mod lights;
+mod modifiers;
+mod power;
 mod pressure;
 mod reveal;
 pub mod symbols;
@@ -33,6 +35,8 @@ pub use self::frame::{
     BAR_HEIGHT, Frame, MAX_VISIBLE_SUGGESTIONS, SIDE_OVERLAY_EXTRA, SUGGESTION_CHROME,
     SUGGESTION_HEIGHT,
 };
+pub use self::modifiers::watch_command;
+pub use self::power::saving_power;
 pub use self::pressure::{Pressure, watch_memory_pressure};
 pub use self::reveal::Edge;
 

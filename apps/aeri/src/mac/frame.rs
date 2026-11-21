@@ -47,7 +47,8 @@ use super::reveal::{self, Reveal};
 use super::window_of;
 use crate::native_menu;
 use crate::shell::AppMsg;
-use crate::window_frame::{RAIL_WIDTH, STRIP_HEIGHT};
+pub(super) use crate::window_frame::pinned_side_width;
+use crate::window_frame::{PageInsets, page_insets, strip_height};
 
 /// Address bar geometry, in points, from Search's `Omnibox` (see
 /// `address_bar`): the bar's window covers the whole page and paints the
@@ -60,10 +61,6 @@ pub const SUGGESTION_HEIGHT: f64 = 34.0;
 pub const SUGGESTION_CHROME: f64 = 14.0;
 /// Rows shown at once; more scroll.
 pub const MAX_VISIBLE_SUGGESTIONS: usize = 9;
-/// Margin between the page card and the frame's left, right and bottom
-/// edges, and the card's corner radius, in points.
-const PAGE_INSET: f64 = 8.0;
-const PAGE_RADIUS: f64 = 10.0;
 /// The side overlay's width beyond the sidebar: room for the fold shadow
 /// (Search's `FoldShadow`: radius 20, 4 pt away from the page).
 pub const SIDE_OVERLAY_EXTRA: f64 = 28.0;
@@ -248,32 +245,35 @@ impl Frame {
         layout
     }
 
+    /// Where the page sits beside the chrome (see [`page_insets`]).
+    fn insets(&self, frame: &NSWindow) -> PageInsets {
+        let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
+        page_insets(&self.layout.get(), fullscreen, frame.frame().size.width)
+    }
+
     /// Where the active tab's window goes, in screen coordinates: the whole
-    /// window with nothing pinned, else a card beside the pinned chrome.
+    /// window with nothing pinned, else a card, or the page edge to edge,
+    /// beside the pinned chrome.
     fn page_rect(&self, frame: &NSWindow) -> NSRect {
         let rect = frame.frame();
-        let layout = self.layout_now(frame);
-        let side = pinned_side_width(&layout, rect.size.width);
-        if side == 0.0 && !layout.top_pinned {
-            return rect;
-        }
-        let (left, right) = match layout.side {
-            _ if side == 0.0 => (PAGE_INSET, PAGE_INSET),
-            Side::Left => (side, PAGE_INSET),
-            Side::Right => (PAGE_INSET, side),
-        };
-        let top = if layout.top_pinned {
-            STRIP_HEIGHT
-        } else {
-            PAGE_INSET
-        };
+        let i = self.insets(frame);
         NSRect::new(
-            NSPoint::new(rect.origin.x + left, rect.origin.y + PAGE_INSET),
+            NSPoint::new(rect.origin.x + i.left, rect.origin.y + i.bottom),
             NSSize::new(
-                (rect.size.width - left - right).max(1.0),
-                (rect.size.height - top - PAGE_INSET).max(1.0),
+                (rect.size.width - i.left - i.right).max(1.0),
+                (rect.size.height - i.top - i.bottom).max(1.0),
             ),
         )
+    }
+
+    /// How chrome moves in this window: the theme's motion, and none at
+    /// all under "Reduce animations".
+    pub(super) fn motion_now(&self) -> Motion {
+        if self.layout.get().reduce_animations {
+            Motion::Off
+        } else {
+            self.motion.get()
+        }
     }
 
     /// Takes a new layout: refits the page, the overlays and the bar.
@@ -313,15 +313,18 @@ impl Frame {
             return;
         };
         let page = self.page_rect(&frame);
+        let radius = self.insets(&frame).radius;
         for (_, tab) in self.tabs.borrow().iter() {
             tab.setFrame_display(page, true);
+            round_page(tab, radius);
         }
         if let Some([side, strip]) = self.overlays.borrow().as_ref() {
             let rect = frame.frame();
             let window_top = rect.origin.y + rect.size.height;
             let layout = self.layout_now(&frame);
             // A pinned strip stays; the sliding sidebar comes in below it.
-            let below = if layout.top_pinned { STRIP_HEIGHT } else { 0.0 };
+            let strip_h = strip_height(&layout);
+            let below = if layout.top_pinned { strip_h } else { 0.0 };
             let width = layout.sidebar_width_in(rect.size.width) + SIDE_OVERLAY_EXTRA;
             let x = match layout.side {
                 Side::Left => rect.origin.x,
@@ -336,8 +339,8 @@ impl Frame {
             );
             strip.setFrame_display(
                 NSRect::new(
-                    NSPoint::new(rect.origin.x, window_top - STRIP_HEIGHT),
-                    NSSize::new(rect.size.width, STRIP_HEIGHT),
+                    NSPoint::new(rect.origin.x, window_top - strip_h),
+                    NSSize::new(rect.size.width, strip_h),
                 ),
                 true,
             );
@@ -407,7 +410,7 @@ impl Frame {
         };
         self.bar_visible.set(false);
         bar.setIgnoresMouseEvents(true);
-        if self.motion.get() == Motion::Off {
+        if self.motion_now() == Motion::Off {
             bar.setAlphaValue(0.0);
         } else {
             let fading = bar.clone();
@@ -497,16 +500,6 @@ impl Frame {
     }
 }
 
-/// Width a pinned sidebar (or rail) keeps beside the page; 0 when the
-/// sidebar slides in.
-pub(super) fn pinned_side_width(layout: &Layout, window_width: f64) -> f64 {
-    match (layout.sidebar_pinned, layout.rail) {
-        (false, _) => 0.0,
-        (true, true) => RAIL_WIDTH,
-        (true, false) => layout.sidebar_width_in(window_width),
-    }
-}
-
 /// Shows or hides the frame's own close, minimise and zoom buttons.
 fn show_window_buttons(frame: &NSWindow, shown: bool) {
     for kind in [
@@ -520,8 +513,8 @@ fn show_window_buttons(frame: &NSWindow, shown: bool) {
     }
 }
 
-/// Makes a tab window a card like Search's: every corner rounded by
-/// [`PAGE_RADIUS`] (the page's scrollbars are overlays, see
+/// Makes a tab window a card like Search's: every corner rounded (by
+/// [`round_page`]; the page's scrollbars are overlays, see
 /// [`prefer_overlay_scrollers`](super::prefer_overlay_scrollers), so the
 /// corners clip nothing), clear around them, no shadow of its own (the
 /// frame casts the window's). CEF's
@@ -541,11 +534,26 @@ fn style_card(window: &NSWindow) {
     unsafe {
         let layer: *mut AnyObject = msg_send![&*view, layer];
         if let Some(layer) = layer.as_ref() {
-            let _: () = msg_send![layer, setCornerRadius: PAGE_RADIUS];
             // `kCACornerCurveContinuous`, Search's `.continuous` style.
             let curve = objc2_foundation::ns_string!("continuous");
             let _: () = msg_send![layer, setCornerCurve: curve];
             let _: () = msg_send![layer, setMasksToBounds: true];
+        }
+    }
+}
+
+/// The page's corner radius: 10 as a card, 0 edge to edge (Search
+/// `Metrics.cardRadius`, passed as `cards ? 10 : 0`, `Stage.swift`).
+fn round_page(window: &NSWindow, radius: f64) {
+    let Some(view) = window.contentView() else {
+        return;
+    };
+    // SAFETY: a CALayer message on the main thread; `layer` is live while
+    // the view is.
+    unsafe {
+        let layer: *mut AnyObject = msg_send![&*view, layer];
+        if let Some(layer) = layer.as_ref() {
+            let _: () = msg_send![layer, setCornerRadius: radius];
         }
     }
 }
@@ -600,6 +608,8 @@ impl TabObserver for Frame {
         if self.active.get() == Some(tab) {
             self.activate(tab);
         }
+        // A tab's window may have taken the keyboard before it was ours.
+        self.redraw_lights();
     }
 
     fn destroyed(&self, tab: TabId) {

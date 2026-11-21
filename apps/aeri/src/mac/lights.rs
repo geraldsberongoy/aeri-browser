@@ -24,6 +24,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 use super::frame::{Frame, pinned_side_width};
+use crate::window_frame::strip_height;
 use aeri_core::layout::Side;
 static ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -176,14 +177,17 @@ impl Group {
     }
 
     fn redraw(&self) {
-        // The widget works out coloured or grey from its bezel state,
-        // refreshed when AppKit tells a control its window's key state
-        // changed (private `_windowChangedKeyState`, what the titlebar's
-        // own buttons get); a plain display keeps the old state.
+        // The widget works out coloured or grey when told to update
+        // (`-[_NSThemeWidget update]`, what its theme frame sends on a
+        // key change); a plain display keeps the old state.
         for button in self.subviews().iter() {
-            // SAFETY: an NSControl method, sent on the main thread.
+            // SAFETY: `update`, guarded by `respondsToSelector:`, sent on
+            // the main thread.
             unsafe {
-                let _: () = msg_send![&*button, _windowChangedKeyState];
+                let can: Bool = msg_send![&*button, respondsToSelector: sel!(update)];
+                if can.as_bool() {
+                    let _: () = msg_send![&*button, update];
+                }
             }
             button.setNeedsDisplay(true);
         }
@@ -267,13 +271,14 @@ impl Lights {
     }
 
     /// Puts the close button's centre [`CENTRE`] points from `band_left`
-    /// (from `host`'s left edge) and from the window's top, and shows them.
-    pub(super) fn show_at(&self, host: &NSWindow, band_left: f64) {
+    /// (from `host`'s left edge) and `centre_y` from the window's top (half
+    /// the band's height), and shows them.
+    pub(super) fn show_at(&self, host: &NSWindow, band_left: f64, centre_y: f64) {
         let Some(content) = host.contentView() else {
             return;
         };
         let size = self.group.frame().size;
-        let top = CENTRE - size.height / 2.0;
+        let top = centre_y - size.height / 2.0;
         let y = if content.isFlipped() {
             top
         } else {
@@ -339,14 +344,14 @@ impl Frame {
                 Side::Left => 0.0,
                 Side::Right => (side.frame().size.width - layout.sidebar_width_in(width)).max(0.0),
             };
-            side_lights.show_at(side, left);
-            strip_lights.show_at(strip, 0.0);
+            side_lights.show_at(side, left, CENTRE);
+            strip_lights.show_at(strip, 0.0, strip_height(&layout) / 2.0);
         } else {
             side_lights.hide();
             strip_lights.hide();
         }
         if shown && layout.side == Side::Right && layout.sidebar_pinned {
-            frame_lights.show_at(frame, width - pinned_side_width(&layout, width));
+            frame_lights.show_at(frame, width - pinned_side_width(&layout, width), CENTRE);
         } else {
             frame_lights.hide();
         }
@@ -356,6 +361,31 @@ impl Frame {
     pub(super) fn redraw_lights(&self) {
         for lights in self.lights.borrow().iter().flatten() {
             lights.redraw();
+        }
+        // The frame's own titlebar buttons. The keyboard lives in a page or
+        // the address bar, child windows that can be neither main nor
+        // speak for the frame, so AppKit draws the frame inactive: grey
+        // buttons, as if Aeri were behind another app. While Aeri is in
+        // front and the keyboard is in the frame's family, the frame keeps
+        // a main window's look (private `_setForceMainAppearance:`).
+        if let Some(frame) = self.frame.borrow().as_ref() {
+            let app =
+                objc2_app_kit::NSApplication::sharedApplication(MainThreadMarker::from(&**frame));
+            let ours = app.keyWindow().is_some_and(|key| {
+                *key == **frame
+                    || key.parentWindow().as_deref() == Some(&**frame)
+                    || self.tabs.borrow().iter().any(|(_, tab)| **tab == *key)
+            });
+            let force = app.isActive() && ours;
+            // SAFETY: NSWindow's private setter, guarded by
+            // `respondsToSelector:`, sent on the main thread.
+            unsafe {
+                let can: Bool =
+                    msg_send![&**frame, respondsToSelector: sel!(_setForceMainAppearance:)];
+                if can.as_bool() {
+                    let _: () = msg_send![&**frame, _setForceMainAppearance: Bool::new(force)];
+                }
+            }
         }
     }
 

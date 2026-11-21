@@ -434,7 +434,9 @@ impl Shell {
             id: item.id,
             label: item.value.label(),
             host: host_of(item.value.url()),
+            url: item.value.url().to_owned(),
             icon: item.value.icon.clone(),
+            favicon: item.value.favicon.as_ref().map(|icon| icon.image.clone()),
             pinned: item.pinned,
             favourite,
             active: Some(item.id) == shown,
@@ -453,7 +455,7 @@ impl Shell {
             .map(|space| SpaceChip {
                 id: space.id,
                 name: space.name.clone(),
-                colour: space.colour,
+                colour: space.tint(),
                 icon: space.icon.clone(),
                 current: space.id == w.space,
             })
@@ -634,7 +636,7 @@ impl Shell {
 /// The host of a web address (`https://www.github.com/a` becomes
 /// `www.github.com`); empty for any other page. The sidebar draws a tab's
 /// letter from it.
-fn host_of(url: &str) -> String {
+pub(super) fn host_of(url: &str) -> String {
     let Some(rest) = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))

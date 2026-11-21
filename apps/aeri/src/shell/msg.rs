@@ -175,6 +175,8 @@ pub enum AppMsg {
         confirmed: bool,
     },
     SpaceEditorClosed,
+    /// The space's icon and colour menu and popover.
+    SpaceLook(crate::space_look::SpaceLookMsg),
     /// The tab editor: the tab's own name and icon; `None` for the page's.
     SetTabLook {
         tab: TabId,
@@ -196,6 +198,8 @@ pub enum AppMsg {
     Resources(ResourceMsg),
     /// macOS switched light/dark or an accessibility display setting.
     SystemAppearanceChanged,
+    /// ⌘ went down or up anywhere in the app (tab numbers).
+    CommandHeld(bool),
     Chrome(ChromeMsg),
     ThemeEditor(ThemeEditorMsg),
     /// The open panel chose a theme file to add to the library.

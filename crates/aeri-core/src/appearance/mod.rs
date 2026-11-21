@@ -7,6 +7,7 @@ pub mod harmony;
 pub mod library;
 pub mod recipe;
 pub mod tokens;
+pub mod wash;
 
 pub use color::{Oklch, Rgba};
 pub use harmony::{Harmony, harmony, shuffle};
@@ -15,6 +16,7 @@ pub use recipe::{
     UiSize,
 };
 pub use tokens::{Accessibility, AppAppearance, Backdrop, Mode, Resolved, Tokens, resolve};
+pub use wash::{Strength, Wash, WashPaint};
 
 /// The bundled themes (design §3.6), Aeri first. Each is an ordinary
 /// recipe, readable from the same file format.

@@ -30,7 +30,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSTimer};
 
 use super::frame::{Frame, pinned_side_width};
-use crate::window_frame::STRIP_HEIGHT;
+use crate::window_frame::strip_height;
 use aeri_core::appearance::Motion;
 use aeri_core::layout::{Layout, Side, TabPlace};
 
@@ -217,7 +217,8 @@ impl Frame {
         let at_edge = |reach: f64| x <= reach && (x >= 0.0 || self.reveal.inside.get());
         let clicked = kind != NSEventType::MouseMoved;
         let on_page = self.is_page(window);
-        let side_top = if layout.top_pinned { STRIP_HEIGHT } else { 0.0 };
+        let strip_h = strip_height(&layout);
+        let side_top = if layout.top_pinned { strip_h } else { 0.0 };
         let top_slides = slides(&layout, Edge::Top);
         let reach = layout.sidebar_width_in(rect.size.width);
         // A pinned rail is its own lane: resting on it opens the sidebar.
@@ -235,7 +236,7 @@ impl Frame {
             }
             // In the shared corner the top wins.
             let (lane, region) = match edge {
-                Edge::Top => (in_window && y <= TOP_EDGE, in_window && y <= STRIP_HEIGHT),
+                Edge::Top => (in_window && y <= TOP_EDGE, in_window && y <= strip_h),
                 Edge::Side => {
                     let below = tall && y >= side_top && !(top_slides && y <= TOP_EDGE);
                     (below && at_edge(side_lane), below && at_edge(reach))
@@ -248,8 +249,7 @@ impl Frame {
                 } else {
                     self.cancel(edge);
                 }
-            } else if region
-                && !(edge == Edge::Side && self.reveal.shown[1].get() && y <= STRIP_HEIGHT)
+            } else if region && !(edge == Edge::Side && self.reveal.shown[1].get() && y <= strip_h)
             {
                 self.reveal.entered[i].set(true);
                 self.cancel(edge);
@@ -312,7 +312,7 @@ impl Frame {
             return;
         };
         overlay.setIgnoresMouseEvents(!shown);
-        let duration = match self.motion.get() {
+        let duration = match self.motion_now() {
             Motion::Off => {
                 overlay.setAlphaValue(if shown { 1.0 } else { 0.0 });
                 return;
@@ -323,7 +323,7 @@ impl Frame {
         // Standard motion slides in from the edge; leaving only fades, so
         // the overlay ends where the layout put it.
         let target = overlay.frame();
-        let slide = shown && self.motion.get() == Motion::Standard;
+        let slide = shown && self.motion_now() == Motion::Standard;
         if slide {
             let mut start = target;
             start.origin.y += SLIDE;

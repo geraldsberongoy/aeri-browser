@@ -41,6 +41,7 @@ impl WindowFrame {
     /// below it. The band's empty parts drag the window. Pinned, the
     /// column's inner edge drags to resize and a double-click on it resets.
     pub(crate) fn sidebar(&self, host: Host, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme::tokens_in(self.window_id, cx);
         let width = self.sidebar_width();
         // Search: `lights = fullScreen ? 0 : max(0, min(80, width - 20 - 86))`.
         let room = if self.lights_hidden() {
@@ -79,10 +80,35 @@ impl WindowFrame {
             .min_h_0()
             .w(px(width))
             .when(self.layout.top_pinned, |column| column.pt(px(COLUMN_PAD)))
+            // Edge to edge the column is on the page's ground, with a
+            // hairline on its inner edge (Search `Side.swift`).
+            .when(self.flat(host), |column| column.bg(theme::c(t.panel)))
             .children(band)
             .child(list)
             .child(self.foot(host, cx))
+            .children(self.flat(host).then(|| self.inner_hairline(&t)))
             .children((host == Host::Frame).then(|| self.edge_grip(cx)))
+    }
+
+    /// The page runs edge to edge beside this column of the frame: no card
+    /// (so no gap, and the column is not on the frame's wash).
+    fn flat(&self, host: Host) -> bool {
+        host == Host::Frame && !self.cards_now()
+    }
+
+    /// The 1 pt hairline on the column's inner edge.
+    fn inner_hairline(&self, t: &aeri_core::appearance::Tokens) -> gpui::Div {
+        let line = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .w(px(1.))
+            .bg(theme::c(t.separator));
+        if self.layout.side == Side::Right {
+            line.left_0()
+        } else {
+            line.right_0()
+        }
     }
 
     /// The foot: 26 pt doors 2 pt apart, 10 pt from the left and the
@@ -101,7 +127,7 @@ impl WindowFrame {
             0.
         };
         let dy = if host == Host::Overlay && self.layout.top_pinned {
-            STRIP_HEIGHT as f32
+            super::strip_height(&self.layout) as f32
         } else {
             0.
         };
@@ -133,17 +159,22 @@ impl WindowFrame {
             );
         let mut nth = 1;
         if let Some(space) = self.spaces.iter().find(|s| s.current) {
-            let mark = match space.icon.as_str() {
-                "" => space
-                    .name
-                    .chars()
-                    .next()
-                    .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect::<String>()),
-                icon => icon.to_owned(),
-            };
             // Search `SpaceDot`: the space's colour at 0.14, 0.24 under the
-            // pointer.
+            // pointer; an `sf:` icon is a symbol, 12 pt medium, in it.
             let tint = Rgba::rgb(space.colour);
+            let mark: gpui::AnyElement = match crate::space_look::symbol_of(&space.icon) {
+                Some(name) => crate::symbol::symbol(name, 12., crate::symbol::Weight::Medium, tint)
+                    .into_any_element(),
+                None => SharedString::from(match space.icon.as_str() {
+                    "" => space
+                        .name
+                        .chars()
+                        .next()
+                        .map_or_else(|| "·".to_owned(), |c| c.to_uppercase().collect::<String>()),
+                    icon => icon.to_owned(),
+                })
+                .into_any_element(),
+            };
             let (at_rest, hovered) = (
                 theme::c(tint.with_alpha(0.14)),
                 theme::c(tint.with_alpha(0.24)),
@@ -157,7 +188,7 @@ impl WindowFrame {
                     .text_size(px(12.))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme::c(tint))
-                    .child(SharedString::from(mark))
+                    .child(mark)
                     .on_click(cx.listener(move |this, _: &ClickEvent, win, _| {
                         let (x, y) = hang(at, win);
                         this.send(AppMsg::SpaceMenu {
@@ -328,7 +359,11 @@ impl WindowFrame {
                     .size(px(m.cell))
                     .rounded(px(8.))
                     .text_size(px(m.text + 4.))
-                    .text_color(theme::c(t.text_tertiary))
+                    .text_color(theme::c(if self.layout.high_contrast {
+                        t.text
+                    } else {
+                        t.text_tertiary
+                    }))
                     .hover(move |style| style.bg(theme::c(t.hover)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                         this.send(AppMsg::Shortcut {

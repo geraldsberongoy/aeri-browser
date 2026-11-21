@@ -36,16 +36,18 @@ naming the Search file they come from.
 | # | Slice | Done when |
 | --- | --- | --- |
 | 1 | Look and motion: Search greys and tab tokens; card frame; 52 pt band with the lights at (26, 26) and Back/Forward/Reload doors; pinned squares, 28 pt rows, New tab row, foot doors; SF Symbols; live ground gliding between tabs; rows arriving, leaving and making room on settle; select on press; the fold sliding on its springs with the peek shadow; the centred field (560 × 50) over a dimmed page | Screenshots match Search's measurements; motion observed |
-| 2 | Address in the shown tab (click the live row), ⌘K tab finder with ⌘ held | Driven live |
-| 3 | Carrying tabs (held row follows the pointer, others make room), two-finger space swipe | Driven live |
+| 2 | Customisation 1:1: Search's Settings (rail, find, groups, switches, segmented, pictures, key boxes) over a data index; every Appearance/Tabs preference applied (cards, slide, ⌘S icons, compact strip, nav left, roomy, letters/site icons, high contrast, address on the shown tab, ⌘ numbers, reduce animations, save power); site icons; space looks (colours, presets, strength, custom gradient, grain, 24 icons, Search's space menu) | Each row changes the chrome; screenshots |
+| 3 | Address in the shown tab (click the live row), ⌘K tab finder with ⌘ held | Driven live |
+| 4 | Carrying tabs (held row follows the pointer, others make room), two-finger space swipe | Driven live |
 
 ## Status
 
 | Slice | State |
 | --- | --- |
-| 1 | in progress |
-| 2 | pending |
+| 1 | done (`5e40c86`, `c96deb5`); motion not yet observed |
+| 2 | built; screenshots pending (the owner was using the Mac) |
 | 3 | pending |
+| 4 | pending |
 
 ## Evidence ledger
 
@@ -60,11 +62,19 @@ naming the Search file they come from.
 | Glide, settle, fold springs and the centred field on screen | Not observed | the owner was using the Mac; scripted input stopped when Aeri lost the front |
 | Native window buttons stand where the page covers the frame's own (sliding sidebar, strip, a right-hand sidebar), at the same centres | Observed | right-hand sidebar, fresh profile: AppKit's three discs drawn in the band beside the history doors (window capture) |
 | The top strip no longer comes down from the top edge unless tabs run along the top | Implemented | `reveal::slides`; not driven live |
+| Shown tab says its site; live row, letter tiles and the native lights in the default layout | Observed | fresh profile, window capture: "chromewebstore.google.com" in the live row |
+| Search's wash maths (five colours, six presets, opacities per strength) | Tested | `wash` tests |
+| Settings rows, preferences on screen, site icons, space looks | Not observed | built and compiled; the Mac's screen went to another Space mid-run |
 
 ## Residual risks
 
 - GPUI cannot scale a view: rows arrive by growing in height and fading,
   not by Search's 0.94 scale.
-- Window buttons, the frame's own as well as the standalone ones, drew
-  grey in every window capture, even with Aeri in front; the key-state
-  hook (`mac/lights.rs`) is in, but coloured buttons were not seen.
+- Window buttons drew grey in every window capture, even with Aeri in
+  front: after the keyboard moves to a page (a child window) the frame was
+  neither key nor main. `redraw_lights` now makes the frame main again and
+  asks its theme frame to update the buttons (`_updateButtonState`);
+  coloured buttons not yet seen.
+- Settings stays a window; Search shows it as a tab.
+- The site line uses a small built-in list of two-part suffixes, not the
+  public suffix list.

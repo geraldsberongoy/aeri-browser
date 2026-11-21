@@ -5,7 +5,7 @@ use aeri_core::layout::TabPlace;
 use gpui::{ClickEvent, Context, div, prelude::*, px};
 
 use super::doors::symbol_door;
-use super::{COLUMN_PAD, CONTROLS_LEFT, Host, PAGE_EDGE, STRIP_HEIGHT, WindowFrame, drag};
+use super::{COLUMN_PAD, CONTROLS_LEFT, Host, PAGE_EDGE, WindowFrame, drag, strip_height};
 use crate::mac::Edge;
 use crate::shell::{AppMsg, ChromeMsg};
 use crate::theme;
@@ -23,14 +23,29 @@ impl WindowFrame {
         } else {
             CONTROLS_LEFT
         };
+        let t = theme::tokens_in(self.window_id, cx);
+        let top_tabs = self.layout.tabs == TabPlace::Top;
+        // Back, Forward and Reload sit beside the window's buttons before the
+        // tabs under "on the left", else at the trailing end, as in Search's
+        // tab bar. The strip of a sidebar layout has no tabs: they stay left.
+        let helm_left = self.layout.nav_left || !top_tabs;
+        let flat = host == Host::Frame && !self.cards_now();
         let strip = div()
             .flex()
             .flex_none()
             .w_full()
             .items_center()
-            .h(px(STRIP_HEIGHT as f32))
+            .h(px(strip_height(&self.layout) as f32))
+            // Edge to edge the strip is on the page's ground with a
+            // hairline under it (Search's tab bar has no card).
+            .when(flat, |strip| {
+                strip
+                    .bg(theme::c(t.panel))
+                    .border_b_1()
+                    .border_color(theme::c(t.separator))
+            })
             .child(self.lights(host, room))
-            .child(self.helm(cx))
+            .when(helm_left, |strip| strip.child(self.helm(cx)))
             .when(self.layout.tabs == TabPlace::Top, |strip| {
                 strip
                     .child(drag(host).w(px(COLUMN_PAD)))
@@ -64,6 +79,9 @@ impl WindowFrame {
                 ))
             });
         strip
+            .when(!helm_left, |strip| {
+                strip.child(div().flex_none().pr(px(8.)).child(self.helm(cx)))
+            })
             .child(
                 div()
                     .flex()
@@ -149,7 +167,11 @@ impl WindowFrame {
                 .justify_center()
                 .size(px(26.))
                 .rounded(px(7.))
-                .text_color(theme::c(t.text_tertiary))
+                .text_color(theme::c(if self.layout.high_contrast {
+                    t.text
+                } else {
+                    t.text_tertiary
+                }))
                 .hover(move |style| style.bg(theme::c(t.hover)))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                     this.send(AppMsg::Shortcut {

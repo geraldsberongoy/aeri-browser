@@ -10,15 +10,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use aeri_cef::{TabObserver, TabWindow};
-use aeri_core::engine::Event;
+use aeri_core::engine::{Event, Favicon};
 use aeri_core::ids::{ProfileId, TabId};
 use aeri_core::profile_db::{ClosedTab, Origin, SavedTab, records_history};
 use aeri_core::tab::{LoadState, Tab};
 use aeri_core::workspace::Item;
-use gpui::App;
+use gpui::{App, RenderImage};
 
 use super::session::now;
-use super::windows::Spot;
+use super::windows::{Spot, host_of};
 use super::{AppMsg, NEW_TAB_URL, Plan, Shell};
 
 /// How a new tab's browser starts.
@@ -45,6 +45,23 @@ pub(super) struct TabEntry {
     pub(super) name: Option<String>,
     /// The Person's emoji or symbol for the tab.
     pub(super) icon: Option<String>,
+    /// The page's site icon (in memory only), until the tab leaves its site.
+    pub(super) favicon: Option<SiteIcon>,
+}
+
+/// A site icon, ready to draw, and the host it belongs to.
+pub(super) struct SiteIcon {
+    pub(super) host: String,
+    pub(super) image: Arc<RenderImage>,
+}
+
+impl SiteIcon {
+    /// Built once per icon; GPUI sprites are BGRA, as CEF hands the pixels.
+    fn new(host: String, icon: &Favicon) -> Option<Self> {
+        let pixels = image::RgbaImage::from_raw(icon.width, icon.height, icon.bgra.to_vec())?;
+        let image = Arc::new(RenderImage::new([image::Frame::new(pixels)]));
+        Some(Self { host, image })
+    }
 }
 
 impl TabEntry {
@@ -61,6 +78,7 @@ impl TabEntry {
             last_seen: Instant::now(),
             name: None,
             icon: None,
+            favicon: None,
         };
         (id, entry)
     }
@@ -166,6 +184,7 @@ impl Shell {
             last_seen: Instant::now(),
             name: None,
             icon: None,
+            favicon: None,
         };
         match place {
             Place::After(opener) => w.tabs.insert(tab, entry, false, Some(opener)),
@@ -329,8 +348,39 @@ impl Shell {
             return;
         }
         let mut changed = false;
-        if matches!(event, Event::AddressChanged { .. }) {
-            changed |= item.value.blocked_popup.take().is_some();
+        // An icon replaced or cleared leaves GPUI's sprite atlas too.
+        let mut dropped = None;
+        match &event {
+            Event::AddressChanged { url, .. } => {
+                changed |= item.value.blocked_popup.take().is_some();
+                // A site's icon stays until the tab goes to another site.
+                if item
+                    .value
+                    .favicon
+                    .as_ref()
+                    .is_some_and(|icon| icon.host != host_of(url))
+                {
+                    dropped = item.value.favicon.take();
+                    changed = true;
+                }
+            }
+            Event::FaviconChanged {
+                page_url, favicon, ..
+            } => {
+                // An icon fetched for a page the tab has since left is stale.
+                let host = host_of(&item.value.model.url);
+                if host == host_of(page_url) {
+                    dropped = std::mem::replace(
+                        &mut item.value.favicon,
+                        favicon.as_ref().and_then(|icon| SiteIcon::new(host, icon)),
+                    );
+                    changed = true;
+                }
+            }
+            _ => {}
+        }
+        if let Some(old) = dropped {
+            cx.drop_image(old.image, None);
         }
         let model = &mut item.value.model;
         let activity = model.activity;

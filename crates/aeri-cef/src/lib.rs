@@ -9,6 +9,7 @@ mod client;
 mod devtools;
 mod downloads;
 mod extensions;
+mod favicon;
 mod orphan;
 mod profile;
 mod resources;

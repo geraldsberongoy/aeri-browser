@@ -30,6 +30,15 @@ pub(super) struct SpaceInfo {
     pub(super) theme: Option<aeri_core::appearance::Recipe>,
 }
 
+impl SpaceInfo {
+    /// The colour of the space's dot: its wash's first colour, or Search's
+    /// grey for none (`Spaces.colours[0]`).
+    pub(super) fn tint(&self) -> u32 {
+        let wash = self.theme.as_ref().and_then(|r| r.wash.as_ref());
+        wash.map_or(0x73_78_85, |w| w.lead().to_u32() >> 8)
+    }
+}
+
 /// A space no window shows.
 #[derive(Default)]
 pub(super) struct Parked {
@@ -107,7 +116,12 @@ impl Shell {
             });
         }
         if open.spaces.is_empty() {
-            self.new_space(profile, "Home".to_owned(), ACCENTS[0], String::new());
+            self.new_space(
+                profile,
+                "Home".to_owned(),
+                ACCENTS[0],
+                crate::space_look::HOME.to_owned(),
+            );
         }
     }
 
@@ -142,6 +156,16 @@ impl Shell {
         });
         open.parked.insert(id, Parked::default());
         id
+    }
+
+    /// The first of Search's icons no space of the profile wears.
+    pub(super) fn free_icon(&self, profile: ProfileId) -> String {
+        let spaces = self
+            .open
+            .get(&profile)
+            .map(|open| open.spaces.as_slice())
+            .unwrap_or_default();
+        crate::space_look::free_icon(spaces.iter().map(|s| s.icon.as_str()))
     }
 
     /// A name and colour for the next new space.
@@ -192,7 +216,8 @@ impl Shell {
             Some(space) => space,
             None => {
                 let (name, colour) = self.next_space_defaults(profile);
-                self.new_space(profile, name, colour, String::new())
+                let icon = self.free_icon(profile);
+                self.new_space(profile, name, colour, icon)
             }
         }
     }

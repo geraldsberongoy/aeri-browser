@@ -15,7 +15,7 @@ mod tab_list;
 
 use aeri_core::appearance::Rgba;
 use aeri_core::ids::{SpaceId, TabId};
-use aeri_core::layout::{DEFAULT_SIDEBAR, Layout, Side, clamp_width};
+use aeri_core::layout::{DEFAULT_SIDEBAR, Layout, Side, TabPlace, clamp_width};
 use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
@@ -28,8 +28,12 @@ use crate::shell::{AppMsg, ChromeMsg};
 use crate::theme;
 
 /// Height of the band and the strip, in points (Search `Metrics.strip`);
-/// `mac::Frame` insets the page below the strip.
+/// `mac::Frame` insets the page below the strip. [`strip_height`] is the
+/// one in effect.
 pub const STRIP_HEIGHT: f64 = 52.0;
+/// The strip with tabs along the top and "Shorter tab bar" on (Search
+/// `Metrics.strip` compact, `Design.swift`).
+const COMPACT_STRIP: f64 = 36.0;
 /// Width of the collapsed sidebar (icon rail), in points: room for the
 /// window buttons above it.
 pub const RAIL_WIDTH: f64 = 84.0;
@@ -55,8 +59,11 @@ pub struct SidebarTab {
     /// The tab address's host (`www.github.com`); empty for a blank or
     /// internal page. The tab's letter comes from it.
     pub host: String,
+    /// The tab's address, for the site it says on the shown row.
+    pub url: String,
     /// The Person's emoji or symbol for the tab.
     pub icon: Option<String>,
+    pub favicon: Option<std::sync::Arc<gpui::RenderImage>>,
     pub pinned: bool,
     /// One of the profile's favourites rather than the space's own.
     pub favourite: bool,
@@ -102,6 +109,10 @@ pub struct WindowFrame {
     grip_seen: bool,
     /// What the tab list remembers between frames (`tab_list`).
     tab_list: tab_list::TabListState,
+    /// ⌘ is held: the first tabs show their numbers.
+    command_held: bool,
+    /// Where the window's own buttons were last put, from the strip's top.
+    lights_y: f32,
 }
 
 /// Which window draws a piece of chrome: the frame (pinned) or an overlay
@@ -142,6 +153,8 @@ impl WindowFrame {
             resizing: None,
             on_edge: false,
             grip_seen: false,
+            command_held: false,
+            lights_y: TRAFFIC_LIGHTS.y.into(),
             tab_list: tab_list::TabListState::default(),
         }
     }
@@ -168,6 +181,22 @@ impl WindowFrame {
             self.layout = layout;
             cx.notify();
         }
+    }
+
+    /// ⌘ went down or up anywhere in the app.
+    pub fn set_command_held(&mut self, held: bool, cx: &mut Context<Self>) {
+        if self.command_held != held {
+            self.command_held = held;
+            if self.layout.tab_numbers {
+                cx.notify();
+            }
+        }
+    }
+
+    /// The page is a card: the preference, and not full screen unless the
+    /// card is kept there (Search `asCards`).
+    fn cards_now(&self) -> bool {
+        cards_in(&self.layout, self.fullscreen)
     }
 
     /// The sidebar is on the right.
@@ -265,6 +294,7 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
+        let strip = strip_height(&self.layout) as f32;
         let t = theme::tokens_in(self.window_id, cx);
         div()
             .id(id)
@@ -282,7 +312,7 @@ impl WindowFrame {
             .active(move |style| style.bg(theme::c(t.pressed)))
             .on_click(cx.listener(move |this, event: &ClickEvent, _, _| {
                 let x = f32::from(event.position().x);
-                this.send(msg(window, x, STRIP_HEIGHT as f32 - 6., Align::Right));
+                this.send(msg(window, x, strip - 6., Align::Right));
             }))
             .child(SharedString::from(label))
     }
@@ -305,6 +335,7 @@ impl WindowFrame {
     /// the same). A click opens the profile menu under it.
     fn profile_door(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
+        let strip = strip_height(&self.layout) as f32;
         let t = theme::tokens_in(self.window_id, cx);
         doors::door("profile", "Profile", t)
             .child(avatar(&self.profile, 18.))
@@ -313,7 +344,7 @@ impl WindowFrame {
                 let _ = this.tx.unbounded_send(AppMsg::ProfileMenu {
                     window,
                     x: f32::from(win.viewport_size().width) - PAGE_EDGE,
-                    y: STRIP_HEIGHT as f32 - 6.,
+                    y: strip - 6.,
                     align: Align::Right,
                 });
             }))
@@ -340,43 +371,116 @@ pub fn avatar(profile: &Profile, size: f32) -> impl IntoElement {
         .child(SharedString::from(profile.monogram()))
 }
 
+/// The strip's height in `layout`: 52 pt, or 36 with tabs along the top
+/// and "Shorter tab bar" on (Search `Metrics.strip`).
+pub fn strip_height(layout: &Layout) -> f64 {
+    if layout.compact_strip && layout.tabs == TabPlace::Top {
+        COMPACT_STRIP
+    } else {
+        STRIP_HEIGHT
+    }
+}
+
+/// Whether the page is a card in `layout` (Search `asCards`, `Browser.swift:2799`:
+/// `sidebar && cards && (!fullScreen || cardsInFullScreen)`): tabs in the
+/// sidebar, the preference, and in full screen only where the card is kept.
+/// With tabs along the top the page runs edge to edge under the strip.
+pub fn cards_in(layout: &Layout, fullscreen: bool) -> bool {
+    layout.tabs == TabPlace::Side && layout.cards && (!fullscreen || layout.cards_full_screen)
+}
+
+/// Width a pinned sidebar (or rail) keeps beside the page; 0 when the
+/// sidebar slides in.
+pub fn pinned_side_width(layout: &Layout, window_width: f64) -> f64 {
+    match (layout.sidebar_pinned, layout.rail) {
+        (false, _) => 0.0,
+        (true, true) => RAIL_WIDTH,
+        (true, false) => layout.sidebar_width_in(window_width),
+    }
+}
+
+/// Where the page sits in the frame, in points from each edge, and its
+/// corner radius. `mac::Frame` places the page window by it and the frame
+/// view draws the card's edge by it, so the two always agree.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageInsets {
+    pub left: f64,
+    pub right: f64,
+    pub top: f64,
+    pub bottom: f64,
+    pub radius: f64,
+    /// The page is a card with room around it (its edge is drawn).
+    pub card: bool,
+}
+
+/// The page's place beside whatever is pinned. Full screen pins nothing;
+/// the page then covers the frame, or is a card with a gap all round where
+/// the card is kept there. As a card it has Search's 8 pt gap and radius
+/// 10; edge to edge it meets the sidebar (a hairline on the sidebar's edge)
+/// and the strip with no gap and square corners (`Metrics.cardGap`,
+/// `cardRadius`, `Browser.asCards`).
+pub fn page_insets(layout: &Layout, fullscreen: bool, window_width: f64) -> PageInsets {
+    let cards = cards_in(layout, fullscreen);
+    let radius = if cards { f64::from(CARD_RADIUS) } else { 0. };
+    let gap = f64::from(PAGE_EDGE);
+    let (side, top_pinned) = if fullscreen {
+        (0., false)
+    } else {
+        (pinned_side_width(layout, window_width), layout.top_pinned)
+    };
+    if side == 0. && !top_pinned {
+        let kept = fullscreen && cards;
+        let edge = if kept { gap } else { 0. };
+        return PageInsets {
+            left: edge,
+            right: edge,
+            top: edge,
+            bottom: edge,
+            radius,
+            card: kept,
+        };
+    }
+    let far = if cards { gap } else { 0. };
+    let (left, right) = match layout.side {
+        _ if side == 0. => (far, far),
+        Side::Left => (side, far),
+        Side::Right => (far, side),
+    };
+    let top = if top_pinned {
+        strip_height(layout)
+    } else {
+        far
+    };
+    PageInsets {
+        left,
+        right,
+        top,
+        bottom: far,
+        radius,
+        card: cards,
+    }
+}
+
 impl WindowFrame {
     /// The page card's edge, behind the page (Search `CardEdge`,
     /// `Design.swift`): a rounded rectangle at the page's place with a 1 pt
     /// hairline just outside it and a soft shadow. The page window, rounded
     /// to the same radius, covers its inside. `None` while the page covers
-    /// the frame.
+    /// the frame or runs edge to edge.
     fn card_edge(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        let side = if !self.layout.sidebar_pinned {
-            0.
-        } else if self.layout.rail {
-            RAIL_WIDTH as f32
-        } else {
-            self.sidebar_width()
-        };
-        if side == 0. && !self.layout.top_pinned {
+        let insets = page_insets(&self.layout, self.fullscreen, f64::from(self.window_width));
+        if !insets.card {
             return None;
         }
-        // The same insets as `mac::Frame::page_rect`.
-        let (left, right) = match self.layout.side {
-            _ if side == 0. => (PAGE_EDGE, PAGE_EDGE),
-            Side::Left => (side, PAGE_EDGE),
-            Side::Right => (PAGE_EDGE, side),
-        };
-        let top = if self.layout.top_pinned {
-            STRIP_HEIGHT as f32
-        } else {
-            PAGE_EDGE
-        };
         let t = theme::tokens_in(self.window_id, cx);
         Some(
             div()
                 .absolute()
-                .left(px(left - 1.))
-                .right(px(right - 1.))
-                .top(px(top - 1.))
-                .bottom(px(PAGE_EDGE - 1.))
-                .rounded(px(CARD_RADIUS + 1.))
+                .left(px(insets.left as f32 - 1.))
+                .right(px(insets.right as f32 - 1.))
+                .top(px(insets.top as f32 - 1.))
+                .bottom(px(insets.bottom as f32 - 1.))
+                .rounded(px(insets.radius as f32 + 1.))
                 .border_1()
                 .border_color(theme::c(t.card_border))
                 .bg(theme::c(t.panel))
@@ -425,6 +529,17 @@ impl Render for WindowFrame {
             self.window_width = width;
             cx.notify();
         }
+        // The window's own buttons centre in the strip: lower in the full
+        // one, higher in the shorter one (Search `Lights.swift`).
+        let lights_y = if self.layout.top_pinned {
+            strip_height(&self.layout) as f32 / 2. - 7.
+        } else {
+            f32::from(TRAFFIC_LIGHTS.y)
+        };
+        if lights_y != self.lights_y {
+            self.lights_y = lights_y;
+            window.set_traffic_light_position(point(TRAFFIC_LIGHTS.x, px(lights_y)));
+        }
         let frame = theme::backdrop_in(
             div().relative().size_full().flex().flex_col(),
             self.window_id,
@@ -447,6 +562,7 @@ impl Render for WindowFrame {
         });
         frame
             .children(self.card_edge(cx))
+            .children(self.flat_rail(cx))
             .when(self.layout.top_pinned, |frame| {
                 frame.child(self.strip(Host::Frame, cx))
             })
@@ -460,5 +576,33 @@ impl Render for WindowFrame {
                     })
                     .children(side),
             )
+    }
+}
+
+impl WindowFrame {
+    /// An icon rail with the page edge to edge beside it: its own strip of
+    /// the page's ground with a hairline on the inner edge (the full
+    /// sidebar does the same in `sidebar`), under the rail's tiles.
+    fn flat_rail(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        if !(self.layout.sidebar_pinned && self.layout.rail) || self.cards_now() {
+            return None;
+        }
+        let t = theme::tokens_in(self.window_id, cx);
+        let top = if self.layout.top_pinned {
+            strip_height(&self.layout) as f32
+        } else {
+            0.
+        };
+        let ground = div()
+            .absolute()
+            .top(px(top))
+            .bottom_0()
+            .w(px(RAIL_WIDTH as f32))
+            .bg(theme::c(t.panel))
+            .border_color(theme::c(t.separator));
+        Some(match self.layout.side {
+            Side::Left => ground.left_0().border_r_1(),
+            Side::Right => ground.right_0().border_l_1(),
+        })
     }
 }

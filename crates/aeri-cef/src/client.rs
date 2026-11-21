@@ -7,15 +7,17 @@ use aeri_core::engine::Event;
 use aeri_core::ids::TabId;
 use cef::rc::Rc as _;
 use cef::{
-    Browser, CefString, Client, DisplayHandler, DownloadHandler, Errorcode, Frame, ImplClient,
-    ImplDisplayHandler, ImplFrame, ImplKeyboardHandler, ImplLifeSpanHandler, ImplLoadHandler,
-    ImplRequestHandler, KeyEvent, KeyEventType, KeyboardHandler, LifeSpanHandler, LoadHandler,
-    RequestHandler, TerminationStatus, WrapClient, WrapDisplayHandler, WrapKeyboardHandler,
-    WrapLifeSpanHandler, WrapLoadHandler, WrapRequestHandler, wrap_client, wrap_display_handler,
-    wrap_keyboard_handler, wrap_life_span_handler, wrap_load_handler, wrap_request_handler,
+    Browser, CefString, CefStringList, Client, DisplayHandler, DownloadHandler, Errorcode, Frame,
+    ImplBrowser, ImplClient, ImplDisplayHandler, ImplFrame, ImplKeyboardHandler,
+    ImplLifeSpanHandler, ImplLoadHandler, ImplRequestHandler, KeyEvent, KeyEventType,
+    KeyboardHandler, LifeSpanHandler, LoadHandler, RequestHandler, TerminationStatus, WrapClient,
+    WrapDisplayHandler, WrapKeyboardHandler, WrapLifeSpanHandler, WrapLoadHandler,
+    WrapRequestHandler, wrap_client, wrap_display_handler, wrap_keyboard_handler,
+    wrap_life_span_handler, wrap_load_handler, wrap_request_handler,
 };
 
 use crate::downloads::download_handler;
+use crate::favicon;
 use crate::{Signal, SignalSink};
 use aeri_core::keymap::{Chord, Shortcut};
 
@@ -127,6 +129,22 @@ wrap_display_handler! {
 
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             emit(&self.sink, Event::TitleChanged { tab: self.tab, title: text(title) });
+        }
+
+        fn on_favicon_urlchange(&self, browser: Option<&mut Browser>, icon_urls: Option<&mut CefStringList>) {
+            let Some(browser) = browser else {
+                return;
+            };
+            let Some(host) = browser.host() else {
+                return;
+            };
+            // The page the icon belongs to; a download that outlives it is dropped.
+            let page_url = browser
+                .main_frame()
+                .map(|frame| CefString::from(&frame.url()).to_string())
+                .unwrap_or_default();
+            let urls = icon_urls.map(|list| list.clone().into_iter().collect()).unwrap_or_default();
+            favicon::changed(host, self.tab, self.sink.clone(), page_url, urls);
         }
 
         fn on_media_access_change(

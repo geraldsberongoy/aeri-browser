@@ -3,7 +3,7 @@
 //! theme editor changes one scope, previewing live; Cancel puts back what
 //! was there.
 
-use aeri_core::appearance::Recipe;
+use aeri_core::appearance::{Recipe, Wash};
 use aeri_core::ids::{ProfileId, SpaceId};
 use gpui::{
     App, AppContext, BorrowAppContext, Bounds, TitlebarOptions, WindowBackgroundAppearance,
@@ -42,14 +42,45 @@ pub(super) struct Editing {
 }
 
 impl Shell {
-    /// The theme `w` paints with when it is not the app's.
+    /// The theme `w` paints with when it is not the app's: its space's own,
+    /// else its profile's. A space with only a wash follows its profile's.
     fn window_theme(&self, w: &AeriWindow) -> Option<Recipe> {
         let open = self.open.get(&w.profile)?;
         open.spaces
             .iter()
             .find(|s| s.id == w.space)
             .and_then(|s| s.theme.clone())
+            .filter(|r| !r.is_wash_only())
             .or_else(|| open.theme.clone())
+    }
+
+    /// The wash a space with no theme of its own wears over the theme it
+    /// follows (a theme of its own carries its wash itself).
+    fn window_wash(&self, w: &AeriWindow) -> Option<Wash> {
+        let space = self
+            .open
+            .get(&w.profile)?
+            .spaces
+            .iter()
+            .find(|s| s.id == w.space)?;
+        space
+            .theme
+            .as_ref()
+            .filter(|r| r.is_wash_only())
+            .and_then(|r| r.wash.clone())
+    }
+
+    /// The wash a space wears, in its own theme or alone.
+    pub(super) fn space_wash(&self, profile: ProfileId, space: SpaceId) -> Option<Wash> {
+        self.open
+            .get(&profile)?
+            .spaces
+            .iter()
+            .find(|s| s.id == space)?
+            .theme
+            .as_ref()?
+            .wash
+            .clone()
     }
 
     /// The theme window `window_id` shows now, whichever scope it is from.
@@ -81,6 +112,10 @@ impl Shell {
         // An open editor would put its scope's old theme back later.
         self.close_theme_editor(cx);
         tracing::info!(?scope, theme = recipe.name, "theme chosen");
+        let mut recipe = recipe;
+        if let Scope::Space(profile, space) = scope {
+            recipe.wash = self.space_wash(profile, space);
+        }
         self.keep_scope_theme(scope, Some(recipe), cx);
     }
 
@@ -89,15 +124,17 @@ impl Shell {
     /// scope's theme changes. A theme with the macOS material turns its
     /// window see-through over the desktop's blur.
     pub(super) fn apply_window_themes(&mut self, cx: &mut App) {
-        let themes: Vec<(u64, Option<Recipe>)> = self
+        let themes: Vec<(u64, Option<Recipe>, Option<Wash>)> = self
             .windows
             .iter()
-            .map(|w| (w.id, self.window_theme(w)))
+            .map(|w| (w.id, self.window_theme(w), self.window_wash(w)))
             .collect();
         let changed = cx.update_global::<Theme, _>(|theme, _| {
-            themes.into_iter().fold(false, |changed, (id, recipe)| {
-                theme.set_window(id, recipe) | changed
-            })
+            themes
+                .into_iter()
+                .fold(false, |changed, (id, recipe, wash)| {
+                    theme.set_window(id, recipe, wash) | changed
+                })
         });
         for w in &self.windows {
             let resolved = cx.global::<Theme>().resolved_in(w.id);
@@ -181,12 +218,17 @@ impl Shell {
             ThemeTarget::App => (Scope::App, "All Windows".to_owned(), None),
         };
         let original = self.scope_theme(scope, cx);
-        // A scope without a theme starts from the one it shows.
-        let recipe = match (&original, scope) {
-            (Some(recipe), _) => recipe.clone(),
+        // A scope without a theme starts from the one it shows; a space with
+        // only a wash starts from the theme it follows, wash kept.
+        let own = original.clone().filter(|r| !r.is_wash_only());
+        let mut recipe = match (own, scope) {
+            (Some(recipe), _) => recipe,
             (None, Scope::Profile(_)) => cx.global::<Theme>().recipe.clone(),
             (None, _) => shown,
         };
+        if let Scope::Space(profile, space) = scope {
+            recipe.wash = self.space_wash(profile, space);
+        }
         self.close_theme_editor(cx);
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
@@ -230,8 +272,15 @@ impl Shell {
             }
             ThemeEditorMsg::Inherit => {
                 tracing::info!(?scope, "theme follows its parent");
+                // A space keeps its wash; only its theme goes.
+                let fallback = match scope {
+                    Scope::Space(profile, space) => {
+                        self.space_wash(profile, space).map(Recipe::wash_only)
+                    }
+                    _ => None,
+                };
                 self.close_theme_editor(cx);
-                self.keep_scope_theme(scope, None, cx);
+                self.keep_scope_theme(scope, fallback, cx);
             }
             ThemeEditorMsg::Cancel => {
                 if let Some(editing) = self.theme_editor.take() {

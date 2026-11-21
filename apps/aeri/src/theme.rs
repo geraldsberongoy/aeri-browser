@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aeri_core::appearance::{
-    Accessibility, AppAppearance, Backdrop, Mode, Recipe, Resolved, Rgba, Texture, Tokens, resolve,
+    Accessibility, AppAppearance, Backdrop, Mode, Recipe, Resolved, Rgba, Texture, Tokens, Wash,
+    resolve,
 };
 use gpui::{
     App, Bounds, Corners, Div, Global, IntoElement, ParentElement, RenderImage, Styled, canvas,
@@ -22,9 +23,17 @@ pub struct Theme {
     pub a11y: Accessibility,
     pub system_dark: bool,
     pub resolved: Resolved,
-    /// Windows showing a profile or space with a theme of its own, by
-    /// window id.
-    scoped: HashMap<u64, (Recipe, Resolved)>,
+    /// Windows showing a profile or space with a theme or wash of their
+    /// own, by window id.
+    scoped: HashMap<u64, Scoped>,
+}
+
+/// What a window paints with when it is not the app's theme as it is: a
+/// theme of its own (`None`: the app's) and/or a space's wash over it.
+struct Scoped {
+    recipe: Option<Recipe>,
+    wash: Option<Wash>,
+    resolved: Resolved,
 }
 
 impl Global for Theme {}
@@ -42,6 +51,20 @@ impl Theme {
         }
     }
 
+    fn resolve_scoped(&self, recipe: Option<&Recipe>, wash: Option<&Wash>) -> Resolved {
+        let mut resolved = resolve_with(
+            recipe.unwrap_or(&self.recipe),
+            self.app,
+            self.a11y,
+            self.system_dark,
+        );
+        // A space's wash goes over the theme; the tokens are not tinted.
+        if let Some(wash) = wash {
+            resolved.wash = Some(wash.paint(resolved.mode == Mode::Dark));
+        }
+        resolved
+    }
+
     /// Resolves again after any input changed; returns whether the colours
     /// changed (so windows need repainting).
     pub fn refresh(&mut self) -> bool {
@@ -49,35 +72,46 @@ impl Theme {
         let resolved = resolve_with(&self.recipe, app, a11y, dark);
         let mut changed = resolved != self.resolved;
         self.resolved = resolved;
-        for (recipe, resolved) in self.scoped.values_mut() {
-            let fresh = resolve_with(recipe, app, a11y, dark);
-            changed |= fresh != *resolved;
-            *resolved = fresh;
+        let mut scoped = std::mem::take(&mut self.scoped);
+        for entry in scoped.values_mut() {
+            let fresh = self.resolve_scoped(entry.recipe.as_ref(), entry.wash.as_ref());
+            changed |= fresh != entry.resolved;
+            entry.resolved = fresh;
         }
+        self.scoped = scoped;
         changed
     }
 
-    /// Gives `window` a theme of its own, or (`None`) the app's again;
-    /// returns whether its look changed.
-    pub fn set_window(&mut self, window: u64, recipe: Option<Recipe>) -> bool {
-        match recipe {
-            Some(recipe) => {
-                if self.scoped.get(&window).is_some_and(|(r, _)| *r == recipe) {
-                    return false;
-                }
-                let resolved = resolve_with(&recipe, self.app, self.a11y, self.system_dark);
-                self.scoped.insert(window, (recipe, resolved));
-                true
-            }
-            None => self.scoped.remove(&window).is_some(),
+    /// Gives `window` a theme of its own and/or a wash over it, or (both
+    /// `None`) the app's again; returns whether its look changed.
+    pub fn set_window(&mut self, window: u64, recipe: Option<Recipe>, wash: Option<Wash>) -> bool {
+        if recipe.is_none() && wash.is_none() {
+            return self.scoped.remove(&window).is_some();
         }
+        if self
+            .scoped
+            .get(&window)
+            .is_some_and(|s| s.recipe == recipe && s.wash == wash)
+        {
+            return false;
+        }
+        let resolved = self.resolve_scoped(recipe.as_ref(), wash.as_ref());
+        self.scoped.insert(
+            window,
+            Scoped {
+                recipe,
+                wash,
+                resolved,
+            },
+        );
+        true
     }
 
     /// The theme `window` paints with.
     pub fn resolved_in(&self, window: u64) -> &Resolved {
         self.scoped
             .get(&window)
-            .map_or(&self.resolved, |(_, resolved)| resolved)
+            .map_or(&self.resolved, |scoped| &scoped.resolved)
     }
 }
 
@@ -115,13 +149,27 @@ pub fn ca(color: Rgba, alpha: f32) -> gpui::Rgba {
 /// material.
 pub fn backdrop_in(frame: Div, window: u64, cx: &App) -> Div {
     let resolved = cx.global::<Theme>().resolved_in(window);
-    paint_backdrop(frame, resolved, resolved.material.unwrap_or(1.))
+    let frame = paint_backdrop(frame, resolved, resolved.material.unwrap_or(1.));
+    washed(frame, window, resolved, cx)
 }
 
 /// Paints window `window`'s backdrop, always opaque (chrome floating over
 /// the page).
 pub fn opaque_backdrop_in(frame: Div, window: u64, cx: &App) -> Div {
-    paint_backdrop(frame, cx.global::<Theme>().resolved_in(window), 1.)
+    let resolved = cx.global::<Theme>().resolved_in(window);
+    let frame = paint_backdrop(frame, resolved, 1.);
+    washed(frame, window, resolved, cx)
+}
+
+/// `frame` with the window's space wash over its backdrop, crossfading
+/// when the look changes.
+fn washed(frame: Div, window: u64, resolved: &Resolved, cx: &App) -> Div {
+    let still = crate::motion::still(window, cx);
+    let layers = crate::space_look::paint::layers(window, resolved, still);
+    if layers.is_empty() {
+        return frame;
+    }
+    frame.relative().children(layers)
 }
 
 /// A solid fill, or a gradient of any number of stops, then the texture.

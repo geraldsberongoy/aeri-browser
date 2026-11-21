@@ -6,9 +6,10 @@
 
 use aeri_core::appearance::{Density, Tokens};
 use aeri_core::ids::TabId;
+use aeri_core::layout::{Glyph, Layout};
 use gpui::{
-    ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, MouseUpEvent, SharedString,
-    Stateful, Window, div, prelude::*, px,
+    ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, MouseUpEvent, ObjectFit,
+    SharedString, Stateful, Window, div, img, prelude::*, px,
 };
 
 use super::{SidebarTab, WindowFrame};
@@ -94,10 +95,11 @@ pub(super) fn is_blank(tab: &SidebarTab) -> bool {
         && matches!(tab.label.trim(), "" | "New Tab" | "about:blank")
 }
 
-/// Search's `Mark` with no favicon: the letter at 0.56 of `size`, medium, on
-/// an ink wash with radius 0.22 of `size` (`Icons.swift`). The Person's own
-/// icon replaces it, bare.
-pub(super) fn mark(tab: &SidebarTab, size: f32, t: &Tokens) -> Div {
+/// Search's `Mark` (`Icons.swift`): with "Site icons" and a favicon, the
+/// icon clipped to a radius of 0.22 of `size`; else the letter at 0.56 of
+/// `size`, medium, on an ink wash of the same radius, in ink under "High
+/// contrast text", else muted. The Person's own icon replaces either, bare.
+pub(super) fn mark(tab: &SidebarTab, size: f32, t: &Tokens, layout: &Layout) -> Div {
     let slot = div()
         .flex()
         .flex_none()
@@ -113,12 +115,34 @@ pub(super) fn mark(tab: &SidebarTab, size: f32, t: &Tokens) -> Div {
             .text_size(px(size * 0.8))
             .child(SharedString::from(letter(tab)));
     }
+    if let Some(icon) = shown_favicon(tab, layout) {
+        return slot.rounded(px(size * 0.22)).child(
+            img(icon.clone())
+                .size(px(size))
+                .object_fit(ObjectFit::Cover),
+        );
+    }
     slot.rounded(px(size * 0.22))
         .bg(theme::ca(t.text, 0.06))
         .text_size(px(size * 0.56))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(theme::c(t.quiet))
+        .text_color(theme::c(if layout.high_contrast {
+            t.text
+        } else {
+            t.quiet
+        }))
         .child(SharedString::from(letter(tab)))
+}
+
+/// The favicon to draw in a tab's mark: "Tabs show: Site icons" and the
+/// tab has one.
+pub(super) fn shown_favicon<'a>(
+    tab: &'a SidebarTab,
+    layout: &Layout,
+) -> Option<&'a std::sync::Arc<gpui::RenderImage>> {
+    tab.favicon
+        .as_ref()
+        .filter(|_| layout.glyph == Glyph::Icons && tab.icon.is_none())
 }
 
 impl WindowFrame {
@@ -237,7 +261,11 @@ impl WindowFrame {
             .rounded(px(9.))
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(theme::c(if tab.active { t.text } else { t.quiet }))
+            .text_color(theme::c(if tab.active || self.layout.high_contrast {
+                t.text
+            } else {
+                t.quiet
+            }))
             .bg(theme::c(if tab.active { t.pin_live } else { t.tile }))
             .when(!tab.active, |cell| {
                 cell.hover(move |style| {
@@ -246,7 +274,11 @@ impl WindowFrame {
                         .text_color(theme::ca(t.text, 0.7))
                 })
             })
-            .child(SharedString::from(letter(tab)))
+            .map(|cell| match shown_favicon(tab, &self.layout) {
+                // Search's icon column: the mark at 16 (`SideIcons.swift`).
+                Some(_) => cell.child(mark(tab, 16., &t, &self.layout)),
+                None => cell.child(SharedString::from(letter(tab))),
+            })
             .when(tab.audible || tab.loading, |cell| {
                 cell.child(
                     div()
@@ -287,7 +319,11 @@ impl WindowFrame {
             })
             .when(!tab.active, |pill| {
                 pill.when(kept, |pill| pill.bg(theme::c(t.tile)))
-                    .text_color(theme::c(t.quiet))
+                    .text_color(theme::c(if self.layout.high_contrast {
+                        t.text
+                    } else {
+                        t.quiet
+                    }))
                     .hover(move |style| {
                         style
                             .bg(theme::c(t.hover))
@@ -298,7 +334,7 @@ impl WindowFrame {
             base.flex_none()
                 .w(px(30.))
                 .justify_center()
-                .child(mark(tab, 15., &t))
+                .child(mark(tab, 15., &t, &self.layout))
         } else {
             base.w(px(186.))
                 .flex_shrink(1.)
@@ -306,7 +342,7 @@ impl WindowFrame {
                 .pl(px(11.))
                 .pr(px(7.))
                 .gap(px(6.))
-                .child(mark(tab, 15., &t).flex_none())
+                .child(mark(tab, 15., &t, &self.layout).flex_none())
                 .child(
                     div()
                         .min_w_0()

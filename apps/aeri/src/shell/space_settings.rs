@@ -1,19 +1,26 @@
 //! Creating, editing and deleting spaces: the sidebar's space header menu,
 //! the space editor window, and what they change.
 
+use aeri_core::appearance::{Recipe, Wash};
 use aeri_core::ids::{ProfileId, SpaceId};
+use aeri_core::layout::Side;
 use aeri_core::profile_db::{ClosedTab, Origin};
 use gpui::{
-    App, AppContext, Bounds, PromptLevel, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+    App, AppContext, Bounds, PromptLevel, TitlebarOptions, WindowBounds, WindowOptions, point, px,
+    size,
 };
 
+use super::bar::Pick;
+use super::themes::ThemeTarget;
 use super::{AppMsg, NEW_TAB_URL, Shell};
 use crate::native_menu::{Align, Entry};
 use crate::space_editor::SpaceEditor;
+use crate::space_look::{ICONS, SpaceLookMsg, stored, symbol_of};
 
 impl Shell {
-    /// The native menu under the sidebar's space header: every space, then
-    /// space commands.
+    /// The native menu under the sidebar's space header, in Search's order
+    /// (`SpaceMenu.show`): every space, New Space…, then the current space's
+    /// Rename, Icon, Colour…, Move and Delete; Aeri's own theme editor last.
     pub(super) fn space_menu(
         &mut self,
         window_id: u64,
@@ -28,55 +35,109 @@ impl Shell {
         let Some(open) = self.open.get(&w.profile) else {
             return;
         };
-        let mut entries = Vec::new();
-        let mut picks = Vec::new();
+        let (profile, current) = (w.profile, w.space);
+        let Some(at) = open.spaces.iter().position(|s| s.id == current) else {
+            return;
+        };
+        let name = open.spaces[at].name.clone();
+        let wearing = open.spaces[at].icon.clone();
+        let mut menu = MenuBuilder::default();
         for space in &open.spaces {
+            // An emoji or letter leads the name; symbols are not drawn in
+            // native menus on this macOS.
             let title = match space.icon.as_str() {
                 "" => space.name.clone(),
+                icon if symbol_of(icon).is_some() => space.name.clone(),
                 icon => format!("{icon}  {}", space.name),
             };
-            entries.push(Entry::Item {
+            menu.item(
                 title,
-                checked: space.id == w.space,
-            });
-            picks.push(Some(AppMsg::SwitchSpace {
-                window: window_id,
-                space: space.id,
-            }));
+                space.id == current,
+                AppMsg::SwitchSpace {
+                    window: window_id,
+                    space: space.id,
+                },
+            );
         }
-        entries.push(Entry::Separator);
-        picks.push(None);
-        let mut command = |title: &str, msg: AppMsg| {
-            entries.push(Entry::Item {
-                title: title.to_owned(),
-                checked: false,
-            });
-            picks.push(Some(msg));
-        };
-        command(
-            "New Space…",
+        menu.separator();
+        menu.item(
+            "New Space…".to_owned(),
+            false,
             AppMsg::EditSpace {
                 window: window_id,
                 space: None,
             },
         );
-        command(
-            "Edit Space…",
+        menu.separator();
+        menu.item(
+            format!("Rename “{name}”…"),
+            false,
             AppMsg::EditSpace {
                 window: window_id,
-                space: Some(w.space),
+                space: Some(current),
             },
         );
-        if open.spaces.len() > 1 {
-            command(
-                "Delete Space…",
+        let icons = ICONS
+            .iter()
+            .enumerate()
+            .map(|(index, (title, _))| {
+                let icon = stored(index);
+                (
+                    (*title).to_owned(),
+                    icon == wearing,
+                    AppMsg::SpaceLook(SpaceLookMsg::Icon {
+                        profile,
+                        space: current,
+                        icon,
+                    }),
+                )
+            })
+            .collect();
+        menu.submenu("Icon".to_owned(), icons);
+        menu.item(
+            "Colour…".to_owned(),
+            false,
+            AppMsg::SpaceLook(SpaceLookMsg::Open {
+                window: window_id,
+                x,
+                y,
+            }),
+        );
+        let step = |step: isize| {
+            AppMsg::SpaceLook(SpaceLookMsg::Move {
+                window: window_id,
+                step,
+            })
+        };
+        if at > 0 {
+            menu.item("Move Left".to_owned(), false, step(-1));
+        }
+        if at + 1 < open.spaces.len() {
+            menu.item("Move Right".to_owned(), false, step(1));
+        }
+        if at > 0 {
+            menu.separator();
+            menu.item(
+                format!("Delete “{name}”…"),
+                false,
                 AppMsg::DeleteSpace {
                     window: window_id,
-                    space: w.space,
+                    space: current,
                     confirmed: false,
                 },
             );
         }
+        // Aeri's own: the full theme editor, which Search has no page for.
+        menu.separator();
+        menu.item(
+            "Edit Space Theme…".to_owned(),
+            false,
+            AppMsg::BarPick {
+                window: window_id,
+                pick: Pick::EditTheme(ThemeTarget::Space),
+            },
+        );
+        let (entries, picks) = menu.finish();
         let tx = self.tx.clone();
         let frame = w.frame.clone();
         let picks = std::cell::RefCell::new(picks);
@@ -88,6 +149,131 @@ impl Shell {
                 }
             });
         });
+    }
+
+    /// The space icon, colour and order commands.
+    pub(super) fn space_look_msg(&mut self, msg: SpaceLookMsg, cx: &mut App) {
+        match msg {
+            SpaceLookMsg::Open { window, x, y } => self.show_space_look(window, x, y, cx),
+            SpaceLookMsg::Wash {
+                profile,
+                space,
+                wash,
+            } => self.set_space_wash(profile, space, wash, cx),
+            SpaceLookMsg::Icon {
+                profile,
+                space,
+                icon,
+            } => {
+                if let Some(info) = self
+                    .open
+                    .get_mut(&profile)
+                    .and_then(|open| open.spaces.iter_mut().find(|s| s.id == space))
+                {
+                    info.icon = icon;
+                    self.touch(profile);
+                    self.refresh_profile_windows(profile, cx);
+                }
+            }
+            SpaceLookMsg::Move { window, step } => self.move_space(window, step, cx),
+        }
+    }
+
+    /// Opens the Colour popover for the window's space, anchored beside the
+    /// space door the menu hung from: away from the sidebar, as Search's
+    /// `NSPopover` prefers.
+    fn show_space_look(&mut self, window_id: u64, x: f32, y: f32, cx: &mut App) {
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        let (profile, space) = (w.profile, w.space);
+        let Some(info) = self
+            .open
+            .get(&profile)
+            .and_then(|open| open.spaces.iter().find(|s| s.id == space))
+        else {
+            return;
+        };
+        let icon = info.icon.clone();
+        let Ok(frame) = w.frame_window.update(cx, |_, window, _| window.bounds()) else {
+            return;
+        };
+        let right = self.chrome.layout.side == Side::Right;
+        // (x, y) is the door's left edge and top: its bottom is a door lower.
+        let door = 26.;
+        let anchor = if right {
+            point(frame.origin.x + px(x - 8.), frame.origin.y + px(y + door))
+        } else {
+            point(
+                frame.origin.x + px(x + door + 8.),
+                frame.origin.y + px(y + door),
+            )
+        };
+        let wash = self.space_wash(profile, space);
+        crate::space_look::picker::open(
+            self.tx.clone(),
+            window_id,
+            profile,
+            space,
+            icon,
+            wash,
+            anchor,
+            right,
+            cx,
+        );
+    }
+
+    /// Wears `wash` (or none) as the space's look, shown and saved at once.
+    fn set_space_wash(
+        &mut self,
+        profile: ProfileId,
+        space: SpaceId,
+        wash: Option<Wash>,
+        cx: &mut App,
+    ) {
+        let Some(info) = self
+            .open
+            .get_mut(&profile)
+            .and_then(|open| open.spaces.iter_mut().find(|s| s.id == space))
+        else {
+            return;
+        };
+        // A theme of its own keeps its look and carries the wash; without
+        // one the space stores the wash alone and follows its profile's.
+        info.theme = match (info.theme.take(), wash) {
+            (Some(mut recipe), wash) if !recipe.is_wash_only() => {
+                recipe.wash = wash;
+                Some(recipe)
+            }
+            (_, Some(wash)) => Some(Recipe::wash_only(wash)),
+            (_, None) => None,
+        };
+        self.apply_window_themes(cx);
+        self.refresh_profile_windows(profile, cx);
+        self.touch(profile);
+    }
+
+    /// Moves the window's space one place left (`step` -1) or right.
+    fn move_space(&mut self, window_id: u64, step: isize, cx: &mut App) {
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        let (profile, space) = (w.profile, w.space);
+        let Some(open) = self.open.get_mut(&profile) else {
+            return;
+        };
+        let Some(at) = open.spaces.iter().position(|s| s.id == space) else {
+            return;
+        };
+        let Some(to) = at
+            .checked_add_signed(step)
+            .filter(|&to| to < open.spaces.len())
+        else {
+            return;
+        };
+        open.spaces.swap(at, to);
+        self.touch(profile);
+        self.refresh_profile_windows(profile, cx);
     }
 
     /// Opens the space editor on a space of the window's profile, or for a
@@ -116,14 +302,14 @@ impl Shell {
             Some(info) => (info.name.clone(), info.colour, info.icon.clone()),
             None => {
                 let (name, colour) = self.next_space_defaults(profile);
-                (name, colour, String::new())
+                (name, colour, self.free_icon(profile))
             }
         };
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Some(
                     if existing.is_some() {
-                        "Edit Space"
+                        "Rename Space"
                     } else {
                         "New Space"
                     }
@@ -134,7 +320,7 @@ impl Shell {
             }),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
-                size(px(400.), px(300.)),
+                size(px(400.), px(380.)),
                 cx,
             ))),
             is_resizable: false,
@@ -314,5 +500,39 @@ impl Shell {
         });
         self.touch(profile);
         self.refresh_profile_windows(profile, cx);
+    }
+}
+
+/// A menu's rows and what each one sends, indexed alike (a submenu's own
+/// row, then its items, as [`crate::native_menu`] numbers them).
+#[derive(Default)]
+struct MenuBuilder {
+    entries: Vec<Entry>,
+    picks: Vec<Option<AppMsg>>,
+}
+
+impl MenuBuilder {
+    fn item(&mut self, title: String, checked: bool, msg: AppMsg) {
+        self.entries.push(Entry::Item { title, checked });
+        self.picks.push(Some(msg));
+    }
+
+    fn separator(&mut self) {
+        self.entries.push(Entry::Separator);
+        self.picks.push(None);
+    }
+
+    fn submenu(&mut self, title: String, items: Vec<(String, bool, AppMsg)>) {
+        let mut rows = Vec::with_capacity(items.len());
+        self.picks.push(None);
+        for (title, checked, msg) in items {
+            rows.push(Entry::Item { title, checked });
+            self.picks.push(Some(msg));
+        }
+        self.entries.push(Entry::Submenu { title, items: rows });
+    }
+
+    fn finish(self) -> (Vec<Entry>, Vec<Option<AppMsg>>) {
+        (self.entries, self.picks)
     }
 }

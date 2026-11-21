@@ -141,6 +141,8 @@ impl Tab {
             }
             Event::AddressChanged { url, .. } => self.url.clone_from(url),
             Event::TitleChanged { title, .. } => self.title.clone_from(title),
+            // The icon is the shell's to keep; the model has none.
+            Event::FaviconChanged { .. } => {}
             Event::RendererGone { reason, .. } => {
                 self.load = LoadState::Crashed {
                     reason: reason.clone(),
