@@ -50,7 +50,7 @@ naming the Search file they come from.
 | 2 | done (`dd9f167`); parity pass against Search.app side by side (below) |
 | 3 | pending |
 | 4 | pending |
-| 5 | waves 0-2 built: Settings tab, prefs store; General, Tabs, Browsing (engine, Shift-Return, suggestions, site shortcuts, page zoom, capture), Spaces & Pins (recent places, commands), Privacy (tracking, click IDs, GPC, notifications, proxy), Keyboard (launcher), Appearance (dusk), default browser, webmail; find on page. Wave 3 pending |
+| 5 | Waves 0–2 built. Wave 3 adds Reader, Peek, floating video, small windows and the recent-tab switcher. Split View, tab groups and pin homes/folders remain. |
 
 ## Evidence ledger
 
@@ -84,6 +84,8 @@ naming the Search file they come from.
 | Launcher key, proxy, default browser, webmail, dusk, capture | Tested (build) | not driven on screen: they change the owner's system state or need a proxy |
 | Bookmarks bar above the page after ⌘D; reading progress fill on the shown row; Spaces & Pins, Browsing (Links, Video), About (Help) pages; What's New tab | Observed | captures z-bar, z-row, z-spaces, z-about, z-notes |
 | What's New wraps with a heading; reading fill keeps both rounded ends; player card; site-style editor | Tested (build) | fixed after the capture; not re-driven |
+| Reader, manual floating video, Peek, sized pop-up | Observed in isolated bundle | ⇧⌘R rendered the article and reloaded on exit; ⇧⌘P moved a playing video into a 440×247 viewport; Shift-click opened Peek, Esc closed it and ⌘Return promoted the same page; a 480×360 pop-up retained `window.opener`. |
+| Recent-tab switcher, automatic floating and native overlays | Partially verified | Workspace tests passed. The background input probe did not open the switcher, so its foreground panel and Control-release path remain unverified. Floating gestures, return controls, and system Picture in Picture were not checked. |
 
 ## Residual risks
 
@@ -96,6 +98,5 @@ naming the Search file they come from.
   buttons when its own is hidden.
 - Restored tabs whose sites were never seen since the icon cache arrived
   keep their letter until they load.
-- Settings stays a window; Search shows it as a tab.
 - The site line uses a small built-in list of two-part suffixes, not the
   public suffix list.

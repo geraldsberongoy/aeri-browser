@@ -7,9 +7,12 @@
 //! The key is a Carbon hot key ([`hotkey`]): registered only while the
 //! launcher is on, a key is chosen, and Aeri is not itself in front with a
 //! window, where ⌘L and ⌘T are the field and the key goes back to the page.
-//! Small windows do not exist in Aeri, so "Open in a small window" has no
-//! row. The middle-button scroll belongs here too: Chromium's own feature,
-//! switched on at start.
+//! With "Open in a small window" (`launcher.little`, [`super::little`]) the
+//! field's address opens in a small window, over Aeri's windows, not a tab;
+//! the field itself is still Aeri's ⌘T field, so Aeri has come forward when
+//! it shows, which Search's own panel over the other app does not need. The
+//! middle-button scroll belongs here too: Chromium's own feature, switched
+//! on at start.
 
 use std::cell::RefCell;
 
@@ -168,5 +171,6 @@ impl Shell {
         if !open {
             self.toggle_new_tab_bar(id, cx);
         }
+        self.launcher_field_opened(id);
     }
 }

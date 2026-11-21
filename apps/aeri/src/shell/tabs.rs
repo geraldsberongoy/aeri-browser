@@ -236,6 +236,7 @@ impl Shell {
         };
         if w.shown() != Some(tab) {
             self.note_seen(window_id);
+            self.switcher_leaving(window_id, cx);
         }
         let Some(w) = self.window_mut(window_id) else {
             return;

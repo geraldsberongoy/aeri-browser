@@ -75,6 +75,9 @@ pub(crate) struct PendingPopup {
     pub tab: TabId,
     pub opener: TabId,
     pub foreground: bool,
+    /// The size the page named, when it gets a window of its own
+    /// ([`crate::little`]), not a tab.
+    pub window: Option<crate::little::Size>,
     pub sink: SignalSink,
 }
 
@@ -292,6 +295,32 @@ impl TabWindow {
         }
     }
 
+    /// Reading mode: lets the page's corner switch report its look
+    /// (`on`), or takes the function out of the page again.
+    pub fn reader_binding(&self, on: bool) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            crate::reader::binding(&self.state.cdp, &host, on);
+        }
+    }
+
+    /// Runs `script` in the page's own world and gives `done` what it
+    /// answers as text (`page_eval`); `None` if the page took no command
+    /// or the script threw. With `user_gesture` the page counts it as a
+    /// click.
+    pub fn evaluate(
+        &self,
+        script: &str,
+        user_gesture: bool,
+        done: impl FnOnce(Option<String>) + 'static,
+    ) {
+        match self.browser().and_then(|browser| browser.host()) {
+            Some(host) => {
+                crate::page_eval::evaluate(&self.state.cdp, &host, script, user_gesture, done);
+            }
+            None => done(None),
+        }
+    }
+
     /// Mutes the page's sound, or lets it be heard.
     pub fn set_muted(&self, muted: bool) {
         if let Some(host) = self.browser().and_then(|browser| browser.host()) {
@@ -306,6 +335,15 @@ impl TabWindow {
             .is_some_and(|host| host.is_audio_muted() != 0)
     }
 
+    /// A PNG of what the page shows now, `width` CSS pixels across (⌃Tab's
+    /// switcher card); `done` gets none when the page cannot be pictured.
+    pub fn preview(&self, width: f64, done: impl FnOnce(Option<Vec<u8>>) + 'static) {
+        match self.browser().and_then(|browser| browser.host()) {
+            Some(host) => crate::cdp_preview::preview(&self.state.cdp, &host, width, done),
+            None => done(None),
+        }
+    }
+
     /// Your own style for a site: the page wears the CSS kept for its site
     /// among `styles` (host without `www.`, CSS), now and on every page it
     /// loads, and none when the list is empty. Safe to call as often as
@@ -313,6 +351,26 @@ impl TabWindow {
     pub fn set_site_styles(&self, styles: &[(String, String)]) {
         if let Some(host) = self.browser().and_then(|browser| browser.host()) {
             crate::cdp_styles::set(&self.state.cdp, &host, styles);
+        }
+    }
+
+    /// Peek at a link: the page cancels a click on a link made with
+    /// `mask` (bits of [`PEEK_SHIFT`](crate::PEEK_SHIFT),
+    /// [`PEEK_OPTION`](crate::PEEK_OPTION) and
+    /// [`PEEK_COMMAND`](crate::PEEK_COMMAND)) and reports it as
+    /// [`Signal::Peek`]; 0 turns it off. Safe to call as often as the
+    /// choice changes.
+    pub fn set_peek_click(&self, mask: u8) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            crate::peek::set_click(&self.state.cdp, &host, mask);
+        }
+    }
+
+    /// Has the page report its first paint, as [`Signal::Peek`] with
+    /// [`PeekSignal::Painted`].
+    pub fn report_paint(&self) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            crate::peek::watch_paint(&self.state.cdp, &host);
         }
     }
 
@@ -443,7 +501,12 @@ wrap_dev_tools_message_observer! {
             method: Option<&CefString>,
             params: Option<&[u8]>,
         ) {
-            if method.is_none_or(|method| method.to_string() != "Page.windowOpen") {
+            let method = method.map(ToString::to_string).unwrap_or_default();
+            if method != "Page.windowOpen" {
+                if let Some(state) = self.state.upgrade() {
+                    crate::peek::event(state.tab, &state.sink, &method, params);
+                    crate::reader::event(state.tab, &state.sink, &method, params);
+                }
                 return;
             }
             let (Some(state), Some(browser)) = (self.state.upgrade(), browser) else { return };
@@ -622,11 +685,20 @@ wrap_browser_view_delegate! {
                 }
             };
             POPUPS.with_borrow_mut(|popups| popups.ready.insert(popup.tab, window));
-            (popup.sink)(crate::Signal::TabOpened {
-                tab: popup.tab,
-                opener: popup.opener,
-                foreground: popup.foreground,
-            });
+            let opened = match popup.window {
+                Some((width, height)) => crate::Signal::PopupWindow {
+                    tab: popup.tab,
+                    opener: popup.opener,
+                    width,
+                    height,
+                },
+                None => crate::Signal::TabOpened {
+                    tab: popup.tab,
+                    opener: popup.opener,
+                    foreground: popup.foreground,
+                },
+            };
+            (popup.sink)(opened);
             1
         }
 

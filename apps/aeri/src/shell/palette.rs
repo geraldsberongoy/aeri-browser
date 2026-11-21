@@ -48,6 +48,8 @@ pub enum PaletteCommand {
     /// Settings › Appearance › Darken pages that stay light.
     DarkenSite,
     PauseDarkening,
+    /// ⇧⌘R, aliased "reader view" in Search (AddressCommands.swift:148).
+    Reader,
     /// Settings › Browsing › Your own style for a site.
     EditSiteStyle,
     Quit,
@@ -86,6 +88,7 @@ const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand::Capture,
     PaletteCommand::DarkenSite,
     PaletteCommand::PauseDarkening,
+    PaletteCommand::Reader,
     PaletteCommand::EditSiteStyle,
     PaletteCommand::Quit,
 ];
@@ -108,6 +111,7 @@ pub(super) fn shortcut_of(command: PaletteCommand) -> Option<Shortcut> {
         PaletteCommand::Quit => Shortcut::Quit,
         PaletteCommand::DarkenSite => Shortcut::DarkenSite,
         PaletteCommand::PauseDarkening => Shortcut::PauseDarkening,
+        PaletteCommand::Reader => Shortcut::Reader,
         _ => return None,
     })
 }
@@ -250,6 +254,7 @@ impl Shell {
             PaletteCommand::DarkenSite => "Darken This Site",
             PaletteCommand::PauseDarkening if self.dusk_paused() => "Resume Darkening",
             PaletteCommand::PauseDarkening => "Pause Darkening",
+            PaletteCommand::Reader => "Reading Mode",
             PaletteCommand::EditSiteStyle => return self.site_style_title(window_id),
         };
         title.to_owned()

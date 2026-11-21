@@ -221,6 +221,8 @@ pub enum AppMsg {
     RestCheck,
     /// What the tab rows read from their pages and the player does.
     TabSignal(super::tab_signals::TabSignal),
+    /// Reading mode's answers from the page.
+    Reader(super::reader::ReaderMsg),
     /// macOS reported a change in memory pressure.
     MemoryPressure(Pressure),
     Resources(ResourceMsg),
@@ -229,7 +231,15 @@ pub enum AppMsg {
     /// ⌘ went down or up anywhere in the app (tab numbers).
     CommandHeld(bool),
     Launcher(super::launcher::LauncherMsg),
+    /// A small window's line and frame (`crate::little`).
+    Little(crate::little::LittleMsg),
     Find(super::find::FindMsg),
+    /// The floating video's window and page (`float.rs`).
+    Float(super::float::FloatMsg),
+    /// Peek at a link: the panel's dim, knobs and keys.
+    Peek(super::peek::PeekMsg),
+    /// ⌃Tab's switcher: the keys, the panel's pointer and the pictures.
+    Switcher(super::switcher::SwitcherMsg),
     Chrome(ChromeMsg),
     ThemeEditor(ThemeEditorMsg),
     /// The open panel chose a theme file to add to the library.

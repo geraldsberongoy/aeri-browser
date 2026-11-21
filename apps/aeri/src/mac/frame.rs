@@ -71,10 +71,10 @@ pub struct Frame {
     /// overlay, frame (see [`super::lights`]).
     pub(super) lights: RefCell<Option<[Lights; 3]>>,
     pub(super) tabs: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
-    active: Cell<Option<TabId>>,
+    pub(super) active: Cell<Option<TabId>>,
     /// The tab window currently ordered in, which can lag `active` until the
     /// active tab's window exists.
-    shown: RefCell<Option<Retained<NSWindow>>>,
+    pub(super) shown: RefCell<Option<Retained<NSWindow>>>,
     bar_visible: Cell<bool>,
     /// Where the chrome sits (Phase 12).
     pub(super) layout: Cell<Layout>,
@@ -224,6 +224,13 @@ impl Frame {
     /// The frame has nothing to type into: when it becomes key (after a
     /// restore or a Space switch), hand the keyboard to what the Person sees.
     fn forward_key(&self) {
+        // A peek is in sight: the keyboard is its page's.
+        if let Some(peek) = self.peek_key_window() {
+            if !peek.isKeyWindow() {
+                peek.makeKeyWindow();
+            }
+            return;
+        }
         // The find bar is up: the keyboard is the page's if it is there
         // (the Person clicked it), else the bar's. Taking it for the page
         // whenever the frame turns main sent the first ⌘F's typing away.
@@ -254,7 +261,7 @@ impl Frame {
 
     /// Where the page sits beside the chrome (see [`page_insets`]): beside
     /// the pinned column as wide as it is now, mid-glide or not.
-    fn insets(&self, frame: &NSWindow) -> PageInsets {
+    pub(super) fn insets(&self, frame: &NSWindow) -> PageInsets {
         let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
         let layout = self.layout.get();
         let side = self
@@ -429,13 +436,19 @@ impl Frame {
             }
         }
         self.place_find(page);
+        self.place_stage(page);
+        self.place_peek(page);
+        self.place_switcher(frame.frame());
     }
 
     /// Shows `tab`'s window over the frame and hides the previous one.
     pub fn activate(&self, tab: TabId) {
         self.active.set(Some(tab));
+        // A video floating from this tab lands, a picture in picture ends.
+        self.float_arrive(tab);
         let (Some(frame), Some(next)) = (self.frame.borrow().clone(), self.active_window()) else {
             // Not created yet: `created` activates it.
+            self.float_after_activate();
             return;
         };
         next.setFrame_display(self.page_rect(&frame), true);
@@ -444,13 +457,17 @@ impl Frame {
         next.orderFront(None);
         let previous = self.shown.replace(Some(next.clone()));
         if let Some(previous) = previous.filter(|p| !std::ptr::eq(&**p, &*next)) {
-            frame.removeChildWindow(&previous);
-            previous.orderOut(None);
+            // A tab that may float waits where it is for the page's answer.
+            if !self.float_depart_window(&previous) {
+                frame.removeChildWindow(&previous);
+                previous.orderOut(None);
+            }
         }
         self.raise_children();
         if !self.bar_visible.get() {
             next.makeKeyWindow();
         }
+        self.float_after_activate();
     }
 
     /// Keeps the overlays and then the address bar above whichever tab
@@ -462,10 +479,14 @@ impl Frame {
         let overlays = self.overlays.borrow().clone();
         let bar = self.bar.borrow().clone();
         let find = self.find_window();
-        for child in find
+        let switcher = self.switcher_window();
+        let peek = self.peek_windows();
+        for child in peek
             .iter()
+            .chain(find.iter())
             .chain(overlays.iter().flatten())
             .chain(bar.iter())
+            .chain(switcher.iter())
         {
             frame.removeChildWindow(child);
             // SAFETY: AppKit call on the main thread.
@@ -504,8 +525,16 @@ impl Frame {
         }
     }
 
-    /// Forgets a tab window that is closing.
+    /// Forgets a tab window that is leaving: its space is no longer shown
+    /// or it moves to another window. A video playing in it may float.
     pub fn remove_tab(&self, tab: TabId) {
+        self.drop_tab_window(tab, true);
+    }
+
+    /// Forgets a tab window; `leaving`: it is still alive, so it may
+    /// float out of the frame before it goes.
+    fn drop_tab_window(&self, tab: TabId, leaving: bool) {
+        self.peek_origin_gone(tab);
         let removed = {
             let mut tabs = self.tabs.borrow_mut();
             tabs.iter()
@@ -514,8 +543,13 @@ impl Frame {
         };
         let Some(window) = removed else { return };
         let mut shown = self.shown.borrow_mut();
-        if shown.as_ref().is_some_and(|s| std::ptr::eq(&**s, &*window)) {
+        let was_shown = shown.as_ref().is_some_and(|s| std::ptr::eq(&**s, &*window));
+        if was_shown {
             shown.take();
+        }
+        drop(shown);
+        if was_shown && leaving && self.float_depart(tab, &window) {
+            return;
         }
         if let Some(frame) = self.frame.borrow().as_ref() {
             frame.removeChildWindow(&window);
@@ -573,6 +607,7 @@ impl Frame {
             unsafe { center.removeObserver(token.as_ref()) };
         }
         self.remove_lights();
+        self.forget_stage();
     }
 }
 
@@ -639,7 +674,7 @@ pub(super) fn stand_in_window_buttons(frame: &NSWindow) {
 /// frame casts the window's). CEF's
 /// frameless windows are still titled, and macOS rounds a titled window's
 /// corners its own (wider) way, so drop the title bar.
-fn style_card(window: &NSWindow) {
+pub(super) fn style_card(window: &NSWindow) {
     window.setStyleMask(NSWindowStyleMask::Borderless);
     window.setOpaque(false);
     window.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -663,7 +698,7 @@ fn style_card(window: &NSWindow) {
 
 /// The page's corner radius: 10 as a card, 0 edge to edge (Search
 /// `Metrics.cardRadius`, passed as `cards ? 10 : 0`, `Stage.swift`).
-fn round_page(window: &NSWindow, radius: f64) {
+pub(super) fn round_page(window: &NSWindow, radius: f64) {
     let Some(view) = window.contentView() else {
         return;
     };
@@ -711,6 +746,10 @@ pub(super) fn share_parent_key_state(window: &NSWindow) {
 
 impl TabObserver for Frame {
     fn created(&self, tab: TabId, content_view: *mut c_void) {
+        // A floating video's page moved here from another window.
+        if self.float_rehome(tab) {
+            return;
+        }
         let Some(window) = window_of(content_view) else {
             return;
         };
@@ -732,7 +771,8 @@ impl TabObserver for Frame {
     }
 
     fn destroyed(&self, tab: TabId) {
-        self.remove_tab(tab);
+        super::float::forget(tab);
+        self.drop_tab_window(tab, false);
         let _ = self.tx.unbounded_send(AppMsg::TabClosed {
             window: self.window_id,
             tab,

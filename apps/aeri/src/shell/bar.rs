@@ -166,7 +166,7 @@ impl Shell {
         }
     }
 
-    /// ⇧⌘P: the bar as the command palette, listing the commands.
+    /// ⌥⌘P: the bar as the command palette, listing the commands.
     pub(super) fn show_palette(&mut self, window_id: u64, cx: &mut App) {
         self.reveal_bar(window_id, BarMode::Palette, cx);
         self.bar_query(window_id, String::new(), cx);
@@ -203,6 +203,7 @@ impl Shell {
 
     pub(super) fn hide_bar(&mut self, window_id: u64, cx: &mut App) {
         let page = self.shown_cef(window_id);
+        self.launcher_field_closed(window_id);
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
@@ -224,6 +225,7 @@ impl Shell {
     /// address bar, in a new tab from the palette (or the shown tab if it is
     /// blank). The omnibox rules apply: never a script address.
     pub(super) fn go(&mut self, window_id: u64, text: &str, new_tab: bool, cx: &mut App) {
+        let launched = self.launcher_field(window_id);
         let Some(w) = self.window(window_id) else {
             return;
         };
@@ -241,6 +243,12 @@ impl Shell {
             return;
         };
         let url = destination.url().to_string();
+        // The launcher's field with small windows on: its address opens
+        // in one, not a tab (Launcher.swift:437).
+        if launched {
+            self.launcher_little(window_id, &url, cx);
+            return;
+        }
         if (new_tab && !blank) || on_internal {
             self.add_tab(
                 window_id,

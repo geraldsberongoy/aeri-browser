@@ -225,10 +225,8 @@ impl Shell {
             .iter()
             .find(|(_, open)| open.downloads.iter().any(|d| d.id == download.id))
             .map(|(&profile, _)| profile);
-        let profile = known.or_else(|| {
-            let spot = self.spot(download.tab)?;
-            self.spot_profile(spot)
-        });
+        // A page of a small window counts too.
+        let profile = known.or_else(|| self.profile_of_page(download.tab));
         let Some(open) = profile.and_then(|profile| self.open.get_mut(&profile)) else {
             tracing::warn!(id = download.id, "download of an unknown profile");
             return;

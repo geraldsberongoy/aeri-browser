@@ -16,6 +16,11 @@ impl Shell {
         self.site_styles_event(&event);
         self.find_event(&event, cx);
         self.zoom_event(&event);
+        self.peek_event(&event);
+        if self.little_event(&event, cx) {
+            return;
+        }
+        self.reader_event(&event);
         let tab_id = event.tab();
         let Some(spot) = self.spot(tab_id) else {
             return;

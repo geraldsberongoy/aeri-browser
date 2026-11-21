@@ -127,12 +127,14 @@ fn consider(
 }
 
 impl Shell {
-    /// Tabs some window shows now.
+    /// Tabs some window shows now, and the one whose video floats: it is
+    /// on screen too.
     pub(super) fn shown_tabs(&self) -> HashSet<TabId> {
         self.windows
             .iter()
             .filter(|w| !w.closing)
             .filter_map(|w| w.shown())
+            .chain(crate::mac::float::floating().map(|(tab, _)| tab))
             .collect()
     }
 

@@ -87,6 +87,7 @@ impl Shell {
         for profile in profiles {
             self.save_session(profile, cx);
         }
+        self.close_littles(cx);
         let ids: Vec<u64> = self.windows.iter().map(|w| w.id).collect();
         for id in ids {
             self.close_window(id, cx);

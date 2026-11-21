@@ -125,6 +125,7 @@ impl Shell {
         match plan {
             Plan::Url(url) => self.open_url_window(profile, url, cx),
             Plan::Restore => self.restore_windows(profile, cx),
+            Plan::Little(url) => self.open_little_now(profile, url, cx),
             Plan::Fresh => self.fresh_windows(profile, cx),
         }
     }

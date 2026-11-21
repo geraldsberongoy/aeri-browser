@@ -84,9 +84,11 @@ impl Shell {
     /// `url` as a tab in front: in the newest window, or a window of the
     /// profile used last.
     fn open_external_page(&mut self, url: String, cx: &mut App) {
-        if self.go_to_open_page(&url, cx) {
+        // Small windows take the link first, when Settings say so.
+        if self.open_link_little(&url, cx) {
             return;
         }
+
         let profile = self
             .windows
             .iter()

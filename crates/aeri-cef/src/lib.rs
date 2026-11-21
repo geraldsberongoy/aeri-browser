@@ -7,6 +7,7 @@
 
 mod browsing;
 mod cdp_pages;
+mod cdp_preview;
 mod cdp_styles;
 mod client;
 mod devtools;
@@ -16,10 +17,14 @@ mod favicon;
 mod fetch;
 mod find;
 mod links;
+mod little;
 mod orphan;
+mod page_eval;
 mod page_signals;
+mod peek;
 mod preferences;
 mod profile;
+mod reader;
 mod request_policy;
 mod resources;
 mod runtime;
@@ -44,8 +49,14 @@ pub use downloads::{cancel_download, set_download_ask, set_download_dir};
 pub use extensions::Extension;
 pub use fetch::{Fetch, fetch_text};
 pub use links::{ProxyLogin, proxy_prefs, set_proxy_login, set_webmail};
+pub use little::set_popup_windows;
+pub use peek::{
+    COMMAND as PEEK_COMMAND, OPTION as PEEK_OPTION, PeekKey, PeekSignal, SHIFT as PEEK_SHIFT,
+    set_peek_tabs,
+};
 pub use preferences::{PrefSet, PrefValue};
 pub use profile::{ExtensionsWatch, ProfileContext};
+pub use reader::{Twin, guess_script, look_script, note_script, show_script, twin_script};
 pub use request_policy::set_request_policy;
 pub use resources::{Task, TaskKind, TaskMonitor};
 pub use runtime::{Runtime, RuntimeConfig, add_list_switch_item, add_switch, load};
@@ -81,6 +92,16 @@ pub enum Signal {
         opener: TabId,
         foreground: bool,
     },
+    /// A page opened a window that names its size (`window.open` with a
+    /// width or a height) while Settings › Tabs › Open sized pop-ups in
+    /// small windows is on. Its browser is waiting like a tab's: claim it
+    /// with [`TabWindow::adopt`]. A side the page did not name is `None`.
+    PopupWindow {
+        tab: TabId,
+        opener: TabId,
+        width: Option<i32>,
+        height: Option<i32>,
+    },
     /// The Person opened a link in a new tab (⌘-, ⇧- or middle-click). No
     /// browser exists yet: open `url` next to `opener`. A background tab gets
     /// its window when it is first shown.
@@ -111,6 +132,14 @@ pub enum Signal {
         count: i32,
         ordinal: i32,
         done: bool,
+    },
+    /// Peek at a link: a click, a key or a first paint (see [`PeekSignal`]).
+    Peek(PeekSignal),
+    /// The Person chose a look on the article's corner switch (reading
+    /// mode); the page already wears it.
+    ReaderLook {
+        tab: TabId,
+        look: aeri_core::reader::ReaderLook,
     },
 }
 

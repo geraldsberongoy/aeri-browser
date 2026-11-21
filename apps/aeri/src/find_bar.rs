@@ -16,10 +16,11 @@ use gpui::{
 };
 
 use crate::address_bar::{
-    ActualSize, CloseTab, CommandPalette, DarkenSite, Find, FindNext, FindPrevious,
+    ActualSize, CloseTab, CommandPalette, DarkenSite, Find, FindNext, FindPrevious, FloatVideo,
     FocusAddressBar, NewTab, NewWindow, NextSpace, NextTab, PauseDarkening, PreviousSpace,
-    PreviousTab, Quit, ReopenClosedTab, SelectSpace, SelectTab, Settings, ShowBookmarks,
-    ShowHistory, ToggleBookmark, ToggleFullScreen, ToggleSidebar, UndoCloseTab, ZoomIn, ZoomOut,
+    PreviousTab, Quit, Reader, RecentTabs, ReopenClosedTab, SelectSpace, SelectTab, Settings,
+    ShowBookmarks, ShowHistory, ToggleBookmark, ToggleFullScreen, ToggleSidebar, UndoCloseTab,
+    ZoomIn, ZoomOut,
 };
 use crate::shell::{AppMsg, FindMsg};
 use crate::symbol::{Weight, symbol};
@@ -182,6 +183,7 @@ fn forward_shortcuts(root: gpui::Div, cx: &mut Context<FindBar>) -> gpui::Div {
         UndoCloseTab => Shortcut::UndoCloseTab,
         NextTab => Shortcut::NextTab,
         PreviousTab => Shortcut::PreviousTab,
+        RecentTabs => Shortcut::RecentTabs,
         ToggleSidebar => Shortcut::ToggleSidebar,
         PreviousSpace => Shortcut::PreviousSpace,
         NextSpace => Shortcut::NextSpace,
@@ -199,6 +201,8 @@ fn forward_shortcuts(root: gpui::Div, cx: &mut Context<FindBar>) -> gpui::Div {
         ActualSize => Shortcut::ActualSize,
         DarkenSite => Shortcut::DarkenSite,
         PauseDarkening => Shortcut::PauseDarkening,
+        Reader => Shortcut::Reader,
+        FloatVideo => Shortcut::FloatVideo,
     );
     let root = root.on_action(cx.listener(|this, action: &SelectTab, _, _| {
         this.shortcut(Shortcut::SelectTab(action.0));

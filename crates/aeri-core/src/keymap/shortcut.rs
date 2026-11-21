@@ -18,6 +18,11 @@ pub enum Shortcut {
     UndoCloseTab,
     NextTab,
     PreviousTab,
+    /// ⌃Tab's switcher, the tabs you last left first (Search's
+    /// `Command.recentTabs`, Shortcuts.swift:267). Held, its ⌃ (⌥, ⌘) keeps
+    /// the switcher up; with ⇧ the key walks back. The app reads the key
+    /// itself before pages and menus (`mac::switcher`).
+    RecentTabs,
     /// The nth tab, 1-9; 9 is the last.
     SelectTab(u8),
     ToggleSidebar,
@@ -49,6 +54,12 @@ pub enum Shortcut {
     DarkenSite,
     /// Dusk paused everywhere until pressed again or Aeri quits.
     PauseDarkening,
+    /// Reading mode (Search `view.reader`, Shortcuts.swift:243): the page's
+    /// article alone, in clean type; again leaves it.
+    Reader,
+    /// Float Video (Search `view.float`, Shortcuts.swift:244): the playing
+    /// video out into a small window above everything, or back.
+    FloatVideo,
 }
 
 impl Shortcut {
@@ -61,6 +72,7 @@ impl Shortcut {
             Self::NewWindow,
             Self::CloseTab,
             Self::ReopenClosedTab,
+            Self::RecentTabs,
             Self::NextTab,
             Self::PreviousTab,
         ];
@@ -83,6 +95,8 @@ impl Shortcut {
             Self::ActualSize,
             Self::DarkenSite,
             Self::PauseDarkening,
+            Self::Reader,
+            Self::FloatVideo,
         ]);
         all.extend((1..=9).map(Self::SelectSpace));
         all
@@ -96,6 +110,7 @@ impl Shortcut {
             Self::CloseTab => "Close Tab".into(),
             Self::ReopenClosedTab => "Reopen Closed Tab".into(),
             Self::UndoCloseTab => "Undo Close Tab".into(),
+            Self::RecentTabs => "Switch to Recent Tab".into(),
             Self::NextTab => "Next Tab".into(),
             Self::PreviousTab => "Previous Tab".into(),
             Self::SelectTab(9) => "Last Tab".into(),
@@ -119,6 +134,8 @@ impl Shortcut {
             Self::ActualSize => "Actual Size".into(),
             Self::DarkenSite => "Darken This Site".into(),
             Self::PauseDarkening => "Pause Darkening".into(),
+            Self::Reader => "Reading Mode".into(),
+            Self::FloatVideo => "Float Video".into(),
         }
     }
 
@@ -131,6 +148,7 @@ impl Shortcut {
             Self::CloseTab => "close-tab".into(),
             Self::ReopenClosedTab => "reopen-closed-tab".into(),
             Self::UndoCloseTab => "undo-close-tab".into(),
+            Self::RecentTabs => "recent-tabs".into(),
             Self::NextTab => "next-tab".into(),
             Self::PreviousTab => "previous-tab".into(),
             Self::SelectTab(n) => format!("tab-{n}"),
@@ -153,6 +171,8 @@ impl Shortcut {
             Self::ActualSize => "actual-size".into(),
             Self::DarkenSite => "darken-site".into(),
             Self::PauseDarkening => "pause-darkening".into(),
+            Self::Reader => "reader".into(),
+            Self::FloatVideo => "float-video".into(),
         }
     }
 
@@ -169,8 +189,10 @@ impl Shortcut {
             Self::CloseTab => "cmd-w".into(),
             Self::ReopenClosedTab => "shift-cmd-t".into(),
             Self::UndoCloseTab => "cmd-z".into(),
-            Self::NextTab => "ctrl-tab".into(),
-            Self::PreviousTab => "ctrl-shift-tab".into(),
+            Self::RecentTabs => "ctrl-tab".into(),
+            // Search's `tabs.next` / `tabs.previous` (Shortcuts.swift:265,271).
+            Self::NextTab => "shift-cmd-]".into(),
+            Self::PreviousTab => "shift-cmd-[".into(),
             Self::SelectTab(n) => format!("cmd-{n}"),
             Self::ToggleSidebar => "cmd-s".into(),
             Self::PreviousSpace => "alt-cmd-left".into(),
@@ -179,7 +201,9 @@ impl Shortcut {
             Self::ToggleBookmark => "cmd-d".into(),
             Self::ShowBookmarks => "alt-cmd-b".into(),
             Self::ShowHistory => "cmd-y".into(),
-            Self::CommandPalette => "shift-cmd-p".into(),
+            // ⌥⌘P: ⇧⌘P is Float Video's, as in Search; the palette's own
+            // default moved aside for it.
+            Self::CommandPalette => "alt-cmd-p".into(),
             Self::Settings => "cmd-,".into(),
             Self::ToggleFullScreen => "ctrl-cmd-f".into(),
             Self::Quit => "cmd-q".into(),
@@ -191,6 +215,8 @@ impl Shortcut {
             Self::ActualSize => "cmd-0".into(),
             Self::DarkenSite => "shift-cmd-d".into(),
             Self::PauseDarkening => "alt-shift-cmd-d".into(),
+            Self::Reader => "shift-cmd-r".into(),
+            Self::FloatVideo => "shift-cmd-p".into(),
         };
         Chord::parse(&keys).expect("default keys parse")
     }

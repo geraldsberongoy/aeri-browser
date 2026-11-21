@@ -2,9 +2,10 @@
 //! dependent rows (Search `SettingsIndex.swift`:773-796), and the words that
 //! follow a choice.
 
+use aeri_core::keymap::Shortcut;
 use aeri_core::layout::TabPlace;
 use aeri_core::omnibox::keyword_site;
-use aeri_core::prefs::{AppPrefs, Engine, NewTabPlace, valid_template};
+use aeri_core::prefs::{AppPrefs, Engine, NewTabPlace, Peek, valid_template};
 use aeri_core::proxy::{Proxy, ProxyMode};
 
 use super::Need;
@@ -248,3 +249,27 @@ pub(super) const NEEDS_SPACES: Need = Need {
     holds: spaces_on,
     text: "Only with Spaces on",
 };
+
+pub(super) fn links_little_on(m: &SettingsModel) -> bool {
+    m.prefs.browsing.links_little
+}
+
+pub(super) fn peek_on(m: &SettingsModel) -> bool {
+    m.prefs.mouse.peek != Peek::Off
+}
+
+/// Where the site-style row sends the Person: the palette, by the keys it
+/// has now.
+pub(super) fn site_style_detail(m: &SettingsModel) -> String {
+    let keys = m
+        .keys
+        .iter()
+        .find(|row| row.shortcut == Shortcut::CommandPalette)
+        .map(|row| row.keys.as_str())
+        .filter(|keys| !keys.is_empty());
+    let palette = keys.map_or_else(
+        || "the command palette".to_owned(),
+        |keys| format!("the command palette ({keys})"),
+    );
+    format!("Edit Style for the site you're on, in {palette}, puts CSS of yours on it")
+}

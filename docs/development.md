@@ -114,7 +114,7 @@ session is saved. Aeri replaces Chromium's own handlers, which end the
 process at once and lose recent cookies. Closing the last window does not
 quit; the Dock icon opens a window again (that profile's session).
 
-Keys (from a page or the address bar): ⌘L address bar, ⇧⌘P command
+Keys (from a page or the address bar): ⌘L address bar, ⌥⌘P command
 palette, ⌘T new tab, ⌘N new window (on a space no window shows), ⌘W close
 tab, ⌘⇧T reopen the last closed tab, ⌃Tab / ⌃⇧Tab next and previous tab,
 ⌘1–⌘8 that tab (favourites first), ⌘9 the last tab, ⌘⌥← / ⌘⌥→ previous and

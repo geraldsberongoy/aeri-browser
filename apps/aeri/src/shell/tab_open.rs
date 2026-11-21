@@ -137,6 +137,10 @@ impl Shell {
     /// with the page's links; in front, at the end of the row (or the top)
     /// unless links opened in front go beside their page.
     pub(super) fn tab_opened(&mut self, tab: TabId, opener: TabId, foreground: bool, cx: &mut App) {
+        // A page of a small window opens a small window of its own.
+        if self.little_opened(tab, opener, cx) {
+            return;
+        }
         let Some(window_id) = self
             .window_of_tab(opener)
             .or_else(|| self.front_window(opener))
@@ -167,6 +171,9 @@ impl Shell {
     /// The Person opened a link in a new tab, next to its page. Never into
     /// another profile's window.
     pub(super) fn open_link(&mut self, opener: TabId, url: String, foreground: bool, cx: &mut App) {
+        if self.little_open_link(opener, &url, cx) {
+            return;
+        }
         let Some(window_id) = self
             .window_of_tab(opener)
             .or_else(|| self.front_window(opener))

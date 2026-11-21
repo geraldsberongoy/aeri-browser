@@ -3,7 +3,9 @@
 //! (`aeri_core::prefs`).
 
 use aeri_core::layout::{FavouriteStyle, Glyph, Layout, Side, TabPlace};
-use aeri_core::prefs::{AppPrefs, CloseAfter, Engine, NewTabPlace, Webmail, clamp_zoom};
+use aeri_core::prefs::{
+    AppPrefs, CloseAfter, Engine, FloatLeave, NewTabPlace, Peek, Webmail, clamp_zoom,
+};
 use aeri_core::proxy::ProxyMode;
 
 use super::Value;
@@ -86,6 +88,19 @@ pub enum Pref {
     PinnedRows,
     PinCommand,
     StartFresh,
+    SwitcherBehind,
+    SwitcherPins,
+    PopupWindows,
+    LinksLittle,
+    LauncherLittle,
+    ReaderTwins,
+    ReaderFollows,
+    /// Off, then the clicks that peek.
+    PeekMenu,
+    PeekStays,
+    /// Never, Switching tabs, Tabs or apps.
+    FloatOwn,
+    FloatMinimize,
 }
 
 /// Search's `SleepPace` waits, in minutes (Sleep.swift:57-63).
@@ -95,6 +110,13 @@ pub const SLEEP_MINUTES: [Option<u64>; 4] = [None, Some(120), Some(30), Some(10)
 pub const CUSTOM_ENGINE: usize = Engine::NAMED.len();
 
 const NEW_PLACES: [NewTabPlace; 3] = [NewTabPlace::Next, NewTabPlace::Top, NewTabPlace::End];
+const PEEKS: [Peek; 4] = [
+    Peek::Off,
+    Peek::Shift,
+    Peek::OptionShift,
+    Peek::OptionCommand,
+];
+const FLOAT_LEAVES: [FloatLeave; 3] = [FloatLeave::Never, FloatLeave::Tabs, FloatLeave::TabsOrApps];
 
 const WEBMAIL: [Webmail; 5] = [
     Webmail::None,
@@ -209,6 +231,24 @@ impl Pref {
             Self::PinnedRows => Value::On(l.favourites == FavouriteStyle::Rows),
             Self::PinCommand => Value::On(p.spaces.pin_command_new_tab),
             Self::StartFresh => Value::On(p.spaces.start_fresh),
+            Self::SwitcherBehind => Value::On(p.tabs.switcher_behind_first),
+            Self::SwitcherPins => Value::On(p.tabs.switcher_leaves_out_pins),
+            Self::PopupWindows => Value::On(p.tabs.popup_windows),
+            Self::LinksLittle => Value::On(p.browsing.links_little),
+            Self::LauncherLittle => Value::On(p.launcher.little),
+            Self::ReaderTwins => Value::On(p.browsing.reader_twins),
+            Self::ReaderFollows => Value::On(p.browsing.reader_follows),
+            Self::PeekMenu => {
+                Value::Pick(PEEKS.iter().position(|k| *k == p.mouse.peek).unwrap_or(0))
+            }
+            Self::PeekStays => Value::On(p.mouse.peek_stays),
+            Self::FloatOwn => Value::Pick(
+                FLOAT_LEAVES
+                    .iter()
+                    .position(|k| *k == p.browsing.float_leave)
+                    .unwrap_or(0),
+            ),
+            Self::FloatMinimize => Value::On(p.browsing.float_minimize),
         }
     }
 
@@ -340,6 +380,19 @@ impl Pref {
             Self::LinksToSpaces => prefs.spaces.links_to_spaces = on,
             Self::PinCommand => prefs.spaces.pin_command_new_tab = on,
             Self::StartFresh => prefs.spaces.start_fresh = on,
+            Self::SwitcherBehind => prefs.tabs.switcher_behind_first = on,
+            Self::SwitcherPins => prefs.tabs.switcher_leaves_out_pins = on,
+            Self::PopupWindows => prefs.tabs.popup_windows = on,
+            Self::LinksLittle => prefs.browsing.links_little = on,
+            Self::LauncherLittle => prefs.launcher.little = on,
+            Self::ReaderTwins => prefs.browsing.reader_twins = on,
+            Self::ReaderFollows => prefs.browsing.reader_follows = on,
+            Self::PeekMenu => prefs.mouse.peek = PEEKS.get(ix).copied().unwrap_or_default(),
+            Self::PeekStays => prefs.mouse.peek_stays = on,
+            Self::FloatOwn => {
+                prefs.browsing.float_leave = FLOAT_LEAVES.get(ix).copied().unwrap_or_default();
+            }
+            Self::FloatMinimize => prefs.browsing.float_minimize = on,
             _ => return false,
         }
         true

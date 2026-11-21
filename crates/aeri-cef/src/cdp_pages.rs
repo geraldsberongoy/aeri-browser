@@ -43,6 +43,8 @@ pub(crate) struct Cdp {
     capturing: Cell<bool>,
     /// Your own styles for sites, as the page was last told them.
     pub(crate) styles: crate::cdp_styles::Styles,
+    /// The click that peeks at a link, as the page was last told it.
+    pub(crate) peek: crate::peek::State,
 }
 
 /// What a capture came to.

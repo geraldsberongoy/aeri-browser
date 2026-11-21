@@ -9,17 +9,25 @@
 mod appearance;
 mod blur;
 mod find;
+pub mod float;
+mod float_controls;
+mod float_motion;
+mod float_paint;
+mod float_stage;
 mod fold;
 mod frame;
 pub mod hotkey;
 mod lights;
 pub mod links;
+mod little;
 pub mod login;
 mod modifiers;
 mod panels;
+mod peek;
 mod power;
 mod pressure;
 mod reveal;
+mod switcher;
 pub mod symbols;
 
 use std::cell::{Cell, RefCell};
@@ -39,13 +47,16 @@ pub use self::appearance::{
 };
 pub use self::blur::{Blur, CardRect};
 pub use self::find::{FIND_HEIGHT, FIND_WIDTH};
+pub use self::float::LiftOpts;
 pub use self::fold::glide_column;
 pub use self::frame::{BAR_HEIGHT, Frame, SIDE_OVERLAY_EXTRA};
+pub use self::little::{LittleFrame, Opener, Place};
 pub use self::modifiers::watch_command;
 pub use self::panels::{choose_folder, confirm_quit};
 pub use self::power::saving_power;
 pub use self::pressure::{Pressure, watch_memory_pressure};
 pub use self::reveal::Edge;
+pub use self::switcher::{CardKey, KeyInput, release_keyboard, set_switcher_key, watch_switcher};
 
 /// The `NSWindow` owning a content `NSView`.
 pub(super) fn window_of(view: *mut c_void) -> Option<Retained<NSWindow>> {

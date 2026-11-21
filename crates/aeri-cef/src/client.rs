@@ -330,7 +330,7 @@ wrap_life_span_handler! {
             _target_frame_name: Option<&CefString>,
             target_disposition: cef::WindowOpenDisposition,
             _user_gesture: ::std::os::raw::c_int,
-            _popup_features: Option<&cef::PopupFeatures>,
+            popup_features: Option<&cef::PopupFeatures>,
             _window_info: Option<&mut cef::WindowInfo>,
             client: Option<&mut Option<Client>>,
             settings: Option<&mut cef::BrowserSettings>,
@@ -348,11 +348,15 @@ wrap_life_span_handler! {
                 crate::browsing::apply_to(settings);
             }
             tracing::debug!(opener = %self.tab, %tab, url, "popup becomes a tab");
+            // A page that names its size gets a small window when Settings
+            // say so (Browser.swift:8248); never from a background open.
+            let behind = target_disposition == cef::WindowOpenDisposition::NEW_BACKGROUND_TAB;
             crate::window::expect_popup(crate::window::PendingPopup {
                 popup_id,
                 tab,
                 opener: self.tab,
-                foreground: target_disposition != cef::WindowOpenDisposition::NEW_BACKGROUND_TAB,
+                foreground: !behind,
+                window: crate::little::sized(popup_features).filter(|_| !behind),
                 sink: self.sink.clone(),
             });
             0
@@ -407,6 +411,9 @@ wrap_keyboard_handler! {
             _os_event: *mut u8,
             _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
+            if event.is_some_and(|event| crate::peek::pre_key(self.tab, event, &self.sink)) {
+                return 1;
+            }
             if event.is_some_and(|event| crate::browsing::escape_kept(self.tab, browser, event)) {
                 return 1;
             }

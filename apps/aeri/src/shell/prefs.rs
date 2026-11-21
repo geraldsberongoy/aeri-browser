@@ -64,7 +64,9 @@ impl Shell {
         self.apply_general_prefs(before, cx);
         self.apply_privacy(&before.privacy, cx);
         self.apply_launcher(before);
+        self.apply_little(before);
         self.apply_links(before, cx);
+        self.apply_peek(before, cx);
         self.apply_browsing(before, cx);
         self.apply_pages(before, cx);
         self.apply_zoom_prefs(before, cx);
@@ -72,6 +74,7 @@ impl Shell {
         self.apply_site_styles_prefs(before, cx);
         self.apply_tab_signals(before, cx);
         self.apply_space_prefs(before, cx);
+        self.apply_float_prefs(before);
     }
 
     /// New downloads go to the chosen folder, else the default one

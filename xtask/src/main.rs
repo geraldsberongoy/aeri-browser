@@ -81,6 +81,10 @@ fn bundle(release: bool) -> Result<()> {
         let entry = entry?;
         std::fs::copy(entry.path(), signals.join(entry.file_name()))?;
     }
+    std::fs::copy(
+        "apps/aeri/resources/Search-LICENSE.txt",
+        app.join("Contents/Resources/Search-LICENSE.txt"),
+    )?;
     // What macOS shows when a site the Person allowed first uses a device
     // (cef-rs writes the bare app name; location had none).
     let plist = app.join("Contents/Info.plist");

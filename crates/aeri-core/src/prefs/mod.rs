@@ -189,9 +189,15 @@ pub struct Browsing {
     pub links_little_tabs: bool,
     pub reader_twins: bool,
     pub reader_follows: bool,
+    /// The look an article wears in reading mode (`reader.look`), used
+    /// while `reader_follows` is on.
+    pub reader_look: crate::reader::ReaderLook,
     pub float_style: FloatStyle,
     pub float_leave: FloatLeave,
     pub float_minimize: bool,
+    /// Two fingers flick the floating video to a corner
+    /// (`float.flicks`, on).
+    pub float_flicks: bool,
     /// Videos wait for a click.
     pub media_click: bool,
     pub escape_twice: bool,
@@ -217,9 +223,11 @@ impl Default for Browsing {
             links_little_tabs: false,
             reader_twins: false,
             reader_follows: false,
+            reader_look: crate::reader::ReaderLook::default(),
             float_style: FloatStyle::default(),
             float_leave: FloatLeave::default(),
             float_minimize: false,
+            float_flicks: true,
             media_click: false,
             escape_twice: false,
             keep_window_full_screen: false,
@@ -278,10 +286,13 @@ fn group<T: DeserializeOwned + Default>(root: &Value, key: &str) -> T {
 
 impl AppPrefs {
     /// Preferences for a new Aeri: Search's defaults, with the choices
-    /// that an existing install leaves open made (spaces off).
+    /// that an existing install leaves open made (spaces off), and links
+    /// from other apps in a small window (`links.little`, on for a new
+    /// install only, Prefs.swift:675-697).
     pub fn fresh_install() -> Self {
         let mut prefs = Self::default();
         prefs.spaces.enabled = Some(false);
+        prefs.browsing.links_little = true;
         prefs
     }
 
@@ -399,6 +410,13 @@ mod tests {
             AppPrefs::existing_install().browsing.engine,
             Engine::DuckDuckGo
         );
+    }
+
+    #[test]
+    fn links_open_small_windows_only_for_new_installs() {
+        assert!(AppPrefs::fresh_install().browsing.links_little);
+        assert!(!AppPrefs::existing_install().browsing.links_little);
+        assert!(!AppPrefs::default().browsing.links_little);
     }
 
     #[test]

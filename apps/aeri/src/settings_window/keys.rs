@@ -45,10 +45,15 @@ fn section_of(shortcut: Shortcut) -> &'static str {
         | Shortcut::ToggleFullScreen
         | Shortcut::DarkenSite
         | Shortcut::PauseDarkening
+        | Shortcut::Reader
+        | Shortcut::FloatVideo
         | Shortcut::ZoomIn
         | Shortcut::ZoomOut
         | Shortcut::ActualSize => "View",
-        Shortcut::NextTab | Shortcut::PreviousTab | Shortcut::SelectTab(_) => "Tabs",
+        Shortcut::RecentTabs
+        | Shortcut::NextTab
+        | Shortcut::PreviousTab
+        | Shortcut::SelectTab(_) => "Tabs",
         Shortcut::PreviousSpace | Shortcut::NextSpace | Shortcut::SelectSpace(_) => "Spaces",
         Shortcut::ToggleBookmark | Shortcut::ShowBookmarks => "Bookmarks",
         Shortcut::ShowHistory => "History",

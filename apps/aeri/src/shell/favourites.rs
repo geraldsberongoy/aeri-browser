@@ -135,6 +135,7 @@ impl Shell {
     /// another window holds, the page comes here (stage 1: the live page
     /// is in the frontmost window).
     pub(super) fn window_key(&mut self, window_id: u64, _cx: &mut App) {
+        self.float_note_key(window_id);
         let Some(w) = self.window(window_id) else {
             return;
         };

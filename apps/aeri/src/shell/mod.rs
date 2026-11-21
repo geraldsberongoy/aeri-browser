@@ -33,20 +33,26 @@ mod browsing;
 mod chrome;
 mod favourites;
 mod find;
+mod float;
+mod float_js;
 mod general_prefs;
 mod internal;
 mod launcher;
 mod library;
 mod links;
+mod little;
+mod little_life;
 mod msg;
 mod pages;
 mod palette;
 mod passwords;
+mod peek;
 mod prefs;
 mod privacy;
 mod profiles;
 mod proxy;
 mod quit;
+mod reader;
 mod refresh;
 mod resources;
 mod resting;
@@ -61,6 +67,7 @@ mod space_prefs;
 mod space_settings;
 mod spaces;
 mod suggest;
+mod switcher;
 mod tab_events;
 mod tab_look;
 mod tab_menu;
@@ -95,8 +102,10 @@ use gpui::{App, Menu, MenuItem, WindowHandle, actions};
 pub use self::bar::{BarRow, Pick};
 pub use self::bookmarks_bar::BarMsg;
 pub use self::find::FindMsg;
+pub use self::float::FloatMsg;
 pub use self::links::open_urls;
 pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand, ThemeEditorMsg};
+pub use self::peek::PeekMsg;
 use self::profiles::remove_deleted_profiles;
 use self::quit::quit_on_signals;
 use self::resting::Resting;
@@ -104,6 +113,7 @@ pub use self::settings::{KeyRow, SettingsModel, SettingsMsg};
 pub use self::settings_rows::{ArcState, RowsMsg};
 pub use self::spaces::SPACE_ICONS;
 use self::spaces::{Parked, SpaceInfo};
+pub use self::switcher::SwitcherMsg;
 pub use self::tab_signals::{PlayerAct, TabSignal};
 use self::tabs::TabEntry;
 use self::trust::DownloadEntry;
@@ -154,6 +164,9 @@ enum Plan {
     /// A window on this address: a new tab in the first space no window
     /// shows.
     Url(String),
+    /// A small window on this address (a link from another app that
+    /// woke its profile).
+    Little(String),
 }
 
 /// A profile that has (or is about to have) a window.
@@ -201,6 +214,8 @@ struct Shell {
     /// Profiles whose session changed while handling the current message.
     dirty: HashSet<ProfileId>,
     windows: Vec<AeriWindow>,
+    /// Small windows (`little`).
+    little: little::Littles,
     next_window: u64,
     manager: Option<WindowHandle<ProfileManager>>,
     space_editor: Option<WindowHandle<SpaceEditor>>,
@@ -228,6 +243,8 @@ struct Shell {
     tx: UnboundedSender<AppMsg>,
     quitting: bool,
     effects: RefCell<Vec<Effect>>,
+    /// The floating video's waits (`float.rs`).
+    float: float::FloatState,
 }
 
 thread_local! {
@@ -281,6 +298,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     appearance::start(&db, tx.clone(), cx);
     launcher::startup_switches(&prefs);
     browsing::start(&prefs.browsing);
+    little::start(&prefs);
     let runtime_config = RuntimeConfig {
         root_cache_path: root_cache_path.clone(),
         log_file: Some(config.data_dir.join("chromium.log")),
@@ -330,6 +348,8 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     });
     quit_on_signals(tx.clone());
     launcher::start(&tx);
+    float::start(&prefs, &tx);
+    switcher::start(&tx);
     let resting = Resting::start(&db, config.rest_after, tx.clone(), cx);
     let chrome = chrome::Chrome::load(&db);
 
@@ -344,6 +364,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         devtools: runtime.devtools().ok().cloned(),
         dirty: HashSet::new(),
         windows: Vec::new(),
+        little: little::Littles::default(),
         next_window: 1,
         manager: None,
         space_editor: None,
@@ -361,6 +382,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         tx,
         quitting: false,
         effects: RefCell::default(),
+        float: float::FloatState::default(),
     };
     cx.set_menus(menus(&shell.profiles));
     shell.load_user_themes();
@@ -463,23 +485,31 @@ impl Shell {
             AppMsg::ProfileReady { profile } => self.profile_ready(profile, cx),
             AppMsg::Signal(Signal::Engine(event)) => self.engine_event(event, cx),
             AppMsg::Signal(Signal::Shortcut { tab, shortcut }) => {
-                if let Some(window) = self.window_of_tab(tab) {
+                if let Some(window) = self.window_of_tab(self.peek_opener(tab)) {
                     self.shortcut(window, shortcut, cx);
+                } else {
+                    self.little_shortcut(tab, shortcut, cx);
                 }
             }
             AppMsg::Signal(Signal::TabOpened {
                 tab,
                 opener,
                 foreground,
-            }) => self.tab_opened(tab, opener, foreground, cx),
+            }) => self.tab_opened(tab, self.peek_opener(opener), foreground, cx),
+            AppMsg::Signal(Signal::PopupWindow {
+                tab,
+                opener,
+                width,
+                height,
+            }) => self.popup_window(tab, opener, width, height, cx),
             AppMsg::Signal(Signal::OpenUrl { profile, url }) => self.open_url(profile, url, cx),
             AppMsg::Signal(Signal::OpenLink {
                 opener,
                 url,
                 foreground,
-            }) => self.open_link(opener, url, foreground, cx),
+            }) => self.open_link(self.peek_opener(opener), url, foreground, cx),
             AppMsg::Signal(Signal::PopupBlocked { opener, url }) => {
-                self.popup_blocked(opener, url, cx)
+                self.popup_blocked(self.peek_opener(opener), url, cx)
             }
             AppMsg::Signal(Signal::Download(download)) => self.download_updated(download, cx),
             AppMsg::Signal(Signal::Find {
@@ -488,7 +518,14 @@ impl Shell {
                 ordinal,
                 done,
             }) => self.find_result(tab, count, ordinal, done, cx),
-            AppMsg::TabClosed { window, tab } => self.tab_closed(window, tab, cx),
+            AppMsg::Signal(Signal::Peek(signal)) => self.peek_signal(signal, cx),
+            AppMsg::Signal(Signal::ReaderLook { look, .. }) => self.reader_look_chosen(look, cx),
+            AppMsg::Reader(msg) => self.reader_msg(msg, cx),
+            AppMsg::TabClosed { window, tab } => {
+                if !self.little_tab_closed(window, cx) {
+                    self.tab_closed(window, tab, cx);
+                }
+            }
             AppMsg::CloseWindow { window } => self.close_window(window, cx),
             AppMsg::BarQuery { window, text } => self.bar_query(window, text, cx),
             AppMsg::BarSuggestions {
@@ -609,7 +646,11 @@ impl Shell {
             AppMsg::SystemAppearanceChanged => self.system_appearance_changed(cx),
             AppMsg::CommandHeld(held) => self.command_held(held, cx),
             AppMsg::Launcher(msg) => self.launcher_msg(msg, cx),
+            AppMsg::Little(msg) => self.little_msg(msg, cx),
             AppMsg::Find(msg) => self.find_msg(msg, cx),
+            AppMsg::Float(msg) => self.float_msg(msg, cx),
+            AppMsg::Peek(msg) => self.peek_msg(msg, cx),
+            AppMsg::Switcher(msg) => self.switcher_msg(msg, cx),
             AppMsg::Chrome(msg) => self.chrome_msg(msg, cx),
             AppMsg::ThemeEditor(msg) => self.theme_editor_msg(msg, cx),
             AppMsg::ImportTheme { window, path } => self.import_theme(window, &path, cx),
@@ -640,7 +681,7 @@ impl Shell {
         for image in crate::space_look::paint::take_evicted() {
             cx.drop_image(image, None);
         }
-        self.quitting && self.windows.is_empty()
+        self.quitting && self.windows.is_empty() && self.littles_gone()
     }
 
     fn engine_ready(&mut self, cx: &mut App) {

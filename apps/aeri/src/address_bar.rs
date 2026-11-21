@@ -1,7 +1,7 @@
 //! The floating address bar, after Zen's floating URL bar: a GPUI view in a
 //! transparent child window over the page (ADR 0002), painting one frosted
 //! card (see [`card`]) over the unchanged page. ⌘L shows the shown address
-//! to edit for this tab, ⌘T the last text typed for a new tab, ⇧⌘P the
+//! to edit for this tab, ⌘T the last text typed for a new tab, ⌥⌘P the
 //! command palette. It goes away after Return, Escape, a click outside or
 //! losing the keyboard; while the Person types it lists suggestions in the
 //! same card.
@@ -33,6 +33,7 @@ actions!(
         UndoCloseTab,
         NextTab,
         PreviousTab,
+        RecentTabs,
         ToggleSidebar,
         PreviousSpace,
         NextSpace,
@@ -50,7 +51,9 @@ actions!(
         ZoomOut,
         ActualSize,
         DarkenSite,
-        PauseDarkening
+        PauseDarkening,
+        Reader,
+        FloatVideo
     ]
 );
 
@@ -81,6 +84,7 @@ pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
                 Shortcut::UndoCloseTab => Box::new(UndoCloseTab),
                 Shortcut::NextTab => Box::new(NextTab),
                 Shortcut::PreviousTab => Box::new(PreviousTab),
+                Shortcut::RecentTabs => Box::new(RecentTabs),
                 Shortcut::SelectTab(n) => Box::new(SelectTab(n)),
                 Shortcut::SelectSpace(n) => Box::new(SelectSpace(n)),
                 Shortcut::ToggleSidebar => Box::new(ToggleSidebar),
@@ -101,6 +105,8 @@ pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
                 Shortcut::ZoomOut => Box::new(ZoomOut),
                 Shortcut::ActualSize => Box::new(ActualSize),
                 Shortcut::PauseDarkening => Box::new(PauseDarkening),
+                Shortcut::Reader => Box::new(Reader),
+                Shortcut::FloatVideo => Box::new(FloatVideo),
             };
             KeyBinding::load(&chord.to_string(), action, None, false, None, cx)
                 .inspect_err(|err| tracing::warn!(%err, keys = %chord, "unusable keys"))
@@ -125,7 +131,7 @@ pub enum BarMode {
     Address,
     /// ⌘T: the last text typed; the result opens in a new tab.
     NewTab,
-    /// ⇧⌘P: commands, spaces and profiles besides addresses.
+    /// ⌥⌘P: commands, spaces and profiles besides addresses.
     Palette,
 }
 
@@ -432,6 +438,9 @@ impl Render for AddressBar {
             .on_action(
                 cx.listener(|this, _: &PreviousTab, _, _| this.shortcut(Shortcut::PreviousTab)),
             )
+            .on_action(
+                cx.listener(|this, _: &RecentTabs, _, _| this.shortcut(Shortcut::RecentTabs)),
+            )
             .on_action(cx.listener(|this, action: &SelectTab, _, _| {
                 this.shortcut(Shortcut::SelectTab(action.0))
             }))
@@ -468,6 +477,10 @@ impl Render for AddressBar {
                 cx.listener(|this, _: &PauseDarkening, _, _| {
                     this.shortcut(Shortcut::PauseDarkening)
                 }),
+            )
+            .on_action(cx.listener(|this, _: &Reader, _, _| this.shortcut(Shortcut::Reader)))
+            .on_action(
+                cx.listener(|this, _: &FloatVideo, _, _| this.shortcut(Shortcut::FloatVideo)),
             )
             .on_action(cx.listener(|this, _: &Find, _, _| this.shortcut(Shortcut::Find)))
             .on_action(cx.listener(|this, _: &FindNext, _, _| this.shortcut(Shortcut::FindNext)))

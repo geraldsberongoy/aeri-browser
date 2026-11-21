@@ -87,6 +87,13 @@ pub static GROUPS: &[Group] = &[
     ),
     group("links", Page::Browsing, "Links", "link", Extra::None),
     group(
+        "reading",
+        Page::Browsing,
+        "Reading mode",
+        "doc.plaintext",
+        Extra::None,
+    ),
+    group(
         "video",
         Page::Browsing,
         "Video",
@@ -145,6 +152,13 @@ pub static GROUPS: &[Group] = &[
         "Installed",
         "puzzlepiece.extension",
         Extra::Extensions,
+    ),
+    group(
+        "mouse",
+        Page::Keyboard,
+        "Mouse and trackpad",
+        "computermouse",
+        Extra::None,
     ),
     group(
         "anywhere",

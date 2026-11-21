@@ -187,6 +187,7 @@ pub(super) fn load_keymap(db: &AppDb) -> Keymap {
 /// Binds `keymap` in pages, Aeri's windows and the menu bar.
 pub(super) fn install_keymap(keymap: &Keymap, cx: &mut App) {
     aeri_cef::set_keymap(keymap.clone());
+    crate::mac::set_switcher_key(keymap.chord(aeri_core::keymap::Shortcut::RecentTabs));
     cx.clear_key_bindings();
     cx.bind_keys(text_input::bindings());
     let bindings = address_bar::bindings(keymap, cx);

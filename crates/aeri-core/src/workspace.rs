@@ -36,6 +36,8 @@ pub struct TabList<T> {
     active: Option<TabId>,
     /// Tabs left, the latest first: where closing goes back to.
     recent: Vec<TabId>,
+    /// Tabs left and links opened behind, the latest first.
+    used: Vec<TabId>,
     /// The page each tab was opened from.
     openers: HashMap<TabId, TabId>,
     run: Option<LinkRun>,
@@ -47,6 +49,7 @@ impl<T> Default for TabList<T> {
             items: Vec::new(),
             active: None,
             recent: Vec::new(),
+            used: Vec::new(),
             openers: HashMap::new(),
             run: None,
         }
@@ -130,6 +133,8 @@ impl<T> TabList<T> {
         if let Some(old) = self.active.filter(|&old| old != id) {
             self.recent.retain(|&tab| tab != old);
             self.recent.insert(0, old);
+            self.used.retain(|&tab| tab != old);
+            self.used.insert(0, old);
             let stays = self
                 .run
                 .as_ref()
@@ -158,6 +163,7 @@ impl<T> TabList<T> {
         let before = before.filter(|&tab| goes_back || self.openers.get(&id) == Some(&tab));
         let item = self.items.remove(index);
         self.recent.retain(|&tab| tab != id);
+        self.used.retain(|&tab| tab != id);
         self.openers.remove(&id);
         if self.active == Some(id) {
             self.active = before
@@ -170,6 +176,18 @@ impl<T> TabList<T> {
                 .filter(|&tab| self.position(tab).is_some());
         }
         Some(item)
+    }
+
+    /// The tabs left, the latest first (Search's `recentIDs`): ⌃Tab's
+    /// switcher keeps its picture of the ten latest.
+    pub fn recent(&self) -> &[TabId] {
+        &self.recent
+    }
+
+    /// The tabs left and the links opened behind the page, the latest first
+    /// (Search's `usedIDs`, `TabSwitcher.swift:50`): the switcher's order.
+    pub fn used(&self) -> &[TabId] {
+        &self.used
     }
 
     /// The latest tab left that is still here, other than `id`.
@@ -263,6 +281,10 @@ impl<T> TabList<T> {
         let index = self.link_index(opener, place);
         let index = self.insert_at(id, value, false, index);
         self.openers.insert(id, opener);
+        if run == Some(false) {
+            self.used.retain(|&tab| tab != id);
+            self.used.insert(0, id);
+        }
         if let Some(beside) = run
             && self.position(opener).is_some()
         {
@@ -536,5 +558,22 @@ mod tests {
         assert!(!tabs.is_last_loose(t(1)));
         let more = list(&[3, 4], &[1]);
         assert!(!more.is_last_loose(t(3)));
+    }
+
+    #[test]
+    fn the_switchers_order_holds_tabs_left_and_links_opened_behind() {
+        let mut tabs = list(&[1, 2, 3], &[]);
+        tabs.activate(t(1));
+        tabs.activate(t(2));
+        assert_eq!(tabs.recent(), [t(1)]);
+        assert_eq!(tabs.used(), [t(1)]);
+        // A link opened behind the page is the latest used, never left.
+        tabs.insert_link(t(4), (), t(2), NewTabPlace::Next, Some(false));
+        assert_eq!(tabs.recent(), [t(1)]);
+        assert_eq!(tabs.used(), [t(4), t(1)]);
+        tabs.activate(t(3));
+        assert_eq!(tabs.used(), [t(2), t(4), t(1)]);
+        tabs.remove(t(4));
+        assert_eq!(tabs.used(), [t(2), t(1)]);
     }
 }

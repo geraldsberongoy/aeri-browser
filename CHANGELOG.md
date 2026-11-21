@@ -6,6 +6,11 @@ Aeri is a browser for the Mac in Rust and GPUI, with Chromium (CEF) rendering th
 
 ### 21 November 2026
 
+- The floating video: a video that is playing on a site made for watching comes out of its tab into a small window above everything, on every Space, when you switch tab or Space, and goes back when you return. ⇧⌘P (Float Video) does it by hand on any page. The window has play and pause, 15 seconds either way, a hairline of progress, a button back to the tab and a close button; drag it, pull its bottom-right corner or pinch it to size it, and flick it with two fingers to a corner or into a side. The command palette is now ⌥⌘P.
+- Small windows: a link from another app, a site's sized pop-up, or an address from the launcher can open in a small window with just the site and Open in Aeri (⌘O), which moves the page into your window as a tab without loading it again. Esc and ⌘W close it.
+- Reading Mode (⇧⌘R) displays the article on its own, with optional Markdown copies and a light/dark control.
+- Shift-click a link to Peek. Escape closes it, and ⌘Return keeps the same page in a tab.
+- Control-Tab switches to a recent tab. Hold Control to see previews; release it to switch. Sequential tab shortcuts are now ⇧⌘[ and ⇧⌘].
 - Settings opens as a tab of its own, in Search's order and wording.
 - A floating address field in the middle of the page, as Zen has it.
 - Find on page and page zoom, with the keys Search uses.

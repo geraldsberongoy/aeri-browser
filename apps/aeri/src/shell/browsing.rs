@@ -80,7 +80,8 @@ impl Shell {
     /// favourites, then older windows. False when none has it
     /// (Links.swift:400-416).
     pub(super) fn go_to_open_page(&mut self, url: &str, cx: &mut App) -> bool {
-        if !self.prefs.browsing.links_little_tabs {
+        // A child of Open links from other apps in a small window.
+        if !(self.prefs.browsing.links_little && self.prefs.browsing.links_little_tabs) {
             return false;
         }
         let wanted = bare(url);

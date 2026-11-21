@@ -441,6 +441,7 @@ impl Shell {
             return;
         }
         let profile = w.profile;
+        self.close_peek_now(window_id, cx);
         let last = !self
             .windows
             .iter()
@@ -531,6 +532,8 @@ impl Shell {
 
     pub(super) fn remove_window(&mut self, window_id: u64, cx: &mut App) {
         self.close_find_window(window_id, cx);
+        self.close_peek_window(window_id, cx);
+        self.close_switcher_window(window_id, cx);
         let Some(index) = self.windows.iter().position(|w| w.id == window_id) else {
             return;
         };
@@ -549,10 +552,16 @@ impl Shell {
         let _ = w
             .frame_window
             .update(cx, |_, window, _| window.remove_window());
-        // A profile's last window gone: it turns dormant, and its request
-        // context is released (stage 1: a dormant profile runs nothing).
-        let profile = w.profile;
-        let still_shown = self.windows.iter().any(|w| w.profile == profile);
+        self.release_if_idle(w.profile, cx);
+        self.refresh_manager(cx);
+    }
+
+    /// A profile's last window gone, small windows included: it turns
+    /// dormant, and its request context is released (stage 1: a dormant
+    /// profile runs nothing).
+    pub(super) fn release_if_idle(&mut self, profile: ProfileId, cx: &mut App) {
+        let still_shown =
+            self.windows.iter().any(|w| w.profile == profile) || self.little_uses(profile);
         let waking = self
             .open
             .get(&profile)
@@ -566,7 +575,6 @@ impl Shell {
             self.close_library_of(profile, cx);
             self.later(move |_| drop(released));
         }
-        self.refresh_manager(cx);
     }
 }
 

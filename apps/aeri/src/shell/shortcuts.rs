@@ -36,6 +36,10 @@ impl Shell {
                     self.reopen_closed(window_id, cx);
                 }
             }
+            // ⌃Tab is read before pages and menus (`mac::switcher`), which
+            // also see it let go of; a press arriving here is none of that
+            // gesture's.
+            Shortcut::RecentTabs => {}
             Shortcut::NextTab | Shortcut::PreviousTab => {
                 let step = if shortcut == Shortcut::NextTab { 1 } else { -1 };
                 let order = self.sidebar_order(window_id);
@@ -79,6 +83,8 @@ impl Shell {
             }
             Shortcut::DarkenSite => self.toggle_dusk_site(window_id, cx),
             Shortcut::PauseDarkening => self.pause_dusk(cx),
+            Shortcut::Reader => self.toggle_reader(window_id, cx),
+            Shortcut::FloatVideo => self.float_toggle(window_id),
             Shortcut::Find => self.open_find(window_id, cx),
             Shortcut::FindNext => self.find_step(window_id, true),
             Shortcut::FindPrevious => self.find_step(window_id, false),

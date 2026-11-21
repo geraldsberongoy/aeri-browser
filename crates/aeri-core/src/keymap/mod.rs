@@ -269,6 +269,23 @@ mod tests {
     }
 
     #[test]
+    fn float_video_has_shift_cmd_p_and_the_palette_moved_to_alt_cmd_p() {
+        let keymap = Keymap::default();
+        assert_eq!(
+            keymap.chord(Shortcut::FloatVideo),
+            Some(chord("shift-cmd-p"))
+        );
+        assert_eq!(
+            keymap.chord(Shortcut::CommandPalette),
+            Some(chord("alt-cmd-p"))
+        );
+        assert_eq!(
+            keymap.shortcut(&chord("shift-cmd-p")),
+            Some(Shortcut::FloatVideo)
+        );
+    }
+
+    #[test]
     fn the_number_keys_go_to_tabs_or_spaces() {
         let mut keymap = Keymap::default();
         assert_eq!(keymap.chord(Shortcut::SelectTab(2)), Some(chord("cmd-2")));

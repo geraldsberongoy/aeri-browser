@@ -28,6 +28,7 @@ impl Shell {
     /// the shown tab in the address bar and the strip.
     pub(super) fn refresh_window(&self, window_id: u64, cx: &mut App) {
         self.find_follow_shown(window_id, cx);
+        self.peek_follow_shown(window_id);
         let Some(w) = self.window(window_id) else {
             return;
         };
