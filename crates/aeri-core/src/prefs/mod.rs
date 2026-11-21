@@ -10,14 +10,18 @@
 //! [`Browsing`], [`Spaces`], [`Privacy`], [`Mouse`], [`Launcher`] and the
 //! [`AppearanceExtras`] the layout does not hold.
 
+mod engine;
+mod groups;
+
+use engine::fill;
+pub use engine::{Engine, Keyword, valid_template};
+pub use groups::{AppearanceExtras, Launcher, Mouse, Peek, Privacy, Spaces};
+
 use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::keymap::Chord;
-use crate::space_routes::SpaceRoute;
 
 /// The page zoom, in percent, where every site starts.
 pub const MIN_ZOOM: u16 = 50;
@@ -150,114 +154,6 @@ pub struct Tabs {
     pub mirror: bool,
 }
 
-/// A search provider. `Custom` holds a template with `%s` for the query.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Engine {
-    #[default]
-    Google,
-    DuckDuckGo,
-    Bing,
-    Ecosia,
-    Startpage,
-    Kagi,
-    Brave,
-    Qwant,
-    Custom(String),
-}
-
-impl Engine {
-    /// The named engines, in Search's menu order.
-    pub const NAMED: [Engine; 8] = [
-        Engine::Google,
-        Engine::DuckDuckGo,
-        Engine::Bing,
-        Engine::Ecosia,
-        Engine::Startpage,
-        Engine::Kagi,
-        Engine::Brave,
-        Engine::Qwant,
-    ];
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Google => "Google",
-            Self::DuckDuckGo => "DuckDuckGo",
-            Self::Bing => "Bing",
-            Self::Ecosia => "Ecosia",
-            Self::Startpage => "Startpage",
-            Self::Kagi => "Kagi",
-            Self::Brave => "Brave Search",
-            Self::Qwant => "Qwant",
-            Self::Custom(_) => "Custom",
-        }
-    }
-
-    /// The results address with `%s` where the query goes. A custom
-    /// template that is not an address with `%s` is Google's.
-    pub fn search_template(&self) -> &str {
-        match self {
-            Self::Google => "https://www.google.com/search?q=%s",
-            Self::DuckDuckGo => "https://duckduckgo.com/?q=%s",
-            Self::Bing => "https://www.bing.com/search?q=%s",
-            Self::Ecosia => "https://www.ecosia.org/search?q=%s",
-            Self::Startpage => "https://www.startpage.com/do/search?q=%s",
-            Self::Kagi => "https://kagi.com/search?q=%s",
-            Self::Brave => "https://search.brave.com/search?q=%s",
-            Self::Qwant => "https://www.qwant.com/?q=%s",
-            Self::Custom(template) if valid_template(template) => template,
-            Self::Custom(_) => Self::Google.search_template(),
-        }
-    }
-
-    /// The same template with `{query}`, as `omnibox::classify` takes it.
-    pub fn omnibox_template(&self) -> String {
-        self.search_template().replace("%s", "{query}")
-    }
-
-    /// The address that searches for `query`.
-    pub fn search_url(&self, query: &str) -> String {
-        fill(self.search_template(), query)
-    }
-
-    /// Where suggestions for `query` come from, `None` for a custom engine.
-    pub fn suggest_url(&self, query: &str) -> Option<String> {
-        let template = match self {
-            Self::Google => "https://suggestqueries.google.com/complete/search?client=firefox&q=%s",
-            Self::DuckDuckGo => "https://duckduckgo.com/ac/?type=list&q=%s",
-            Self::Bing => "https://api.bing.com/osjson.aspx?query=%s",
-            Self::Ecosia => "https://ac.ecosia.org/autocomplete?type=list&q=%s",
-            Self::Startpage => "https://www.startpage.com/osuggestions?q=%s",
-            Self::Kagi => "https://kagi.com/api/autosuggest?q=%s",
-            Self::Brave => "https://search.brave.com/api/suggest?q=%s",
-            Self::Qwant => "https://api.qwant.com/api/suggest/?q=%s&client=opensearch",
-            Self::Custom(_) => return None,
-        };
-        Some(fill(template, query))
-    }
-}
-
-fn fill(template: &str, query: &str) -> String {
-    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
-    template.replace("%s", &encoded)
-}
-
-/// An address with `%s` in it that stays an address once filled.
-pub fn valid_template(template: &str) -> bool {
-    template.contains("%s")
-        && url::Url::parse(&template.replace("%s", "x"))
-            .is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
-}
-
-/// A word before a search that sends it to a site: `yt cats`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Keyword {
-    pub keyword: String,
-    /// An address with `%s`.
-    pub template: String,
-}
-
 /// Whether the floating video comes out of its tab on its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -359,169 +255,6 @@ pub fn clamp_zoom(percent: u16) -> u16 {
     stepped.clamp(MIN_ZOOM, MAX_ZOOM)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Spaces {
-    /// Separate sets of tabs (`spaces`, Search `usesSpaces`). `None` until
-    /// chosen: Search's default (off) for a fresh install, on for an Aeri
-    /// that already had more than one space (see [`Spaces::on`]).
-    pub enabled: Option<bool>,
-    /// Rules for "Send links to a space" (`spaces.links.rules`).
-    pub link_routes: Vec<SpaceRoute>,
-    /// ⌘1-⌘9 switch spaces (tabs move to ⌃1-⌃9).
-    pub spaces_command_numbers: bool,
-    /// Links to chosen sites open in their space.
-    pub links_to_spaces: bool,
-    /// Links elsewhere open over the pin, and ⌘W takes it back home.
-    pub pins_keep_site: bool,
-    pub pin_folders: bool,
-    pub pin_command_new_tab: bool,
-    /// ⌘T raises a floating address field over the page.
-    pub newtab_floating: bool,
-    pub newtab_recent: bool,
-    /// "settings" or "new tab" alone in the address field goes there.
-    pub address_commands: bool,
-    /// Start with a fresh window: only pins, groups and named tabs return.
-    pub start_fresh: bool,
-}
-
-impl Default for Spaces {
-    fn default() -> Self {
-        Self {
-            enabled: None,
-            link_routes: Vec::new(),
-            spaces_command_numbers: false,
-            links_to_spaces: false,
-            pins_keep_site: true,
-            pin_folders: false,
-            pin_command_new_tab: false,
-            newtab_floating: false,
-            newtab_recent: false,
-            address_commands: false,
-            start_fresh: false,
-        }
-    }
-}
-
-impl Spaces {
-    /// Whether spaces are on: what was chosen, else Search's default, off.
-    pub fn on(&self) -> bool {
-        self.enabled.unwrap_or(false)
-    }
-
-    /// The keys the spaces take: none while they are off, ⌃1-⌃9 (⌘1-⌘9
-    /// with [`Spaces::spaces_command_numbers`]) while on.
-    pub fn keys(&self) -> crate::keymap::SpaceKeys {
-        use crate::keymap::SpaceKeys;
-        match (self.on(), self.spaces_command_numbers) {
-            (false, _) => SpaceKeys::Off,
-            (true, false) => SpaceKeys::Control,
-            (true, true) => SpaceKeys::Command,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Privacy {
-    pub block_ads: bool,
-    pub prevent_cross_site_tracking: bool,
-    /// `gclid`, `fbclid` and the like go before the page loads.
-    pub strip_click_ids: bool,
-    /// Global Privacy Control with every request.
-    pub gpc: bool,
-    /// Sites may ask to send notifications.
-    pub notifications_ask: bool,
-}
-
-impl Default for Privacy {
-    fn default() -> Self {
-        Self {
-            block_ads: true,
-            prevent_cross_site_tracking: true,
-            strip_click_ids: true,
-            gpc: true,
-            notifications_ask: true,
-        }
-    }
-}
-
-/// The click that peeks at a link.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Peek {
-    Off,
-    #[default]
-    Shift,
-    OptionShift,
-    OptionCommand,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Mouse {
-    pub peek: Peek,
-    /// A peek stays with its tab.
-    pub peek_stays: bool,
-    /// ⌥-click on a link opens it in Split View.
-    pub option_click_split: bool,
-    /// Scroll with the middle button.
-    pub autoscroll: bool,
-    /// Hold a swipe to pick from history.
-    pub swipe_history: bool,
-}
-
-impl Default for Mouse {
-    fn default() -> Self {
-        Self {
-            peek: Peek::default(),
-            peek_stays: false,
-            option_click_split: false,
-            autoscroll: false,
-            swipe_history: true,
-        }
-    }
-}
-
-/// Opens the address field from any app.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Launcher {
-    pub on: bool,
-    #[serde(with = "chord_text")]
-    pub key: Option<Chord>,
-    /// Opens in a small window.
-    pub little: bool,
-}
-
-/// Stores a key in GPUI's keystroke form; one that does not read is none.
-mod chord_text {
-    use super::*;
-
-    pub fn serialize<S: Serializer>(key: &Option<Chord>, s: S) -> Result<S::Ok, S::Error> {
-        key.as_ref().map(ToString::to_string).serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Chord>, D::Error> {
-        Ok(Option::<String>::deserialize(d)?.and_then(|text| Chord::parse(&text)))
-    }
-}
-
-/// What the look and the layout do not hold.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct AppearanceExtras {
-    /// Darken pages that stay light.
-    pub dusk: bool,
-    /// The tab you are on fills as you scroll.
-    pub reading_progress: bool,
-    /// A tab sinks a little under the pointer.
-    pub tabs_give: bool,
-    pub bookmarks_bar: bool,
-    /// What is playing in other tabs, at the foot of the sidebar.
-    pub sidebar_player: bool,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppPrefs {
@@ -586,6 +319,7 @@ impl AppPrefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keymap::Chord;
 
     #[test]
     fn defaults_are_searchs() {
@@ -657,31 +391,6 @@ mod tests {
                 .page_zoom_percent,
             50
         );
-    }
-
-    #[test]
-    fn engines_encode_queries() {
-        assert_eq!(
-            Engine::Google.search_url("a b&c"),
-            "https://www.google.com/search?q=a+b%26c"
-        );
-        assert_eq!(
-            Engine::DuckDuckGo.search_url("rust"),
-            "https://duckduckgo.com/?q=rust"
-        );
-        for engine in Engine::NAMED {
-            assert!(valid_template(engine.search_template()), "{engine:?}");
-            assert!(
-                engine.suggest_url("é").unwrap().contains("%C3%A9"),
-                "{engine:?}"
-            );
-        }
-        let custom = Engine::Custom("https://x.example/s?q=%s".into());
-        assert_eq!(custom.search_url("a/b"), "https://x.example/s?q=a%2Fb");
-        assert_eq!(custom.omnibox_template(), "https://x.example/s?q={query}");
-        assert_eq!(custom.suggest_url("a"), None);
-        let bad = Engine::Custom("no placeholder".into());
-        assert_eq!(bad.search_url("a"), Engine::Google.search_url("a"));
     }
 
     #[test]
