@@ -353,7 +353,21 @@ impl Shell {
         let index = list.position(tab)?;
         let was_active = list.active() == Some(tab);
         let item = list.remove_going(tab, goes_back)?;
-        let next = if was_active { list.active() } else { None };
+        if let Spot::Window(window) = spot
+            && let Some(w) = self.window_mut(window)
+            && let Some(index) = w.splits.iter().position(|pair| pair.contains(&tab))
+        {
+            let pair = w.splits.remove(index);
+            if was_active {
+                let partner = if pair[0] == tab { pair[1] } else { pair[0] };
+                w.tabs.activate(partner);
+            }
+        }
+        let next = if was_active {
+            self.list_mut(spot)?.active()
+        } else {
+            None
+        };
         if remembered(&item.value)
             && let Some(db) = self.open.get(&profile).and_then(|open| open.db.as_ref())
         {

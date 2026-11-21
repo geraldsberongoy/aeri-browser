@@ -43,6 +43,7 @@ impl SpaceInfo {
 #[derive(Default)]
 pub(super) struct Parked {
     pub(super) tabs: TabList<TabEntry>,
+    pub(super) splits: Vec<[TabId; 2]>,
     /// The favourite it showed, if it showed one.
     pub(super) favourite: Option<TabId>,
 }
@@ -105,7 +106,14 @@ impl Shell {
                 Some(Shown::Favourite(ix)) => favourite = favourite_ids.get(ix).copied(),
                 None => {}
             }
-            open.parked.insert(space.id, Parked { tabs, favourite });
+            open.parked.insert(
+                space.id,
+                Parked {
+                    tabs,
+                    favourite,
+                    splits: Vec::new(),
+                },
+            );
             let theme = super::themes::read_theme(space.theme.as_deref(), "space");
             open.spaces.push(SpaceInfo {
                 id: space.id,
@@ -182,15 +190,9 @@ impl Shell {
         (format!("Space {}", spaces.len() + 1), colour)
     }
 
-    pub(super) fn park(
-        &mut self,
-        profile: ProfileId,
-        space: SpaceId,
-        tabs: TabList<TabEntry>,
-        favourite: Option<TabId>,
-    ) {
+    pub(super) fn park(&mut self, profile: ProfileId, space: SpaceId, parked: Parked) {
         if let Some(open) = self.open.get_mut(&profile) {
-            open.parked.insert(space, Parked { tabs, favourite });
+            open.parked.insert(space, parked);
         }
     }
 
@@ -317,16 +319,20 @@ impl Shell {
         let Some(w) = self.window_mut(window_id) else {
             return;
         };
-        let old_tabs = std::mem::replace(&mut w.tabs, parked.tabs);
-        let old_favourite = std::mem::replace(&mut w.favourite, parked.favourite);
+        let old = Parked {
+            tabs: std::mem::replace(&mut w.tabs, parked.tabs),
+            favourite: std::mem::replace(&mut w.favourite, parked.favourite),
+            splits: std::mem::replace(&mut w.splits, parked.splits),
+        };
         let old_space = std::mem::replace(&mut w.space, target);
         let frame = w.frame.clone();
-        let live: Vec<TabId> = old_tabs
+        let live: Vec<TabId> = old
+            .tabs
             .iter()
             .filter(|item| item.value.cef.is_some())
             .map(|item| item.id)
             .collect();
-        self.park(profile, old_space, old_tabs, old_favourite);
+        self.park(profile, old_space, old);
         // A blank tab asks for an address, as a new tab does; a page takes
         // the keyboard back from the bar.
         let blank = self
@@ -403,6 +409,7 @@ impl Shell {
         let Some(item) = w.tabs.remove(tab) else {
             return;
         };
+        w.splits.retain(|pair| !pair.contains(&tab));
         let frame = w.frame.clone();
         let next = if was_shown { w.tabs.active() } else { None };
         let empty = w.tabs.is_empty() && w.favourite.is_none();
@@ -428,11 +435,14 @@ impl Shell {
             }
         };
         let other = new_frame.as_ref().map(|(id, _)| *id);
-        self.later(move |_| {
+        self.later(move |shell| {
             frame.remove_tab(tab);
             if let (Some(page), Some((_, new_frame))) = (page, new_frame) {
                 let observer: Rc<dyn TabObserver> = new_frame;
                 page.move_to(observer);
+            }
+            if !was_shown {
+                shell.present(window_id);
             }
         });
         if empty {

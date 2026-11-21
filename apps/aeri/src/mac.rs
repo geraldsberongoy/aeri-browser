@@ -27,6 +27,7 @@ mod peek;
 mod power;
 mod pressure;
 mod reveal;
+mod split;
 mod switcher;
 pub mod symbols;
 

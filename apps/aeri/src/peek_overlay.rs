@@ -212,28 +212,31 @@ fn layer(look: &Look, k: f32) -> Div {
         page = page.child(skeleton(look, sw));
     }
 
-    let knob = |index: usize, id: &'static str, name: &'static str, msg: fn(u64) -> PeekMsg| {
-        let look = look.clone();
-        div()
-            .id(id)
-            .absolute()
-            .left(px(sx + sw + KNOB_GAP))
-            .top(px(sy + index as f32 * (KNOB + KNOB_SPACING)))
-            .size(px(KNOB))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .bg(ground)
-            .border_1()
-            .border_color(theme::c(t.card_border))
-            .hover(|s| s.bg(theme::c(t.inset)))
-            .cursor_pointer()
-            .opacity(k)
-            .occlude()
-            .on_mouse_down(MouseButton::Left, move |_, _, _| send(&look, msg))
-            .child(symbol(name, 11., Weight::Semibold, t.text))
-    };
+    let knob =
+        |index: usize, id: &'static str, name: &'static str, msg: fn(u64, bool) -> PeekMsg| {
+            let look = look.clone();
+            div()
+                .id(id)
+                .absolute()
+                .left(px(sx + sw + KNOB_GAP))
+                .top(px(sy + index as f32 * (KNOB + KNOB_SPACING)))
+                .size(px(KNOB))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(ground)
+                .border_1()
+                .border_color(theme::c(t.card_border))
+                .hover(|s| s.bg(theme::c(t.inset)))
+                .cursor_pointer()
+                .opacity(k)
+                .occlude()
+                .on_mouse_down(MouseButton::Left, move |e, _, _| {
+                    send(&look, |window| msg(window, e.modifiers.alt));
+                })
+                .child(symbol(name, 11., Weight::Semibold, t.text))
+        };
 
     div()
         .absolute()
@@ -241,14 +244,23 @@ fn layer(look: &Look, k: f32) -> Div {
         .child(dim)
         .child(ring)
         .child(page)
-        .child(knob(0, "peek-close", "xmark", |window| PeekMsg::Close {
+        .child(knob(0, "peek-close", "xmark", |window, _| PeekMsg::Close {
             window,
         }))
         .child(knob(
             1,
             "peek-expand",
             "arrow.up.left.and.arrow.down.right",
-            |window| PeekMsg::Expand { window },
+            |window, beside| PeekMsg::Expand { window, beside },
+        ))
+        .child(knob(
+            2,
+            "peek-keep-beside",
+            "rectangle.split.2x1",
+            |window, _| PeekMsg::Expand {
+                window,
+                beside: true,
+            },
         ))
 }
 

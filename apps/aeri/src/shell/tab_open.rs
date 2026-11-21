@@ -81,6 +81,7 @@ impl Shell {
         if !lazy {
             self.later(move |shell| {
                 if foreground {
+                    frame.set_split(None);
                     frame.activate(tab);
                 }
                 shell.create_tab_window(window_id, tab, start);

@@ -210,8 +210,8 @@ impl Shell {
         self.later(move |shell| {
             // The page's window changes frames as it is: nothing loads.
             little_frame.release_page();
-            frame.activate(tab);
             page.move_to(frame.clone());
+            shell.present(window);
             frame.bring_forward();
             let _ = shell
                 .tx

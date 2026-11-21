@@ -17,10 +17,10 @@ use gpui::{
 
 use crate::address_bar::{
     ActualSize, CloseTab, CommandPalette, DarkenSite, Find, FindNext, FindPrevious, FloatVideo,
-    FocusAddressBar, NewTab, NewWindow, NextSpace, NextTab, PauseDarkening, PreviousSpace,
-    PreviousTab, Quit, Reader, RecentTabs, ReopenClosedTab, SelectSpace, SelectTab, Settings,
-    ShowBookmarks, ShowHistory, ToggleBookmark, ToggleFullScreen, ToggleSidebar, UndoCloseTab,
-    ZoomIn, ZoomOut,
+    FocusAddressBar, FocusLeftPane, FocusRightPane, NewTab, NewWindow, NextSpace, NextTab,
+    PauseDarkening, PreviousSpace, PreviousTab, Quit, Reader, RecentTabs, ReopenClosedTab,
+    SelectSpace, SelectTab, Settings, ShowBookmarks, ShowHistory, SplitPage, ToggleBookmark,
+    ToggleFullScreen, ToggleSidebar, UndoCloseTab, ZoomIn, ZoomOut,
 };
 use crate::shell::{AppMsg, FindMsg};
 use crate::symbol::{Weight, symbol};
@@ -184,6 +184,9 @@ fn forward_shortcuts(root: gpui::Div, cx: &mut Context<FindBar>) -> gpui::Div {
         NextTab => Shortcut::NextTab,
         PreviousTab => Shortcut::PreviousTab,
         RecentTabs => Shortcut::RecentTabs,
+        SplitPage => Shortcut::SplitPage,
+        FocusLeftPane => Shortcut::FocusLeftPane,
+        FocusRightPane => Shortcut::FocusRightPane,
         ToggleSidebar => Shortcut::ToggleSidebar,
         PreviousSpace => Shortcut::PreviousSpace,
         NextSpace => Shortcut::NextSpace,

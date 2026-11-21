@@ -23,6 +23,9 @@ pub enum Shortcut {
     /// the switcher up; with ⇧ the key walks back. The app reads the key
     /// itself before pages and menus (`mac::switcher`).
     RecentTabs,
+    SplitPage,
+    FocusLeftPane,
+    FocusRightPane,
     /// The nth tab, 1-9; 9 is the last.
     SelectTab(u8),
     ToggleSidebar,
@@ -73,6 +76,9 @@ impl Shortcut {
             Self::CloseTab,
             Self::ReopenClosedTab,
             Self::RecentTabs,
+            Self::SplitPage,
+            Self::FocusLeftPane,
+            Self::FocusRightPane,
             Self::NextTab,
             Self::PreviousTab,
         ];
@@ -111,6 +117,9 @@ impl Shortcut {
             Self::ReopenClosedTab => "Reopen Closed Tab".into(),
             Self::UndoCloseTab => "Undo Close Tab".into(),
             Self::RecentTabs => "Switch to Recent Tab".into(),
+            Self::SplitPage => "Split Current Page".into(),
+            Self::FocusLeftPane => "Focus Left Pane".into(),
+            Self::FocusRightPane => "Focus Right Pane".into(),
             Self::NextTab => "Next Tab".into(),
             Self::PreviousTab => "Previous Tab".into(),
             Self::SelectTab(9) => "Last Tab".into(),
@@ -149,6 +158,9 @@ impl Shortcut {
             Self::ReopenClosedTab => "reopen-closed-tab".into(),
             Self::UndoCloseTab => "undo-close-tab".into(),
             Self::RecentTabs => "recent-tabs".into(),
+            Self::SplitPage => "split-page".into(),
+            Self::FocusLeftPane => "focus-left-pane".into(),
+            Self::FocusRightPane => "focus-right-pane".into(),
             Self::NextTab => "next-tab".into(),
             Self::PreviousTab => "previous-tab".into(),
             Self::SelectTab(n) => format!("tab-{n}"),
@@ -190,6 +202,9 @@ impl Shortcut {
             Self::ReopenClosedTab => "shift-cmd-t".into(),
             Self::UndoCloseTab => "cmd-z".into(),
             Self::RecentTabs => "ctrl-tab".into(),
+            Self::SplitPage => "alt-cmd-n".into(),
+            Self::FocusLeftPane => "ctrl-cmd-left".into(),
+            Self::FocusRightPane => "ctrl-cmd-right".into(),
             // Search's `tabs.next` / `tabs.previous` (Shortcuts.swift:265,271).
             Self::NextTab => "shift-cmd-]".into(),
             Self::PreviousTab => "shift-cmd-[".into(),

@@ -71,6 +71,8 @@ impl Shell {
             let Some(item) = w.tabs.remove(tab) else {
                 return;
             };
+            let was_paired = w.splits.iter().any(|pair| pair.contains(&tab));
+            w.splits.retain(|pair| !pair.contains(&tab));
             if was_shown {
                 w.favourite = Some(tab);
             }
@@ -85,6 +87,11 @@ impl Shell {
             }
             if empty && !was_shown {
                 self.add_new_tab(window_id, false, cx);
+            }
+            if was_paired {
+                self.later(move |shell| {
+                    shell.present(window_id);
+                });
             }
         }
         self.touch(profile);

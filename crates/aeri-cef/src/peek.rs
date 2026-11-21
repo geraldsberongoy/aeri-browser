@@ -41,6 +41,7 @@ const MODIFIERS: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0
     | cef::sys::cef_event_flags_t::EVENTFLAG_SHIFT_DOWN.0
     | cef::sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0;
 const COMMAND_DOWN: u32 = cef::sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0;
+const KEEP_BESIDE: u32 = COMMAND_DOWN | cef::sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0;
 
 /// What a peek's page or a link click tells the application.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +61,8 @@ pub enum PeekKey {
     Close,
     /// ⌘↩ outside an editable field: the peek becomes a tab.
     Keep,
+    /// ⌥⌘↩ outside an editable field: keep it beside its opener.
+    KeepBeside,
 }
 
 thread_local! {
@@ -254,6 +257,7 @@ pub(crate) fn pre_key(tab: TabId, event: &KeyEvent, sink: &SignalSink) -> bool {
     let key = match (event.windows_key_code, event.modifiers & MODIFIERS) {
         (VK_ESCAPE, 0) => PeekKey::Close,
         (VK_RETURN, COMMAND_DOWN) if event.focus_on_editable_field == 0 => PeekKey::Keep,
+        (VK_RETURN, KEEP_BESIDE) if event.focus_on_editable_field == 0 => PeekKey::KeepBeside,
         _ => return false,
     };
     sink(Signal::Peek(PeekSignal::Key { tab, key }));

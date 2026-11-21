@@ -394,7 +394,13 @@ fn shortcut_for(event: &KeyEvent) -> Option<Shortcut> {
         on(SHIFT),
         on(COMMAND),
     )?;
-    crate::keymap_shortcut(&chord)
+    let shortcut = crate::keymap_shortcut(&chord)?;
+    if event.focus_on_editable_field != 0
+        && matches!(shortcut, Shortcut::FocusLeftPane | Shortcut::FocusRightPane)
+    {
+        return None;
+    }
+    Some(shortcut)
 }
 
 wrap_keyboard_handler! {

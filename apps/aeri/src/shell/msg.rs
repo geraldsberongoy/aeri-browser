@@ -57,6 +57,10 @@ pub enum AppMsg {
         window: u64,
         shortcut: Shortcut,
     },
+    SplitFocus {
+        window: u64,
+        tab: TabId,
+    },
     /// A command on one tab, from the sidebar or its context menu.
     Tab {
         window: u64,
@@ -309,6 +313,7 @@ pub enum Nav {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabCommand {
     Select,
+    Split,
     /// ⌘ on a pin: with Settings › Pins › ⌘-click on a pin opens a new tab,
     /// the pin's page opens in a new tab; otherwise it is selected.
     PinCommandClick,

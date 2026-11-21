@@ -66,6 +66,7 @@ mod site_styles;
 mod space_prefs;
 mod space_settings;
 mod spaces;
+mod split;
 mod suggest;
 mod switcher;
 mod tab_events;
@@ -627,6 +628,7 @@ impl Shell {
             AppMsg::SetTabLook { tab, name, icon } => self.set_tab_look(tab, name, icon, cx),
             AppMsg::TabEditorClosed => self.tab_editor = None,
             AppMsg::WindowKey { window } => self.window_key(window, cx),
+            AppMsg::SplitFocus { window, tab } => self.focus_split_pane(window, tab, cx),
             AppMsg::OpenExternal(urls) => self.open_external(urls, cx),
             AppMsg::DefaultsChanged => self.refresh_settings(cx),
             AppMsg::ProxyLogin => self.proxy_login_prompt(),

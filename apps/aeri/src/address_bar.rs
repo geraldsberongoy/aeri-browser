@@ -34,6 +34,9 @@ actions!(
         NextTab,
         PreviousTab,
         RecentTabs,
+        SplitPage,
+        FocusLeftPane,
+        FocusRightPane,
         ToggleSidebar,
         PreviousSpace,
         NextSpace,
@@ -85,6 +88,9 @@ pub fn bindings(keymap: &Keymap, cx: &App) -> Vec<KeyBinding> {
                 Shortcut::NextTab => Box::new(NextTab),
                 Shortcut::PreviousTab => Box::new(PreviousTab),
                 Shortcut::RecentTabs => Box::new(RecentTabs),
+                Shortcut::SplitPage => Box::new(SplitPage),
+                Shortcut::FocusLeftPane => Box::new(FocusLeftPane),
+                Shortcut::FocusRightPane => Box::new(FocusRightPane),
                 Shortcut::SelectTab(n) => Box::new(SelectTab(n)),
                 Shortcut::SelectSpace(n) => Box::new(SelectSpace(n)),
                 Shortcut::ToggleSidebar => Box::new(ToggleSidebar),
@@ -440,6 +446,15 @@ impl Render for AddressBar {
             )
             .on_action(
                 cx.listener(|this, _: &RecentTabs, _, _| this.shortcut(Shortcut::RecentTabs)),
+            )
+            .on_action(cx.listener(|this, _: &SplitPage, _, _| this.shortcut(Shortcut::SplitPage)))
+            .on_action(
+                cx.listener(|this, _: &FocusLeftPane, _, _| this.shortcut(Shortcut::FocusLeftPane)),
+            )
+            .on_action(
+                cx.listener(|this, _: &FocusRightPane, _, _| {
+                    this.shortcut(Shortcut::FocusRightPane)
+                }),
             )
             .on_action(cx.listener(|this, action: &SelectTab, _, _| {
                 this.shortcut(Shortcut::SelectTab(action.0))

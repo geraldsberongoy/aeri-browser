@@ -133,7 +133,11 @@ impl Shell {
         self.windows
             .iter()
             .filter(|w| !w.closing)
-            .filter_map(|w| w.shown())
+            .flat_map(|w| {
+                w.shown()
+                    .into_iter()
+                    .chain(w.active_split().into_iter().flatten())
+            })
             .chain(crate::mac::float::floating().map(|(tab, _)| tab))
             .collect()
     }

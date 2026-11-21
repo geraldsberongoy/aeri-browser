@@ -50,7 +50,7 @@ naming the Search file they come from.
 | 2 | done (`dd9f167`); parity pass against Search.app side by side (below) |
 | 3 | pending |
 | 4 | pending |
-| 5 | Waves 0–2 built. Wave 3 adds Reader, Peek, floating video, small windows and the recent-tab switcher. Split View, tab groups and pin homes/folders remain. |
+| 5 | Reader, Peek, floating video, small windows, recent tabs, and two-pane Split View built. Tab groups and pin homes/folders remain. |
 
 ## Evidence ledger
 
@@ -86,6 +86,8 @@ naming the Search file they come from.
 | What's New wraps with a heading; reading fill keeps both rounded ends; player card; site-style editor | Tested (build) | fixed after the capture; not re-driven |
 | Reader, manual floating video, Peek, sized pop-up | Observed in isolated bundle | ⇧⌘R rendered the article and reloaded on exit; ⇧⌘P moved a playing video into a 440×247 viewport; Shift-click opened Peek, Esc closed it and ⌘Return promoted the same page; a 480×360 pop-up retained `window.opener`. |
 | Recent-tab switcher, automatic floating and native overlays | Partially verified | Workspace tests passed. The background input probe did not open the switcher, so its foreground panel and Control-release path remain unverified. Floating gestures, return controls, and system Picture in Picture were not checked. |
+| Two-pane Split View and Peek promotion | Observed in isolated bundle | ⌥⌘Return kept the same Chromium target beside its opener. Both native viewports were visible, with widths of 517 and 516 points and a 7-point gutter. ⌃⌘← moved the address-bar host to the left pane, and ⌥⌘N separated the tabs with both drafts intact. The background pointer probe could not drive the divider. |
+| Floating video return and Browsing Settings | Partially verified | ⇧⌘P lifted and returned the same playing video (1040 → 440 → 1040 points); the return button was not exercised. The Settings capture showed small-window, Reader and floating-video controls; background pointer input did not change a setting. |
 
 ## Residual risks
 

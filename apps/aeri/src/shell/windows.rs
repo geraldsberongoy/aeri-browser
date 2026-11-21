@@ -55,6 +55,7 @@ pub(super) struct AeriWindow {
     pub(super) space: SpaceId,
     /// The shown space's tabs.
     pub(super) tabs: TabList<TabEntry>,
+    pub(super) splits: Vec<[TabId; 2]>,
     /// A favourite shown instead of one of the space's tabs.
     pub(super) favourite: Option<TabId>,
     pub(super) closing: bool,
@@ -179,6 +180,7 @@ impl Shell {
         let Some(Parked {
             mut tabs,
             favourite,
+            splits,
         }) = self
             .open
             .get_mut(&profile)
@@ -228,7 +230,15 @@ impl Shell {
             Ok(handle) => handle,
             Err(err) => {
                 tracing::error!(%err, "could not open a window frame");
-                self.park(profile, seed.space, tabs, favourite);
+                self.park(
+                    profile,
+                    seed.space,
+                    Parked {
+                        tabs,
+                        favourite,
+                        splits,
+                    },
+                );
                 return;
             }
         };
@@ -255,14 +265,30 @@ impl Shell {
             Err(err) => {
                 tracing::error!(%err, "could not open the address bar");
                 let _ = frame_window.update(cx, |_, window, _| window.remove_window());
-                self.park(profile, seed.space, tabs, favourite);
+                self.park(
+                    profile,
+                    seed.space,
+                    Parked {
+                        tabs,
+                        favourite,
+                        splits,
+                    },
+                );
                 return;
             }
         };
         let Some(overlays) = super::chrome::open_overlays(&frame_window, cx) else {
             let _ = bar.update(cx, |_, window, _| window.remove_window());
             let _ = frame_window.update(cx, |_, window, _| window.remove_window());
-            self.park(profile, seed.space, tabs, favourite);
+            self.park(
+                profile,
+                seed.space,
+                Parked {
+                    tabs,
+                    favourite,
+                    splits,
+                },
+            );
             return;
         };
         let view = |handle: Option<gpui::AnyWindowHandle>, cx: &mut App| {
@@ -294,6 +320,7 @@ impl Shell {
             overlays,
             space: seed.space,
             tabs,
+            splits,
             favourite,
             closing: false,
             closing_pages: HashSet::new(),
@@ -366,7 +393,14 @@ impl Shell {
         let Some(shown) = w.shown() else {
             return false;
         };
+        let split = w.active_split();
+        frame.set_split(split);
         frame.activate(shown);
+        if let Some(pair) = split {
+            for pane in pair.into_iter().filter(|&pane| pane != shown) {
+                self.load_tab(window_id, pane);
+            }
+        }
         let unseen = match favourite {
             Some(favourite) => {
                 let home = self
@@ -457,6 +491,7 @@ impl Shell {
         let space = w.space;
         let favourite = w.favourite.take();
         let mut tabs = std::mem::take(&mut w.tabs);
+        let splits = std::mem::take(&mut w.splits);
         let frame = w.frame.clone();
         let mut pages: Vec<Rc<TabWindow>> = tabs
             .iter_mut()
@@ -464,7 +499,14 @@ impl Shell {
             .collect();
         let mut hidden = Vec::new();
         if let Some(open) = self.open.get_mut(&profile) {
-            open.parked.insert(space, Parked { tabs, favourite });
+            open.parked.insert(
+                space,
+                Parked {
+                    tabs,
+                    favourite,
+                    splits,
+                },
+            );
             let homed: Vec<TabId> = open
                 .favourite_home
                 .iter()

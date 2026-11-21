@@ -6,6 +6,7 @@ Aeri is a browser for the Mac in Rust and GPUI, with Chromium (CEF) rendering th
 
 ### 21 November 2026
 
+- Split View keeps two live tabs side by side. Option-click a tab to pair it, drag the divider to resize the panes, or press ⌥⌘Return to keep a Peek beside its opener. ⌥⌘N starts or separates a split without closing either page.
 - The floating video: a video that is playing on a site made for watching comes out of its tab into a small window above everything, on every Space, when you switch tab or Space, and goes back when you return. ⇧⌘P (Float Video) does it by hand on any page. The window has play and pause, 15 seconds either way, a hairline of progress, a button back to the tab and a close button; drag it, pull its bottom-right corner or pinch it to size it, and flick it with two fingers to a corner or into a side. The command palette is now ⌥⌘P.
 - Small windows: a link from another app, a site's sized pop-up, or an address from the launcher can open in a small window with just the site and Open in Aeri (⌘O), which moves the page into your window as a tab without loading it again. Esc and ⌘W close it.
 - Reading Mode (⇧⌘R) displays the article on its own, with optional Markdown copies and a light/dark control.

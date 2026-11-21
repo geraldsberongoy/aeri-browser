@@ -72,6 +72,7 @@ pub struct Frame {
     pub(super) lights: RefCell<Option<[Lights; 3]>>,
     pub(super) tabs: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
     pub(super) active: Cell<Option<TabId>>,
+    pub(super) split: super::split::Stage,
     /// The tab window currently ordered in, which can lag `active` until the
     /// active tab's window exists.
     pub(super) shown: RefCell<Option<Retained<NSWindow>>>,
@@ -99,6 +100,7 @@ impl Frame {
             bar: RefCell::default(),
             tabs: RefCell::default(),
             active: Cell::new(None),
+            split: super::split::Stage::default(),
             shown: RefCell::default(),
             bar_visible: Cell::new(false),
             layout: Cell::new(Layout::default()),
@@ -147,6 +149,7 @@ impl Frame {
         *self.frame.borrow_mut() = Some(frame.clone());
         *self.bar.borrow_mut() = Some(bar);
         *self.overlays.borrow_mut() = Some([side, strip]);
+        self.install_divider(&frame);
         self.observe(&frame);
         reveal::register(self);
         self.layout();
@@ -206,9 +209,16 @@ impl Frame {
                 NSWindowDidResignKeyNotification,
             ] {
                 let this = Rc::downgrade(self);
+                let became_key = std::ptr::eq(name, NSWindowDidBecomeKeyNotification);
                 let block = RcBlock::new(move |_: NonNull<NSNotification>| {
                     if let Some(this) = this.upgrade() {
                         this.redraw_lights();
+                        if became_key
+                            && let Some(mtm) = MainThreadMarker::new()
+                            && let Some(key) = NSApplication::sharedApplication(mtm).keyWindow()
+                        {
+                            this.split_keyed(&key);
+                        }
                     }
                 });
                 tokens.push(center.addObserverForName_object_queue_usingBlock(
@@ -333,23 +343,12 @@ impl Frame {
     /// fits everything to the layout.
     pub(super) fn set_column(&self, width: Option<f64>) {
         let previous = self.column.replace(width);
-        let Some(frame) = self.frame.borrow().clone() else {
-            return;
-        };
-        match width {
-            Some(_) => {
-                let page = self.page_rect(&frame);
-                if let Some(tab) = self.active_window() {
-                    tab.setFrame_display(page, false);
-                }
-                if self.bar_visible.get()
-                    && let Some(bar) = self.bar.borrow().as_ref()
-                {
-                    bar.setFrame_display(page, false);
-                }
+        if width.is_none() {
+            if previous.is_some() {
+                self.layout();
             }
-            None if previous.is_some() => self.layout(),
-            None => {}
+        } else if let Some(frame) = self.frame.borrow().clone() {
+            self.layout_panes(&frame);
         }
     }
 
@@ -367,6 +366,29 @@ impl Frame {
             .map(|(_, w)| w.clone())
     }
 
+    /// Resizes only the live panes and their controls along a drag or glide.
+    pub(super) fn layout_panes(&self, frame: &NSWindow) {
+        let page = self.page_rect(frame);
+        let radius = self.insets(frame).radius;
+        self.sync_secondary(frame, page, radius);
+        let focused = self.focused_rect(page);
+        if let Some(window) = self.active_window()
+            && window.frame() != focused
+        {
+            window.setFrame_display(focused, true);
+        }
+        self.place_page_controls(focused);
+    }
+
+    fn place_page_controls(&self, focused: NSRect) {
+        if let Some(bar) = self.bar.borrow().as_ref()
+            && bar.frame() != focused
+        {
+            bar.setFrame_display(focused, self.bar_visible.get());
+        }
+        self.place_find(focused);
+    }
+
     /// Fits every tab window to the page, places the overlays along their
     /// edges and the address bar over the page.
     pub fn layout(&self) {
@@ -375,14 +397,23 @@ impl Frame {
         };
         let page = self.page_rect(&frame);
         let radius = self.insets(&frame).radius;
-        // Only the window being looked at is drawn at once; the others (in
-        // a pile, with dozens of tabs) are resized without drawing, and not
-        // at all when they are already there.
-        let shown = self.active_window();
-        for (_, tab) in self.tabs.borrow().iter() {
-            if tab.frame() != page {
-                let visible = shown.as_ref().is_some_and(|s| std::ptr::eq(&**s, &**tab));
-                tab.setFrame_display(page, visible);
+        self.sync_secondary(&frame, page, radius);
+        let focused = self.focused_rect(page);
+        let active = self.active.get();
+        for (id, tab) in self.tabs.borrow().iter() {
+            if self
+                .split
+                .secondary
+                .borrow()
+                .as_ref()
+                .is_some_and(|peer| super::split::same(peer, tab))
+            {
+                continue;
+            }
+            let visible = active == Some(*id);
+            let rect = if visible { focused } else { page };
+            if tab.frame() != rect {
+                tab.setFrame_display(rect, visible);
             }
             round_page(tab, radius);
         }
@@ -428,14 +459,7 @@ impl Frame {
         }
         self.replace_side();
         self.place_lights(&frame);
-        if let Some(bar) = self.bar.borrow().as_ref() {
-            // Over the page, not the sidebar; the view places the card
-            // within it.
-            if bar.frame() != page {
-                bar.setFrame_display(page, self.bar_visible.get());
-            }
-        }
-        self.place_find(page);
+        self.place_page_controls(focused);
         self.place_stage(page);
         self.place_peek(page);
         self.place_switcher(frame.frame());
@@ -451,18 +475,29 @@ impl Frame {
             self.float_after_activate();
             return;
         };
-        next.setFrame_display(self.page_rect(&frame), true);
+        let page = self.page_rect(&frame);
+        self.sync_secondary(&frame, page, self.insets(&frame).radius);
+        next.setFrame_display(self.focused_rect(page), true);
         // SAFETY: AppKit calls on the main thread.
         unsafe { frame.addChildWindow_ordered(&next, NSWindowOrderingMode::Above) };
         next.orderFront(None);
         let previous = self.shown.replace(Some(next.clone()));
-        if let Some(previous) = previous.filter(|p| !std::ptr::eq(&**p, &*next)) {
+        if let Some(previous) = previous.filter(|p| {
+            !super::split::same(p, &next)
+                && !self
+                    .split
+                    .secondary
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|peer| super::split::same(peer, p))
+        }) {
             // A tab that may float waits where it is for the page's answer.
             if !self.float_depart_window(&previous) {
                 frame.removeChildWindow(&previous);
                 previous.orderOut(None);
             }
         }
+        self.layout();
         self.raise_children();
         if !self.bar_visible.get() {
             next.makeKeyWindow();
@@ -548,6 +583,15 @@ impl Frame {
             shown.take();
         }
         drop(shown);
+        if self
+            .split
+            .secondary
+            .borrow()
+            .as_ref()
+            .is_some_and(|peer| super::split::same(peer, &window))
+        {
+            self.split.secondary.take();
+        }
         if was_shown && leaving && self.float_depart(tab, &window) {
             return;
         }
@@ -555,6 +599,7 @@ impl Frame {
             frame.removeChildWindow(&window);
         }
         window.orderOut(None);
+        self.layout();
     }
 
     /// Brings the window to the front and gives it the keyboard, out of the

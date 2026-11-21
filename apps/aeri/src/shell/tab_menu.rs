@@ -29,6 +29,7 @@ impl Shell {
             .is_some_and(|open| open.favourites.get(tab).is_some());
         match command {
             TabCommand::Select => self.switch_to(window_id, tab, cx),
+            TabCommand::Split => self.split_tab_pick(window_id, tab, cx),
             TabCommand::PinCommandClick => self.pin_command_click(window_id, tab, cx),
             TabCommand::Close => self.close_tab(window_id, tab, cx),
             TabCommand::CloseOthers => {
@@ -76,6 +77,12 @@ impl Shell {
                 };
                 let pinned = w.tabs.get(tab).is_some_and(|item| item.pinned);
                 w.tabs.set_pinned(tab, !pinned);
+                if !pinned {
+                    w.splits.retain(|pair| !pair.contains(&tab));
+                    self.later(move |shell| {
+                        shell.present(window_id);
+                    });
+                }
                 self.touch(profile);
                 self.refresh_window(window_id, cx);
             }
@@ -167,7 +174,17 @@ impl Shell {
         }
         add("Rename Tab…", command(TabCommand::Rename));
         add("Duplicate Tab", command(TabCommand::Duplicate));
-        if item.value.cef.is_some() && w.shown() != Some(tab) {
+        if w.split_eligible(tab) && w.shown().is_some_and(|shown| w.split_eligible(shown)) {
+            let title = if w.split_contains(tab) {
+                "Separate Split Tab"
+            } else if w.shown() == Some(tab) {
+                "Split Current Page"
+            } else {
+                "Open in Split View"
+            };
+            add(title, command(TabCommand::Split));
+        }
+        if item.value.cef.is_some() && w.shown() != Some(tab) && !w.split_contains(tab) {
             add("Rest Tab", command(TabCommand::Rest));
         }
         let page = item.value.url();

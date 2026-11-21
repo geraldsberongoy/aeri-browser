@@ -40,6 +40,9 @@ impl Shell {
             // also see it let go of; a press arriving here is none of that
             // gesture's.
             Shortcut::RecentTabs => {}
+            Shortcut::SplitPage => self.split_key(window_id, cx),
+            Shortcut::FocusLeftPane => self.focus_split_side(window_id, false, cx),
+            Shortcut::FocusRightPane => self.focus_split_side(window_id, true, cx),
             Shortcut::NextTab | Shortcut::PreviousTab => {
                 let step = if shortcut == Shortcut::NextTab { 1 } else { -1 };
                 let order = self.sidebar_order(window_id);

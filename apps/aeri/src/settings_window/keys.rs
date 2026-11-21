@@ -51,6 +51,9 @@ fn section_of(shortcut: Shortcut) -> &'static str {
         | Shortcut::ZoomOut
         | Shortcut::ActualSize => "View",
         Shortcut::RecentTabs
+        | Shortcut::SplitPage
+        | Shortcut::FocusLeftPane
+        | Shortcut::FocusRightPane
         | Shortcut::NextTab
         | Shortcut::PreviousTab
         | Shortcut::SelectTab(_) => "Tabs",

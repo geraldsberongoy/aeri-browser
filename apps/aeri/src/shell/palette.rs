@@ -19,6 +19,7 @@ pub enum PaletteCommand {
     NewWindow,
     CloseTab,
     ReopenClosedTab,
+    SplitPage,
     DuplicateTab,
     TogglePin,
     ToggleFavourite,
@@ -61,6 +62,7 @@ const COMMANDS: &[PaletteCommand] = &[
     PaletteCommand::NewWindow,
     PaletteCommand::CloseTab,
     PaletteCommand::ReopenClosedTab,
+    PaletteCommand::SplitPage,
     PaletteCommand::DuplicateTab,
     PaletteCommand::TogglePin,
     PaletteCommand::ToggleFavourite,
@@ -100,6 +102,7 @@ pub(super) fn shortcut_of(command: PaletteCommand) -> Option<Shortcut> {
         PaletteCommand::NewWindow => Shortcut::NewWindow,
         PaletteCommand::CloseTab => Shortcut::CloseTab,
         PaletteCommand::ReopenClosedTab => Shortcut::ReopenClosedTab,
+        PaletteCommand::SplitPage => Shortcut::SplitPage,
         PaletteCommand::ToggleBookmark => Shortcut::ToggleBookmark,
         PaletteCommand::ShowBookmarks => Shortcut::ShowBookmarks,
         PaletteCommand::ShowHistory => Shortcut::ShowHistory,
@@ -141,6 +144,8 @@ impl Shell {
                 self.pages_command_listed(*command)
                     && self.site_style_listed(window_id, *command)
                     && (self.spaces_on() || !is_space_palette(*command))
+                    && (*command != PaletteCommand::SplitPage
+                        || w.shown().is_some_and(|tab| w.split_eligible(tab)))
                     && matches(&words, title)
             })
             .map(|(command, title)| BarRow {
@@ -201,6 +206,10 @@ impl Shell {
             PaletteCommand::NewWindow => "New Window",
             PaletteCommand::CloseTab => "Close Tab",
             PaletteCommand::ReopenClosedTab => "Reopen Closed Tab",
+            PaletteCommand::SplitPage if w.is_some_and(|w| w.active_split().is_some()) => {
+                "Separate Split Tabs"
+            }
+            PaletteCommand::SplitPage => "Split Current Page",
             PaletteCommand::DuplicateTab => "Duplicate Tab",
             PaletteCommand::TogglePin => {
                 let pinned = w

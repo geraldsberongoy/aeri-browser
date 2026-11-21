@@ -10,9 +10,7 @@
 //! it, its media paused, and coming back shows it; without, another tab
 //! puts it away (`Browser.swift:4661`).
 //!
-//! Left out because the thing they need does not exist yet: "Keep beside
-//! this page" (⌥⌘↩, needs Split View) and the pin's peek of a link to
-//! another site (needs pin homes).
+//! A pin's plain click to another site needs pin homes.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -45,7 +43,7 @@ pub enum PeekMsg {
     /// The dim, the close knob or Esc.
     Close { window: u64 },
     /// The expand knob or ⌘↩: the peek becomes a tab.
-    Expand { window: u64 },
+    Expand { window: u64, beside: bool },
     /// The peek page's window is gone.
     Destroyed { window: u64, tab: TabId },
     /// The tab a peek is from is going away.
@@ -177,7 +175,8 @@ impl Shell {
                 };
                 match key {
                     PeekKey::Close => self.peek_close(window, true, cx),
-                    PeekKey::Keep => self.peek_expand(window, cx),
+                    PeekKey::Keep => self.peek_expand(window, false, cx),
+                    PeekKey::KeepBeside => self.peek_expand(window, true, cx),
                 }
             }
         }
@@ -186,7 +185,7 @@ impl Shell {
     pub(super) fn peek_msg(&mut self, msg: PeekMsg, cx: &mut App) {
         match msg {
             PeekMsg::Close { window } => self.peek_close(window, true, cx),
-            PeekMsg::Expand { window } => self.peek_expand(window, cx),
+            PeekMsg::Expand { window, beside } => self.peek_expand(window, beside, cx),
             PeekMsg::Destroyed { window, tab } => {
                 // Its page closed itself: the panel goes with it.
                 if with(window, |s| s.tab == tab) == Some(true) {
@@ -391,8 +390,8 @@ impl Shell {
 
     /// Keeps the peek as a tab beside the page it came from, without
     /// reloading: the peek's browser window becomes the tab's
-    /// (`Peek.swift:145-181`; no Split View, so never beside).
-    pub(super) fn peek_expand(&mut self, window_id: u64, cx: &mut App) {
+    /// (`Peek.swift:145-181`).
+    fn peek_expand(&mut self, window_id: u64, beside: bool, cx: &mut App) {
         let Some(session) = SESSIONS.with_borrow_mut(|sessions| sessions.remove(&window_id)) else {
             return;
         };
@@ -418,20 +417,21 @@ impl Shell {
             icon: None,
             favicon: session.favicon,
         };
-        w.tabs.insert(tab, entry, false, Some(session.origin));
-        w.tabs.activate(tab);
-        w.favourite = None;
+        let origin = session.origin;
+        w.tabs.insert(tab, entry, false, Some(origin));
         if let Some(handle) = OVERLAYS.with_borrow(|o| o.get(&window_id).copied()) {
             let _ = handle.update(cx, |overlay, _, cx| overlay.close(cx));
         }
         self.later(move |_| {
             // The window stays as it is; the frame takes it as the tab's.
             frame.peek_release();
-            frame.activate(tab);
+            page.resume_media();
             page.move_to(frame.clone());
             page.set_peek_click(mask);
-            page.focus_page();
         });
+        if !beside || !self.pair_tabs(window_id, origin, tab, cx) {
+            self.switch_to(window_id, tab, cx);
+        }
         self.touch(profile);
         self.refresh_window(window_id, cx);
         // A page like any other from now on: Dusk, zoom and styles.
@@ -462,7 +462,7 @@ impl Shell {
             return;
         };
         let frame = w.frame.clone();
-        if w.shown() == Some(origin) {
+        if w.shown() == Some(origin) || (self.prefs.mouse.peek_stays && w.split_contains(origin)) {
             if hidden {
                 let page = with(window_id, |s| {
                     s.hidden = false;

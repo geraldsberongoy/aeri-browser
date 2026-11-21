@@ -441,6 +441,14 @@ impl WindowFrame {
     /// pin as any press does. False for anything else, which goes on as
     /// usual (Search `extendTabSelection`: a pin with ⌘ and no ⇧).
     pub(super) fn pin_command(&self, tab: TabId, pin: bool, modifiers: gpui::Modifiers) -> bool {
+        if modifiers.alt && !modifiers.platform && !modifiers.shift && !modifiers.control {
+            self.send(AppMsg::Tab {
+                window: self.window_id,
+                tab,
+                command: TabCommand::Split,
+            });
+            return true;
+        }
         if !pin || !modifiers.platform || modifiers.shift {
             return false;
         }
