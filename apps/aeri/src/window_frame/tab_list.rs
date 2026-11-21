@@ -15,7 +15,6 @@ use std::time::Duration;
 
 use aeri_core::appearance::{Rgba, Tokens};
 use aeri_core::ids::TabId;
-use aeri_core::keymap::Shortcut;
 use gpui::{
     Animation, AnimationExt, ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent,
     PathBuilder, SharedString, SpringAnimation, SpringConfig, SpringPlayback, Window, canvas, div,
@@ -32,6 +31,7 @@ use self::plan::{DIVIDER, Item, Kind, LEAVE, TILE, plan};
 use self::row::ghost;
 pub(super) use self::row::site_line;
 pub(super) use self::row::{mark_size, number_badge, shortcut_number, title_size};
+use super::tab_hover::blend;
 use super::tab_items::mark;
 use super::{Host, SidebarTab, WindowFrame};
 use crate::motion;
@@ -278,9 +278,13 @@ impl WindowFrame {
         let active = tab.active;
         let high = self.layout.high_contrast;
         let label = SharedString::from(tab.label.clone());
-        let body = self
-            .tab_base("pin", item.index, tab, dy, cx)
-            .group("pin")
+        let (body, hover) = self.tab_hover(
+            self.tab_base("pin", item.index, tab, dy, cx),
+            ("pin", id.0),
+            pace.still,
+            cx,
+        );
+        let body = body
             .size_full()
             .flex()
             .items_center()
@@ -288,17 +292,12 @@ impl WindowFrame {
             .rounded(px(scale * 9. / TILE))
             .text_size(px(scale * 12. / TILE))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(theme::c(if active || high { t.text } else { t.quiet }))
-            .when(!active, |el| {
-                el.bg(theme::c(t.tile)).hover(move |style| {
-                    let style = style.bg(theme::c(t.hover));
-                    if high {
-                        style
-                    } else {
-                        style.text_color(theme::ca(t.text, 0.7))
-                    }
-                })
-            })
+            .text_color(theme::c(if active || high {
+                t.text
+            } else {
+                blend(t.quiet, t.text.with_alpha(0.7), hover)
+            }))
+            .when(!active, |el| el.bg(theme::c(blend(t.tile, t.hover, hover))))
             .tooltip(move |_, cx| cx.new(|_| Tip(label.clone())).into())
             .on_mouse_down(
                 MouseButton::Left,
@@ -320,12 +319,12 @@ impl WindowFrame {
         } else if super::tab_items::is_blank(tab) {
             body
         } else if super::tab_items::shown_favicon(tab, &self.layout).is_some() {
-            body.child(self.dimmed(mark(tab, scale * 16. / TILE, &t, &self.layout), tab, "pin"))
+            body.child(self.dimmed(mark(tab, scale * 16. / TILE, &t, &self.layout), tab, hover))
         } else {
             body.child(self.dimmed(
                 div().child(SharedString::from(super::tab_items::letter(tab))),
                 tab,
-                "pin",
+                hover,
             ))
         };
         let mut opacity = spring(pace.settle, 1., pace.still);
@@ -376,8 +375,8 @@ impl WindowFrame {
         } else {
             t.faint
         };
-        div()
-            .id("new-tab")
+        let (button, hover) = self.tab_hover(div().id("new-tab"), ("new-row", 0), pace.still, cx);
+        button
             .role(gpui::Role::Button)
             .aria_label("New Tab")
             .absolute()
@@ -390,17 +389,16 @@ impl WindowFrame {
             .gap(px(8.))
             .rounded(px(9.))
             .text_size(px(size))
-            .text_color(theme::c(ink))
-            .hover(move |style| {
-                style
-                    .bg(theme::c(t.hover))
-                    .text_color(theme::ca(t.text, 0.7))
+            .text_color(theme::c(if self.layout.high_contrast {
+                ink
+            } else {
+                blend(ink, t.text.with_alpha(0.7), hover)
+            }))
+            .when(hover > 0., |el| {
+                el.bg(theme::c(t.hover.with_alpha(t.hover.a * hover)))
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                this.send(AppMsg::Shortcut {
-                    window,
-                    shortcut: Shortcut::NewTab,
-                });
+                this.send(AppMsg::NewHome { window });
             }))
             .child(
                 div()

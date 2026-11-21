@@ -6,9 +6,17 @@
 //!   use day to day: motion in a development build stutters. The CEF
 //!   framework and helper apps are put in place; CEF finds them through
 //!   this layout, so the app cannot run outside it on macOS.
+//! - `cargo xtask dmg` — packages the already built, signed
+//!   `target/release-bundle/aeri.app` (run `bundle --release` first) into
+//!   the read-only `target/release-bundle/Aeri.dmg`: the bundle, an
+//!   `Applications` link and a static Finder background with install
+//!   instructions (see `dmg.rs`). Needs the terminal to be allowed to
+//!   control Finder; the previous image is replaced only once the new one
+//!   verifies.
 //! - `cargo xtask isolation` — profile isolation checks against a local
 //!   test site, on the bundled app (see `isolation.rs`).
 
+mod dmg;
 mod isolation;
 
 use anyhow::{Result, bail};
@@ -17,8 +25,9 @@ fn main() -> Result<()> {
     let task = std::env::args().nth(1).unwrap_or_default();
     match task.as_str() {
         "bundle" => bundle(std::env::args().nth(2).as_deref() == Some("--release")),
+        "dmg" => dmg::run(),
         "isolation" => isolation::run(),
-        _ => bail!("usage: cargo xtask bundle [--release] | isolation"),
+        _ => bail!("usage: cargo xtask bundle [--release] | dmg | isolation"),
     }
 }
 
@@ -85,10 +94,15 @@ fn bundle(release: bool) -> Result<()> {
         "apps/aeri/resources/Search-LICENSE.txt",
         app.join("Contents/Resources/Search-LICENSE.txt"),
     )?;
+    std::fs::copy(
+        "apps/aeri/resources/aeri-intro.mp4",
+        app.join("Contents/Resources/aeri-intro.mp4"),
+    )?;
     // What macOS shows when a site the Person allowed first uses a device
     // (cef-rs writes the bare app name; location had none).
     let plist = app.join("Contents/Info.plist");
     for (key, text) in [
+        ("CFBundleName", "Aeri"),
         (
             "NSCameraUsageDescription",
             "Websites you allow can then use your camera.",

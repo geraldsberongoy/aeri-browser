@@ -16,6 +16,7 @@ use crate::motion::{self, Pace};
 use crate::shell::{AppMsg, TabCommand};
 use crate::symbol::{Weight, symbol};
 use crate::theme;
+use crate::window_frame::tab_hover::blend;
 use crate::window_frame::tab_items::mark;
 use crate::window_frame::{SidebarTab, WindowFrame};
 
@@ -151,9 +152,13 @@ impl WindowFrame {
         let status = tab.loading || tab.audible;
         let numbered = number.is_some();
         let pin = tab.pinned || tab.favourite;
-        let body = self
-            .tab_base("tab", item.index, tab, dy, cx)
-            .group("row")
+        let (body, hover) = self.tab_hover(
+            self.tab_base("tab", item.index, tab, dy, cx),
+            ("tab", id.0),
+            pace.still,
+            cx,
+        );
+        let body = body
             .relative()
             .size_full()
             .flex()
@@ -163,16 +168,13 @@ impl WindowFrame {
             .pr(px(if status || numbered { 30. } else { 10. }))
             .rounded(px(9.))
             .text_size(px(size))
-            .text_color(theme::c(if active || high { t.text } else { t.quiet }))
-            .when(!active, |el| {
-                el.hover(move |style| {
-                    let style = style.bg(theme::c(t.hover));
-                    if high {
-                        style
-                    } else {
-                        style.text_color(theme::ca(t.text, 0.7))
-                    }
-                })
+            .text_color(theme::c(if active || high {
+                t.text
+            } else {
+                blend(t.quiet, t.text.with_alpha(0.7), hover)
+            }))
+            .when(!active && hover > 0., |el| {
+                el.bg(theme::c(t.hover.with_alpha(t.hover.a * hover)))
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -208,9 +210,9 @@ impl WindowFrame {
             .child(self.dimmed(
                 mark(tab, mark_size(&self.layout), &t, &self.layout),
                 tab,
-                "row",
+                hover,
             ))
-            .child(self.dimmed(self.title(tab, &t, swap_epoch, pace), tab, "row"));
+            .child(self.dimmed(self.title(tab, &t, swap_epoch, pace, hover), tab, hover));
         let body = self.press_gives(body, id, cx);
         let body = match number {
             Some(number) => body.child(
@@ -219,7 +221,7 @@ impl WindowFrame {
                     .top(px((height - 15.) / 2.))
                     .right(px(7.)),
             ),
-            None => self.trailing(body, tab, &t, ground, height, cx),
+            None => self.trailing(body, tab, &t, ground, height, hover, cx),
         };
         let mut opacity = spring(pace.settle, 1., pace.still);
         if fresh {
@@ -244,10 +246,15 @@ impl WindowFrame {
 
     /// The title, or on the shown tab with "Show the address on the tab
     /// you're on" its site in the same place; the title returns under the
-    /// pointer. The two swap by opacity so nothing beside them moves: a
-    /// 0.22 s ease-in-out crossfade when the tab becomes the shown one, at
-    /// once under the pointer (Search `TitleAtRest`).
-    fn title(&self, tab: &SidebarTab, t: &Tokens, swap_epoch: u64, pace: Pace) -> gpui::Div {
+    /// pointer. The two swap by opacity so nothing beside them moves.
+    fn title(
+        &self,
+        tab: &SidebarTab,
+        t: &Tokens,
+        swap_epoch: u64,
+        pace: Pace,
+        hover: f32,
+    ) -> gpui::Div {
         let label = div()
             .w_full()
             .overflow_hidden()
@@ -262,26 +269,28 @@ impl WindowFrame {
             return slot.child(label);
         };
         let key = mix(swap_epoch as i64, tab.id.0);
-        let title = label.opacity(0.).group_hover("row", |s| s.opacity(1.));
-        let address = address_line(&rest, t)
-            .absolute()
-            .top_0()
-            .left_0()
-            .group_hover("row", |s| s.opacity(0.));
+        let address = address_line(&rest, t).absolute().top_0().left_0();
         if pace.still {
-            return slot.child(title.opacity(0.)).child(address.opacity(1.));
+            return slot
+                .child(label.opacity(hover))
+                .child(address.opacity(1. - hover));
         }
         slot.child(
-            title.with_animation(("rest-title", key), motion::swap(), |d, t| {
-                d.opacity(1. - t)
+            label.with_animation(("rest-title", key), motion::swap(), move |d, t| {
+                d.opacity(1. - t * (1. - hover))
             }),
         )
-        .child(address.with_animation(("rest-site", key), motion::swap(), |d, t| d.opacity(t)))
+        .child(
+            address.with_animation(("rest-site", key), motion::swap(), move |d, t| {
+                d.opacity(t * (1. - hover))
+            }),
+        )
     }
 
     /// What is at a row's trailing edge: the title fading under the cross
     /// (16 points of gradient and 26 of cut, so it is not truncated again),
     /// the loading ring, the speaker, and the cross itself.
+    #[allow(clippy::too_many_arguments)]
     fn trailing(
         &self,
         body: gpui::Stateful<gpui::Div>,
@@ -289,6 +298,7 @@ impl WindowFrame {
         t: &Tokens,
         ground: Rgba,
         height: f32,
+        hover: f32,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let t = *t;
@@ -299,8 +309,7 @@ impl WindowFrame {
                 .bottom_0()
                 .right(px(26.))
                 .w(px(16.))
-                .opacity(0.)
-                .group_hover("row", |s| s.opacity(1.))
+                .opacity(hover)
                 .bg(linear_gradient(
                     90.,
                     linear_color_stop(theme::ca(ground, 0.), 0.),
@@ -314,8 +323,7 @@ impl WindowFrame {
                 .bottom_0()
                 .right_0()
                 .w(px(26.))
-                .opacity(0.)
-                .group_hover("row", |s| s.opacity(1.))
+                .opacity(hover)
                 .bg(theme::c(ground)),
         )
         .when(tab.loading, |el| {
@@ -328,7 +336,7 @@ impl WindowFrame {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .group_hover("row", |s| s.opacity(0.))
+                    .opacity(1. - hover)
                     .child(ring(10., t.icon_muted.with_alpha(0.7))),
             )
         })
@@ -338,12 +346,11 @@ impl WindowFrame {
                 div()
                     .absolute()
                     .top(px((height - 15.) / 2.))
-                    .right(px(rest))
+                    .right(px(rest + (30. - rest) * hover))
                     .size(px(15.))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .group_hover("row", |s| s.right(px(30.)))
                     .child(symbol(
                         "speaker.wave.2.fill",
                         8.,
@@ -352,7 +359,7 @@ impl WindowFrame {
                     )),
             )
         })
-        .child(self.close_cross(tab, &t, height, cx))
+        .child(self.close_cross(tab, &t, height, hover, cx))
     }
 
     /// The × (a pinned tab shows a minus): on row hover, a 15 point disc in
@@ -362,6 +369,7 @@ impl WindowFrame {
         tab: &SidebarTab,
         t: &Tokens,
         height: f32,
+        hover: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
@@ -379,8 +387,7 @@ impl WindowFrame {
             .flex()
             .items_center()
             .justify_end()
-            .opacity(0.)
-            .group_hover("row", |s| s.opacity(1.))
+            .opacity(hover)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();

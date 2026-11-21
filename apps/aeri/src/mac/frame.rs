@@ -27,7 +27,7 @@ use aeri_core::layout::{Layout, Side};
 use block2::RcBlock;
 use futures::channel::mpsc::UnboundedSender;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, ProtocolObject, Sel};
 use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationDidBecomeActiveNotification,
@@ -72,6 +72,8 @@ pub struct Frame {
     pub(super) lights: RefCell<Option<[Lights; 3]>>,
     pub(super) tabs: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
     pub(super) active: Cell<Option<TabId>>,
+    /// A solo blank tab has native Home content below its Chromium window.
+    home_tab: Cell<Option<TabId>>,
     pub(super) split: super::split::Stage,
     /// The tab window currently ordered in, which can lag `active` until the
     /// active tab's window exists.
@@ -100,6 +102,7 @@ impl Frame {
             bar: RefCell::default(),
             tabs: RefCell::default(),
             active: Cell::new(None),
+            home_tab: Cell::new(None),
             split: super::split::Stage::default(),
             shown: RefCell::default(),
             bar_visible: Cell::new(false),
@@ -132,19 +135,23 @@ impl Frame {
             return;
         };
         for child in [&side, &strip, &bar] {
-            // SAFETY: AppKit calls on the main thread.
-            unsafe {
-                frame.addChildWindow_ordered(child, NSWindowOrderingMode::Above);
-                // GPUI pop-ups float above every app; as children, follow
-                // the frame.
-                child.setLevel(frame.level());
-                child.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenAuxiliary);
-                child.setHasShadow(false);
-            }
-            child.setAlphaValue(0.0);
-            child.setIgnoresMouseEvents(true);
+            // GPUI pop-ups float above every app; as children, follow
+            // the frame.
+            child.setLevel(frame.level());
+            child.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenAuxiliary);
+            child.setHasShadow(false);
             share_parent_key_state(child);
         }
+        for overlay in [&side, &strip] {
+            make_overlay_mouse_only(overlay);
+            overlay.setAlphaValue(0.0);
+            overlay.setIgnoresMouseEvents(true);
+            // SAFETY: AppKit calls on the main thread.
+            unsafe { frame.addChildWindow_ordered(overlay, NSWindowOrderingMode::Above) };
+        }
+        // A transparent panel can still become key. Keep the address panel
+        // out of the window order until a shortcut actually shows it.
+        bar.orderOut(None);
         self.make_lights(&frame, &side, &strip);
         *self.frame.borrow_mut() = Some(frame.clone());
         *self.bar.borrow_mut() = Some(bar);
@@ -161,8 +168,8 @@ impl Frame {
         // SAFETY: AppKit notification names; the blocks run on the main
         // thread (the posting thread) and hold the frame weakly.
         unsafe {
-            // The frame rarely becomes key itself: a child that shares its
-            // key state (the bar, a tab) takes the keyboard. Becoming main
+            // Home keeps the frame key. For web pages or the address bar,
+            // the corresponding child takes the keyboard. Becoming main
             // marks the Person bringing this window forward.
             for name in [
                 NSWindowDidResizeNotification,
@@ -231,8 +238,7 @@ impl Frame {
         }
     }
 
-    /// The frame has nothing to type into: when it becomes key (after a
-    /// restore or a Space switch), hand the keyboard to what the Person sees.
+    /// Hands the keyboard to the visible child, or leaves it with Home.
     fn forward_key(&self) {
         // A peek is in sight: the keyboard is its page's.
         if let Some(peek) = self.peek_key_window() {
@@ -254,7 +260,9 @@ impl Frame {
             if let Some(bar) = self.bar.borrow().as_ref() {
                 bar.makeKeyWindow();
             }
-        } else if let Some(tab) = self.active_window() {
+        } else if self.home_tab.get() != self.active.get()
+            && let Some(tab) = self.active_window()
+        {
             tab.makeKeyWindow();
         }
     }
@@ -465,6 +473,49 @@ impl Frame {
         self.place_switcher(frame.frame());
     }
 
+    pub(crate) fn home_tab(&self) -> Option<TabId> {
+        self.home_tab.get()
+    }
+
+    /// Keep Chromium available for navigation, but let Home own drawing and input
+    /// while the active, unsplit tab still points to about:blank.
+    pub(crate) fn set_home_tab(&self, home: Option<TabId>) {
+        let previous = self.home_tab.replace(home);
+        let active = self.active.get();
+        if previous == home || (active != home && active != previous) {
+            return;
+        }
+        let (Some(frame), Some(page)) = (self.frame.borrow().clone(), self.active_window()) else {
+            return;
+        };
+        let had_key = self.is_key();
+        let show_home = active == home;
+        self.order_page(&frame, &page, show_home);
+        self.raise_children();
+        if had_key && !self.bar_visible.get() {
+            if show_home {
+                frame.makeKeyWindow();
+            } else {
+                page.makeKeyWindow();
+            }
+        }
+    }
+
+    fn order_page(&self, frame: &NSWindow, page: &NSWindow, home: bool) {
+        if home {
+            // Keep the browser alive for navigation without letting a
+            // transparent CEF window take the keyboard from native Home.
+            if let Some(parent) = page.parentWindow() {
+                parent.removeChildWindow(page);
+            }
+            page.orderOut(None);
+        } else {
+            // SAFETY: AppKit calls on the main thread.
+            unsafe { frame.addChildWindow_ordered(page, NSWindowOrderingMode::Above) };
+            page.orderFront(None);
+        }
+    }
+
     /// Shows `tab`'s window over the frame and hides the previous one.
     pub fn activate(&self, tab: TabId) {
         self.active.set(Some(tab));
@@ -475,12 +526,11 @@ impl Frame {
             self.float_after_activate();
             return;
         };
+        let home = self.home_tab.get() == Some(tab);
         let page = self.page_rect(&frame);
         self.sync_secondary(&frame, page, self.insets(&frame).radius);
-        next.setFrame_display(self.focused_rect(page), true);
-        // SAFETY: AppKit calls on the main thread.
-        unsafe { frame.addChildWindow_ordered(&next, NSWindowOrderingMode::Above) };
-        next.orderFront(None);
+        next.setFrame_display(self.focused_rect(page), !home);
+        self.order_page(&frame, &next, home);
         let previous = self.shown.replace(Some(next.clone()));
         if let Some(previous) = previous.filter(|p| {
             !super::split::same(p, &next)
@@ -500,7 +550,11 @@ impl Frame {
         self.layout();
         self.raise_children();
         if !self.bar_visible.get() {
-            next.makeKeyWindow();
+            if home {
+                frame.makeKeyWindow();
+            } else {
+                next.makeKeyWindow();
+            }
         }
         self.float_after_activate();
     }
@@ -520,7 +574,7 @@ impl Frame {
             .iter()
             .chain(find.iter())
             .chain(overlays.iter().flatten())
-            .chain(bar.iter())
+            .chain(bar.iter().filter(|_| self.bar_visible.get()))
             .chain(switcher.iter())
         {
             frame.removeChildWindow(child);
@@ -531,26 +585,39 @@ impl Frame {
 
     /// Shows the address bar and gives it the keyboard.
     pub fn show_bar(&self) {
-        let Some(bar) = self.bar.borrow().clone() else {
+        let (Some(frame), Some(bar)) = (self.frame.borrow().clone(), self.bar.borrow().clone())
+        else {
             return;
         };
-        self.bar_visible.set(true);
-        bar.setAlphaValue(1.0);
-        bar.setIgnoresMouseEvents(false);
+        if !self.bar_visible.replace(true) {
+            // SAFETY: AppKit calls on the main thread.
+            unsafe { frame.addChildWindow_ordered(&bar, NSWindowOrderingMode::Above) };
+            bar.orderFront(None);
+        }
         bar.makeKeyWindow();
     }
 
     /// Hides the address bar at once (Zen closes its bar without motion).
     /// With `focus_page`, the page takes the keyboard.
     pub fn hide_bar(&self, focus_page: bool) {
+        if !self.bar_visible.replace(false) {
+            return;
+        }
         let Some(bar) = self.bar.borrow().clone() else {
             return;
         };
-        self.bar_visible.set(false);
-        bar.setIgnoresMouseEvents(true);
-        bar.setAlphaValue(0.0);
-        if focus_page && let Some(tab) = self.active_window() {
-            tab.makeKeyWindow();
+        if let Some(frame) = bar.parentWindow() {
+            frame.removeChildWindow(&bar);
+        }
+        bar.orderOut(None);
+        if focus_page {
+            if self.home_tab.get().is_some() && self.home_tab.get() == self.active.get() {
+                if let Some(frame) = self.frame.borrow().as_ref() {
+                    frame.makeKeyWindow();
+                }
+            } else if let Some(tab) = self.active_window() {
+                tab.makeKeyWindow();
+            }
         }
     }
 
@@ -627,6 +694,26 @@ impl Frame {
             || key
                 .parentWindow()
                 .is_some_and(|parent| std::ptr::eq(&*parent, &*frame))
+    }
+
+    /// Whether the active Chromium page, rather than a chrome overlay, has the keyboard.
+    pub(crate) fn page_has_key(&self) -> bool {
+        self.active_window().is_some_and(|page| {
+            NSApplication::sharedApplication(MainThreadMarker::from(&*page))
+                .keyWindow()
+                .is_some_and(|key| std::ptr::eq(&*page, &*key))
+        })
+    }
+
+    /// The Window menu operates on the frame, not the focused child page.
+    pub(crate) fn window_menu(&self, minimize: bool) {
+        if let Some(frame) = self.frame.borrow().clone() {
+            if minimize {
+                frame.performMiniaturize(None);
+            } else {
+                frame.performZoom(None);
+            }
+        }
     }
 
     /// Pops up a native menu at (`x`, `y`) points from the frame's top-left.
@@ -755,6 +842,35 @@ pub(super) fn round_page(window: &NSWindow, radius: f64) {
             let _: () = msg_send![layer, setCornerRadius: radius];
         }
     }
+}
+
+/// The slide-out chrome has no editor. GPUI's panel class is key and main
+/// eligible even when transparent; these two overlays must not take focus
+/// from the frame, page, or floating address bar.
+fn make_overlay_mouse_only(window: &NSWindow) {
+    extern "C-unwind" fn no(_: &AnyObject, _: Sel) -> Bool {
+        Bool::NO
+    }
+
+    let window: &AnyObject = window;
+    let class = AnyClass::get(c"AeriChromeOverlayPanel").unwrap_or_else(|| {
+        let mut class = ClassBuilder::new(c"AeriChromeOverlayPanel", window.class())
+            .expect("could not create Aeri chrome overlay subclass");
+        // SAFETY: Both AppKit selectors return BOOL and take no arguments.
+        unsafe {
+            class.add_method(
+                sel!(canBecomeKeyWindow),
+                no as extern "C-unwind" fn(_, _) -> _,
+            );
+            class.add_method(
+                sel!(canBecomeMainWindow),
+                no as extern "C-unwind" fn(_, _) -> _,
+            );
+        }
+        class.register()
+    });
+    // SAFETY: The subclass adds no fields or destruction behavior.
+    unsafe { AnyObject::set_class(window, class) };
 }
 
 extern "C-unwind" fn shares_parent_key_state(

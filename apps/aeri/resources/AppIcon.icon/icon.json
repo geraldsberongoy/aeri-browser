@@ -1,8 +1,10 @@
 {
-  "fill": {
-    "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
-  },
   "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+      }
+    },
     {
       "appearance": "dark",
       "value": {
@@ -14,12 +16,20 @@
     {
       "layers": [
         {
-          "fill": {
-            "solid": "srgb:0.00000,0.00000,0.00000,1.00000"
-          },
           "fill-specializations": [
             {
+              "value": {
+                "solid": "srgb:0.00000,0.00000,0.00000,1.00000"
+              }
+            },
+            {
               "appearance": "dark",
+              "value": {
+                "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
               "value": {
                 "solid": "srgb:1.00000,1.00000,1.00000,1.00000"
               }

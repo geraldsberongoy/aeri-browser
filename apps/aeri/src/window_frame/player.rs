@@ -67,24 +67,16 @@ impl WindowFrame {
         }
     }
 
-    /// `el`, the mark or title of `tab`, faded if the tab is dimmed, and at
-    /// full strength while the pointer is on the row or tile of `group`.
-    pub(super) fn dimmed(
-        &self,
-        el: gpui::Div,
-        tab: &SidebarTab,
-        group: impl Into<SharedString>,
-    ) -> gpui::Div {
+    /// Bring a sleeping tab's mark and title back to full strength on hover.
+    pub(super) fn dimmed(&self, el: gpui::Div, tab: &SidebarTab, hover: f32) -> gpui::Div {
         if self.dims(tab) {
-            el.opacity(DIM).group_hover(group, |s| s.opacity(1.))
+            el.opacity(DIM + (1. - DIM) * hover)
         } else {
             el
         }
     }
 
-    /// A tab is drawn dimmed: its page is gone, the preference is on, and it
-    /// is not the one shown. The pointer on it brings it back (the row's
-    /// `group_hover`).
+    /// A sleeping tab that isn't shown is dimmed when the preference is on.
     pub(super) fn dims(&self, tab: &SidebarTab) -> bool {
         self.look.dim && tab.asleep && !tab.active
     }

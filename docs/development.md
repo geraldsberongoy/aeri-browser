@@ -45,7 +45,7 @@ apps/aeri/          the binary: GPUI windows and views, AppKit glue (mac.rs)
 apps/aeri-helper/   CEF subprocess binary
 crates/aeri-core/   domain model, rules, persistence; no GPUI, no CEF
 crates/aeri-cef/    CEF adapter for the engine seam
-xtask/              `cargo xtask bundle`, `cargo xtask isolation`
+xtask/              `cargo xtask bundle`, `cargo xtask dmg`, `cargo xtask isolation`
 docs/               architecture, decisions, research, roadmap
 .monozukuri/        blueprint (requirements, stack, plan) and phase specs
 ```
@@ -83,12 +83,42 @@ bundle. It deletes the old bundle first: macOS
 caches code signatures per file, and copying a new binary over a running or
 recently run one gets it killed ("load code signature error 2").
 
+To build the macOS installer:
+
+```sh
+cargo xtask bundle --release
+cargo xtask dmg                     # → target/release-bundle/Aeri.dmg
+```
+
+The disk image uses Finder's standard drag to Applications. Packaging needs
+a macOS desktop session with permission for the terminal to control Finder;
+eject any mounted Aeri disk image before rebuilding. The build is ad-hoc
+signed, not notarized for public distribution.
+
+For the first-launch welcome, run with a new `AERI_DATA_DIR` and without
+`AERI_START_URL` or `AERI_PROFILE`. A silent, full-screen film reveals
+the Aeri ribbon and wordmark before the Spaces, Peek, and Split View tour.
+Press **Esc** to skip the film. Reduce Motion starts at the tour, with
+**Watch Intro** available.
+**Skip Setup** goes straight to browsing without changing preferences.
+**Start Browsing** saves changes to the tab layout and appearance. Quit
+before either and the welcome appears next time.
+**Help → Welcome to Aeri…** replays the flow without changing anything unless
+you choose a setting and confirm it.
+
+The [intro MP4](../apps/aeri/resources/aeri-intro.mp4) is bundled as-is.
+Regenerate it with `xtask/intro/render.sh` (Node.js, npx, and FFmpeg).
+
+New blank tabs show Aeri Home. Type a search or address directly into Home's
+field and press Return to browse in that tab. Home also links to Bookmarks,
+History, and Settings. **⌘T** and **⌘L** still open the floating composer.
+
 Development switches:
 
 | Variable or flag | Effect |
 | --- | --- |
 | `AERI_DATA_DIR=/tmp/aeri-data` | Use a throwaway data directory instead of `~/Library/Application Support/Aeri`. |
-| `AERI_START_URL=https://example.com` | Open one window on this address per opened profile instead of restoring each profile's session. Without it, a profile with no session opens a new tab (`about:blank`, with the address bar shown). |
+| `AERI_START_URL=https://example.com` | Open one window on this address per opened profile instead of restoring each profile's session. Without it, a profile with no session opens Aeri Home. |
 | `AERI_REMOTE_DEBUGGING_PORT=9334` | Expose the DevTools protocol for scripted checks. |
 | `AERI_PROFILE=Work,Client` | Open (or create) these profiles, each in its own window, instead of the last-used one. For scripted checks; the Profiles menu is the Person's way. |
 | `AERI_DOWNLOAD_DIR=/tmp/aeri-downloads` | Save downloads here instead of `~/Downloads`. |

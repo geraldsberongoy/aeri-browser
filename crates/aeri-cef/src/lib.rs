@@ -60,7 +60,7 @@ pub use reader::{Twin, guess_script, look_script, note_script, show_script, twin
 pub use request_policy::set_request_policy;
 pub use resources::{Task, TaskKind, TaskMonitor};
 pub use runtime::{Runtime, RuntimeConfig, add_list_switch_item, add_switch, load};
-pub use window::{TabObserver, TabWindow};
+pub use window::{Edit, TabObserver, TabWindow};
 
 thread_local! {
     /// The keys pages hand to Aeri instead of handling them (CEF's key

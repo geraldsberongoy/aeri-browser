@@ -15,7 +15,7 @@ use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions
 
 use super::passwords::{apply_password_provider, provider_title};
 use super::tabs::{Place, TabStart};
-use super::{AppMsg, OpenProfile, Plan, Shell, content_view, menus};
+use super::{AppMsg, NEW_TAB_URL, OpenProfile, Plan, Shell, content_view, menus};
 use crate::mac::{self};
 use crate::native_menu::{Align, Entry};
 use crate::profile_manager::{self, ProfileManager};
@@ -175,8 +175,8 @@ impl Shell {
         }
     }
 
-    /// Opens uBlock Origin Lite's store page in a new tab, once per profile,
-    /// if it is not installed yet and ad blocking is on.
+    /// Offers uBlock Origin Lite in a new tab, once per profile, if ad
+    /// blocking is on and it is not installed. Never replace Home on launch.
     pub(super) fn offer_blocker(&mut self, profile: ProfileId, cx: &mut App) {
         if !self.prefs.privacy.block_ads {
             return;
@@ -188,14 +188,13 @@ impl Shell {
         if installed {
             return;
         }
-        let Some(window_id) = self
-            .windows
-            .iter()
-            .rfind(|w| w.profile == profile)
-            .map(|w| w.id)
-        else {
+        let Some(window) = self.windows.iter().rfind(|w| w.profile == profile) else {
             return;
         };
+        let window_id = window.id;
+        let foreground = self
+            .shown_model(window)
+            .is_none_or(|tab| tab.url != NEW_TAB_URL);
         match self.db.take_blocker_offer(profile) {
             Ok(true) => {}
             Ok(false) => return,
@@ -206,7 +205,7 @@ impl Shell {
         }
         tracing::info!(%profile, "offering uBlock Origin Lite");
         let start = TabStart::Load(BLOCKER_STORE_URL.to_owned());
-        self.add_tab(window_id, TabId::next(), start, Place::End, true, cx);
+        self.add_tab(window_id, TabId::next(), start, Place::End, foreground, cx);
     }
 
     pub(super) fn mark_used(&self, profile: ProfileId) {

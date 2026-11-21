@@ -1,6 +1,7 @@
 //! What the shell's message loop handles: [`AppMsg`], sent by CEF
 //! callbacks, GPUI views and native menus.
 
+use crate::welcome::Choices;
 use aeri_cef::Signal;
 use aeri_core::appearance::Recipe;
 use aeri_core::credentials::PasswordProvider;
@@ -56,6 +57,14 @@ pub enum AppMsg {
     Shortcut {
         window: u64,
         shortcut: Shortcut,
+    },
+    NewHome {
+        window: u64,
+    },
+    HomeSubmit {
+        window: u64,
+        tab: TabId,
+        text: String,
     },
     SplitFocus {
         window: u64,
@@ -267,8 +276,10 @@ pub enum AppMsg {
         window: u64,
         msg: super::settings::SettingsMsg,
     },
-    /// The menu bar's Settings, with no browser window in front.
-    OpenSettings,
+    Menu(super::menu_bar::MenuCommand),
+    ShowWelcome,
+    WelcomeFilmFinished(gpui::WindowId, u64),
+    FinishWelcome(Option<Choices>),
     /// Quit; asks first when the preference says so.
     Quit,
     /// Quit without asking: after the confirmation, and for signals.
@@ -284,6 +295,8 @@ pub enum ChromeMsg {
     Pin { edge: Edge, pinned: bool },
     /// The sidebar's edge was dragged to `width`; `done` when let go.
     Width { width: u16, done: bool },
+    /// The pointer left the GPUI chrome for another native window.
+    PointerLeft { window: u64 },
 }
 
 /// The theme editor window (Phase 12). Every change is previewed live in

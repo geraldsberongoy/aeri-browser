@@ -123,6 +123,11 @@ impl TextInput {
         }
     }
 
+    pub(crate) fn with_tab_stop(mut self) -> Self {
+        self.focus_handle = self.focus_handle.tab_stop(true);
+        self
+    }
+
     /// Replaces the text without emitting events. Ignored while the Person
     /// is composing with an input method, so typing is never clobbered.
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {

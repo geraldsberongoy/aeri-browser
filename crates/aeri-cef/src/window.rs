@@ -43,6 +43,15 @@ pub trait TabObserver {
     fn destroyed(&self, tab: TabId);
 }
 
+/// An Edit menu command for Chromium's currently focused document or field.
+#[derive(Clone, Copy)]
+pub enum Edit {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
 struct State {
     tab: TabId,
     view: BrowserView,
@@ -215,6 +224,18 @@ impl TabWindow {
             Command::GoForward { .. } => browser.go_forward(),
             Command::Reload { .. } => browser.reload(),
             Command::Stop { .. } => browser.stop_load(),
+        }
+    }
+
+    pub fn edit(&self, edit: Edit) {
+        let Some(frame) = self.browser().and_then(|browser| browser.focused_frame()) else {
+            return;
+        };
+        match edit {
+            Edit::Cut => frame.cut(),
+            Edit::Copy => frame.copy(),
+            Edit::Paste => frame.paste(),
+            Edit::SelectAll => frame.select_all(),
         }
     }
 

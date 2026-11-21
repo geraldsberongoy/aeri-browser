@@ -42,6 +42,7 @@ mod library;
 mod links;
 mod little;
 mod little_life;
+mod menu_bar;
 mod msg;
 mod pages;
 mod palette;
@@ -78,6 +79,7 @@ mod tabs;
 mod theme_files;
 mod themes;
 mod trust;
+mod welcome;
 mod windows;
 mod zoom;
 
@@ -98,13 +100,14 @@ use aeri_core::workspace::TabList;
 use anyhow::{Context as _, Result};
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui::{App, Menu, MenuItem, WindowHandle, actions};
+use gpui::{App, WindowHandle};
 
 pub use self::bar::{BarRow, Pick};
 pub use self::bookmarks_bar::BarMsg;
 pub use self::find::FindMsg;
 pub use self::float::FloatMsg;
 pub use self::links::open_urls;
+use self::menu_bar::{install_actions, menus};
 pub use self::msg::{AppMsg, ChromeMsg, Nav, TabCommand, ThemeEditorMsg};
 pub use self::peek::PeekMsg;
 use self::profiles::remove_deleted_profiles;
@@ -119,7 +122,6 @@ pub use self::tab_signals::{PlayerAct, TabSignal};
 use self::tabs::TabEntry;
 use self::trust::DownloadEntry;
 use self::windows::AeriWindow;
-use crate::address_bar;
 use crate::library::Library;
 use crate::mac;
 use crate::profile_manager::ProfileManager;
@@ -141,15 +143,6 @@ pub struct Config {
     /// Development and tests: rest tabs unseen this long, checking as
     /// often, instead of the Person's period.
     pub rest_after: Option<std::time::Duration>,
-}
-
-actions!(aeri, [NewProfile, ManageProfiles]);
-
-/// The Profiles menu's entry for one profile.
-#[derive(Clone, Debug, PartialEq, gpui::Action)]
-#[action(namespace = aeri, no_json)]
-struct SwitchProfile {
-    profile: ProfileId,
 }
 
 type Effect = Box<dyn FnOnce(&mut Shell)>;
@@ -209,8 +202,9 @@ struct Shell {
     profiles: Vec<Profile>,
     open: HashMap<ProfileId, OpenProfile>,
     engine_ready: bool,
-    /// Profiles to open once the engine is ready.
+    /// Profiles to open once the engine is ready and setup is dismissed.
     launch: Vec<(ProfileId, Plan)>,
+    welcome: welcome::Onboarding,
     devtools: Option<DevTools>,
     /// Profiles whose session changed while handling the current message.
     dirty: HashSet<ProfileId>,
@@ -269,6 +263,11 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     let existing_install = app_db.exists();
     let db = AppDb::open(&app_db).context("opening app.db")?;
     let prefs = prefs::load(&db, existing_install);
+    let welcome = welcome::Onboarding::load(
+        &db,
+        existing_install,
+        config.start_url.is_none() && config.profiles.is_empty(),
+    );
     // Chromium is not running yet, so deleted profiles can go now.
     remove_deleted_profiles(&db, &config.data_dir);
     // An explicit start address opens one window on it; otherwise each
@@ -322,27 +321,11 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     let mut keymap = settings::load_keymap(&db);
     keymap.set_space_keys(prefs.spaces.keys());
     settings::install_keymap(&keymap, cx);
-    let send = |msg: fn() -> AppMsg| {
-        let tx = tx.clone();
-        move || {
-            let _ = tx.unbounded_send(msg());
-        }
-    };
-    let quit = send(|| AppMsg::Quit);
-    cx.on_action(move |_: &address_bar::Quit, _| quit());
-    let settings = send(|| AppMsg::OpenSettings);
-    cx.on_action(move |_: &address_bar::Settings, _| settings());
-    let new = send(|| AppMsg::ShowProfiles { new: true });
-    cx.on_action(move |_: &NewProfile, _| new());
-    let manage = send(|| AppMsg::ShowProfiles { new: false });
-    cx.on_action(move |_: &ManageProfiles, _| manage());
-    let switch = tx.clone();
-    cx.on_action(move |action: &SwitchProfile, _| {
-        let _ = switch.unbounded_send(AppMsg::OpenProfile {
-            profile: action.profile,
-        });
+    install_actions(&tx, cx);
+    let quit = tx.clone();
+    mac::intercept_termination(move || {
+        let _ = quit.unbounded_send(AppMsg::Quit);
     });
-    mac::intercept_termination(send(|| AppMsg::Quit));
     let command = tx.clone();
     mac::watch_command(move |held| {
         let _ = command.unbounded_send(AppMsg::CommandHeld(held));
@@ -362,6 +345,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         open: HashMap::new(),
         engine_ready: false,
         launch,
+        welcome,
         devtools: runtime.devtools().ok().cloned(),
         dirty: HashSet::new(),
         windows: Vec::new(),
@@ -408,43 +392,6 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     })
     .detach();
     Ok(())
-}
-
-/// The menu bar: the app menu, and a Profiles menu that reaches every
-/// profile command from the keyboard.
-fn menus(profiles: &[Profile]) -> Vec<Menu> {
-    let mut items: Vec<MenuItem> = profiles
-        .iter()
-        .map(|profile| {
-            MenuItem::action(
-                profile.name.clone(),
-                SwitchProfile {
-                    profile: profile.id,
-                },
-            )
-        })
-        .collect();
-    items.extend([
-        MenuItem::separator(),
-        MenuItem::action("New Profile…", NewProfile),
-        MenuItem::action("Manage Profiles…", ManageProfiles),
-    ]);
-    vec![
-        Menu {
-            name: "Aeri".into(),
-            items: vec![
-                MenuItem::action("Settings…", address_bar::Settings),
-                MenuItem::separator(),
-                MenuItem::action("Quit Aeri", address_bar::Quit),
-            ],
-            disabled: false,
-        },
-        Menu {
-            name: "Profiles".into(),
-            items,
-            disabled: false,
-        },
-    ]
 }
 
 impl Shell {
@@ -538,6 +485,15 @@ impl Shell {
             AppMsg::Library(msg) => self.library_msg(msg, cx),
             AppMsg::AddressDismissed { window, session } => self.dismiss_bar(window, session, cx),
             AppMsg::Shortcut { window, shortcut } => self.shortcut(window, shortcut, cx),
+            AppMsg::NewHome { window } => self.add_new_tab(window, true, cx),
+            AppMsg::HomeSubmit { window, tab, text } => {
+                if self
+                    .window(window)
+                    .is_some_and(|w| w.frame.home_tab() == Some(tab))
+                {
+                    self.go(window, &text, false, cx);
+                }
+            }
             AppMsg::Tab {
                 window,
                 tab,
@@ -629,12 +585,19 @@ impl Shell {
             AppMsg::TabEditorClosed => self.tab_editor = None,
             AppMsg::WindowKey { window } => self.window_key(window, cx),
             AppMsg::SplitFocus { window, tab } => self.focus_split_pane(window, tab, cx),
-            AppMsg::OpenExternal(urls) => self.open_external(urls, cx),
+            AppMsg::OpenExternal(urls) => {
+                if !urls.is_empty() {
+                    self.set_welcome_aside(cx);
+                }
+                self.open_external(urls, cx);
+            }
             AppMsg::DefaultsChanged => self.refresh_settings(cx),
             AppMsg::ProxyLogin => self.proxy_login_prompt(),
             AppMsg::ProxyUser(name) => self.set_proxy_user(name, cx),
             AppMsg::Reopen => {
-                if self.windows.is_empty() && !self.quitting {
+                if self.welcome.window.is_some() {
+                    self.show_welcome(cx);
+                } else if self.windows.is_empty() && self.launch.is_empty() && !self.quitting {
                     match self.db.launch_profile() {
                         Ok(profile) => self.open_profile_window(profile.id, Plan::Restore, cx),
                         Err(err) => tracing::error!(%err, "no profile to open"),
@@ -663,11 +626,12 @@ impl Shell {
                 recipe,
             } => self.set_target_theme(window, target, recipe, cx),
             AppMsg::Settings { window, msg } => self.settings_msg(window, msg, cx),
-            AppMsg::OpenSettings => {
-                if let Some(id) = self.windows.last().map(|w| w.id) {
-                    self.show_settings(id, cx);
-                }
+            AppMsg::Menu(command) => self.menu_command(command, cx),
+            AppMsg::ShowWelcome => {
+                self.show_welcome(cx);
             }
+            AppMsg::WelcomeFilmFinished(id, run) => self.welcome_film_finished(id, run, cx),
+            AppMsg::FinishWelcome(choices) => self.finish_welcome(choices, cx),
             AppMsg::Quit => self.request_quit(cx),
             AppMsg::QuitNow => self.quit(cx),
             AppMsg::SetDownloadsDir(dir) => {
@@ -688,6 +652,13 @@ impl Shell {
 
     fn engine_ready(&mut self, cx: &mut App) {
         self.engine_ready = true;
+        if self.welcome.first_launch && self.show_welcome(cx) {
+            return;
+        }
+        self.open_launch_windows(cx);
+    }
+
+    fn open_launch_windows(&mut self, cx: &mut App) {
         for (profile, plan) in std::mem::take(&mut self.launch) {
             self.open_profile_window(profile, plan, cx);
         }

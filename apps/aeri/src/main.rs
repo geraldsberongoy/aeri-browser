@@ -5,6 +5,7 @@
 //! initializes inside GPUI's `run` callback.
 
 mod address_bar;
+mod brand;
 mod chrome_overlay;
 mod find_bar;
 mod library;
@@ -27,6 +28,7 @@ mod tab_switcher;
 mod text_input;
 mod theme;
 mod theme_editor;
+mod welcome;
 mod window_frame;
 
 use std::path::PathBuf;

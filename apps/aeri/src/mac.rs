@@ -17,6 +17,7 @@ mod float_stage;
 mod fold;
 mod frame;
 pub mod hotkey;
+pub(crate) mod intro;
 mod lights;
 pub mod links;
 mod little;
@@ -67,6 +68,14 @@ pub(super) fn window_of(view: *mut c_void) -> Option<Retained<NSWindow>> {
     // SAFETY: callers pass a live content NSView (from GPUI or CEF) on the
     // main thread.
     unsafe { (*(view as *const NSView)).window() }
+}
+
+pub(crate) fn view_has_key(view: *mut c_void) -> bool {
+    window_of(view).is_some_and(|window| {
+        objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::from(&*window))
+            .keyWindow()
+            .is_some_and(|key| std::ptr::eq(&*window, &*key))
+    })
 }
 
 /// Brings the window of a GPUI content view to the front and makes it key.

@@ -137,8 +137,13 @@ impl WindowFrame {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
-        div()
-            .id("top-new-tab")
+        let (button, hover) = self.tab_hover(
+            div().id("top-new-tab"),
+            ("new-pill", 0),
+            crate::motion::still(window, cx),
+            cx,
+        );
+        button
             .role(gpui::Role::Button)
             .aria_label("New Tab")
             .flex()
@@ -149,14 +154,13 @@ impl WindowFrame {
             .h(px(27.))
             .rounded(px(9.))
             .cursor_pointer()
-            .hover(move |style| style.bg(theme::c(t.hover)))
+            .when(hover > 0., |el| {
+                el.bg(theme::c(t.hover.with_alpha(t.hover.a * hover)))
+            })
             .invisible()
             .group_hover("strip", |style| style.visible())
             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                this.send(AppMsg::Shortcut {
-                    window,
-                    shortcut: aeri_core::keymap::Shortcut::NewTab,
-                });
+                this.send(AppMsg::NewHome { window });
             }))
             .child(symbol("plus", 10., Weight::Medium, t.icon_muted))
     }

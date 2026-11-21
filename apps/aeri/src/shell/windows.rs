@@ -22,7 +22,7 @@ use gpui::{
 use super::internal::{NotesView, SettingsView};
 use super::spaces::Parked;
 use super::tabs::{TabEntry, TabStart};
-use super::{NEW_TAB_URL, Nav, Shell, content_view};
+use super::{Nav, Shell, content_view};
 use crate::address_bar::AddressBar;
 use crate::chrome_overlay::ChromeOverlay;
 use crate::mac::{BAR_HEIGHT, Frame};
@@ -327,10 +327,6 @@ impl Shell {
             settings: None,
             notes: None,
         });
-        let starts_blank = self
-            .window(id)
-            .and_then(|w| self.shown_model(w))
-            .is_some_and(|tab| tab.url == NEW_TAB_URL);
         // The tab the window opens on loads even if another tab (the uBO
         // offer, say) is shown before the page work runs.
         let first = self.window(id).and_then(AeriWindow::shown);
@@ -349,9 +345,6 @@ impl Shell {
         self.apply_layout(id, cx);
         self.apply_window_themes(cx);
         self.refresh_window(id, cx);
-        if starts_blank {
-            self.show_bar(id, cx);
-        }
         self.mark_used(profile);
         self.touch(profile);
         self.refresh_manager(cx);

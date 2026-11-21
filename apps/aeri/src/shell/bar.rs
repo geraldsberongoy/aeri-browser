@@ -215,7 +215,10 @@ impl Shell {
         self.refresh_window(window_id, cx);
         self.later(move |_| {
             frame.hide_bar(was_shown);
-            if was_shown && let Some(page) = page {
+            if was_shown
+                && frame.home_tab().is_none()
+                && let Some(page) = page
+            {
                 page.focus_page();
             }
         });

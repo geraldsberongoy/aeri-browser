@@ -69,6 +69,8 @@ pub struct Reveal {
     called: [Cell<bool>; 2],
     entered: [Cell<bool>; 2],
     timer: [RefCell<Pending>; 2],
+    /// The pointer is over one of the GPUI chrome windows.
+    pointer_in_chrome: Cell<bool>,
     /// The pointer is in the window, or just past its side edge having
     /// come from inside.
     inside: Cell<bool>,
@@ -113,6 +115,7 @@ fn install() -> Vec<Retained<AnyObject>> {
     // Leaving the app hides whatever slid in.
     let resign = RcBlock::new(|_: NonNull<NSNotification>| {
         for frame in frames() {
+            frame.note_chrome_pointer(None);
             frame.hide_chrome();
         }
     });
@@ -183,9 +186,35 @@ impl Frame {
         })
     }
 
+    fn note_chrome_pointer(&self, target: Option<&NSWindow>) {
+        let over = target.is_some_and(|target| {
+            self.frame
+                .borrow()
+                .as_ref()
+                .is_some_and(|frame| std::ptr::eq(&**frame, target))
+                || self.overlays.borrow().as_ref().is_some_and(|overlays| {
+                    overlays
+                        .iter()
+                        .any(|overlay| std::ptr::eq(&**overlay, target))
+                })
+        });
+        if self.reveal.pointer_in_chrome.replace(over) && !over {
+            let _ = self.tx.unbounded_send(crate::shell::AppMsg::Chrome(
+                crate::shell::ChromeMsg::PointerLeft {
+                    window: self.window_id,
+                },
+            ));
+        }
+    }
+
+    pub(crate) fn pointer_in_chrome(&self) -> bool {
+        self.reveal.pointer_in_chrome.get()
+    }
+
     /// The pointer moved or clicked, in one of this window's windows or (a
     /// move, `window` none) elsewhere on screen.
     fn pointer(self: &Rc<Self>, kind: NSEventType, window: Option<&NSWindow>) {
+        self.note_chrome_pointer(window);
         let Some(frame) = self.frame.borrow().clone() else {
             return;
         };

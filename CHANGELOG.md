@@ -6,6 +6,11 @@ Aeri is a browser for the Mac in Rust and GPUI, with Chromium (CEF) rendering th
 
 ### 21 November 2026
 
+- Aeri’s black-and-white macOS disk image is a standard drag to Applications. On first launch, Aeri’s ribbon and wordmark ease into view in a silent film. Skip straight to the interactive tour or use it to choose a tab layout and appearance. Replay from Help → Welcome to Aeri….
+- Blank tabs open Aeri Home: a solid background, the Aeri ribbon, inline search, and shortcuts to Bookmarks, History, and Settings. ⌘T and ⌘L still open the quick-search composer.
+- Aeri’s ribbon is visible in the Dock in light, dark and tinted appearances.
+- The macOS menu bar has native browser commands, a live Profiles list, and Settings under Aeri (⌘,).
+- Tab highlights, close buttons, and title-to-address changes fade smoothly as you move the pointer, without delaying clicks.
 - Split View keeps two live tabs side by side. Option-click a tab to pair it, drag the divider to resize the panes, or press ⌥⌘Return to keep a Peek beside its opener. ⌥⌘N starts or separates a split without closing either page.
 - The floating video: a video that is playing on a site made for watching comes out of its tab into a small window above everything, on every Space, when you switch tab or Space, and goes back when you return. ⇧⌘P (Float Video) does it by hand on any page. The window has play and pause, 15 seconds either way, a hairline of progress, a button back to the tab and a close button; drag it, pull its bottom-right corner or pinch it to size it, and flick it with two fingers to a corner or into a side. The command palette is now ⌥⌘P.
 - Small windows: a link from another app, a site's sized pop-up, or an address from the launcher can open in a small window with just the site and Open in Aeri (⌘O), which moves the page into your window as a tab without loading it again. Esc and ⌘W close it.

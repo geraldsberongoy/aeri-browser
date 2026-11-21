@@ -246,6 +246,15 @@ impl Shell {
                     self.apply_layout_everywhere(cx);
                 }
             }
+            ChromeMsg::PointerLeft { window } => {
+                if let Some(w) = self.window(window)
+                    && !w.frame.pointer_in_chrome()
+                {
+                    let _ = w.frame_window.update(cx, |view, window, cx| {
+                        view.clear_tab_hover(window, cx);
+                    });
+                }
+            }
         }
     }
 

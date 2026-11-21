@@ -6,9 +6,9 @@ use aeri_core::profile_db::records_history;
 use aeri_core::workspace::Item;
 use gpui::App;
 
-use super::Shell;
 use super::tabs::TabEntry;
 use super::windows::host_of;
+use super::{NEW_TAB_URL, Shell};
 use crate::window_frame::{SidebarTab, SpaceChip};
 
 impl Shell {
@@ -80,6 +80,13 @@ impl Shell {
             })
             .collect();
         let model = self.shown_model(w);
+        let home = shown.filter(|_| {
+            w.active_split().is_none() && model.as_ref().is_some_and(|tab| tab.url == NEW_TAB_URL)
+        });
+        if w.frame.home_tab() != home {
+            let frame = w.frame.clone();
+            self.later(move |_| frame.set_home_tab(home));
+        }
         let (popup_blocked, downloads) = self.strip_notices(window_id);
         // Only web and file pages can be bookmarked.
         let bookmarked = model.as_ref().and_then(|tab| {
@@ -91,7 +98,8 @@ impl Shell {
         });
         let several = self.profiles.len() > 1;
         let extensions = !open.extensions.is_empty();
-        let _ = w.frame_window.update(cx, |frame, _, cx| {
+        let _ = w.frame_window.update(cx, |frame, window, cx| {
+            frame.set_home(home, window, cx);
             frame.set_tabs(tabs, cx);
             frame.set_tab_look(look, cx);
             frame.set_player(player, cx);

@@ -333,8 +333,7 @@ impl Shell {
             .map(|item| item.id)
             .collect();
         self.park(profile, old_space, old);
-        // A blank tab asks for an address, as a new tab does; a page takes
-        // the keyboard back from the bar.
+        // Home owns a blank tab; a web page takes the keyboard back from the bar.
         let blank = self
             .window(window_id)
             .and_then(|w| self.shown_model(w))
@@ -351,11 +350,7 @@ impl Shell {
                 page.focus_page();
             }
         });
-        if blank {
-            self.show_bar(window_id, cx);
-        } else {
-            self.hide_bar(window_id, cx);
-        }
+        self.hide_bar(window_id, cx);
         tracing::debug!(%profile, from = %old_space, to = %target, "space switched");
         self.touch(profile);
         self.refresh_window(window_id, cx);

@@ -12,6 +12,7 @@ use gpui::{
     ObjectFit, SharedString, Stateful, Window, div, img, prelude::*, px,
 };
 
+use super::tab_hover::blend;
 use super::tab_list::site_line;
 use super::{SidebarTab, WindowFrame};
 use crate::shell::{AppMsg, TabCommand};
@@ -225,7 +226,12 @@ impl WindowFrame {
     ) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
         let kept = tab.pinned || tab.favourite;
-        let base = self.tab_base("pill", index, tab, 0., cx).group("pill");
+        let (base, hover) = self.tab_hover(
+            self.tab_base("pill", index, tab, 0., cx),
+            ("pill", tab.id.0),
+            crate::motion::still(self.window_id, cx),
+            cx,
+        );
         let base = self
             .select_on_click(base, tab, cx)
             .relative()
@@ -240,23 +246,19 @@ impl WindowFrame {
                     .text_color(theme::c(t.text))
             })
             .when(!tab.active, |pill| {
-                pill.when(kept, |pill| pill.bg(theme::c(t.tile)))
+                let idle = if kept { t.tile } else { t.hover.with_alpha(0.) };
+                pill.bg(theme::c(blend(idle, t.hover, hover)))
                     .text_color(theme::c(if self.layout.high_contrast {
                         t.text
                     } else {
-                        t.quiet
+                        blend(t.quiet, t.text.with_alpha(0.7), hover)
                     }))
-                    .hover(move |style| {
-                        style
-                            .bg(theme::c(t.hover))
-                            .text_color(theme::ca(t.text, 0.7))
-                    })
             });
         if kept {
             base.flex_none()
                 .w(px(30.))
                 .justify_center()
-                .child(self.dimmed(mark(tab, 15., &t, &self.layout), tab, "pill"))
+                .child(self.dimmed(mark(tab, 15., &t, &self.layout), tab, hover))
         } else {
             base.w(px(186.))
                 .flex_shrink(1.)
@@ -265,8 +267,8 @@ impl WindowFrame {
                 .pr(px(7.))
                 .gap(px(6.))
                 .children(self.pill_reading(tab, &t, cx))
-                .child(self.dimmed(mark(tab, 15., &t, &self.layout).flex_none(), tab, "pill"))
-                .child(self.dimmed(self.pill_title(tab, &t), tab, "pill"))
+                .child(self.dimmed(mark(tab, 15., &t, &self.layout).flex_none(), tab, hover))
+                .child(self.dimmed(self.pill_title(tab, &t, hover), tab, hover))
         }
     }
 
@@ -306,7 +308,7 @@ impl WindowFrame {
     /// The pill's title, or on the shown tab with "Show the address on the
     /// tab you're on" its site in the same place; the title returns under
     /// the pointer (Search `TitleAtRest`, `TabPill.titled`).
-    fn pill_title(&self, tab: &SidebarTab, t: &Tokens) -> gpui::Div {
+    fn pill_title(&self, tab: &SidebarTab, t: &Tokens, hover: f32) -> gpui::Div {
         let label = div()
             .w_full()
             .overflow_hidden()
@@ -319,13 +321,8 @@ impl WindowFrame {
             .flatten();
         match site {
             Some(site) => slot
-                .child(label.opacity(0.).group_hover("pill", |s| s.opacity(1.)))
-                .child(
-                    site.absolute()
-                        .top_0()
-                        .left_0()
-                        .group_hover("pill", |s| s.opacity(0.)),
-                ),
+                .child(label.opacity(hover))
+                .child(site.absolute().top_0().left_0().opacity(1. - hover)),
             None => slot.child(label),
         }
     }

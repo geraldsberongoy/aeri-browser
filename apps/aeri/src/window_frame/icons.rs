@@ -238,14 +238,17 @@ impl WindowFrame {
         let id = tab.id;
         let active = tab.active;
         let high = self.layout.high_contrast;
-        let group = SharedString::from(format!("tile-{}", id.0));
         let closable = active && !tab.pinned && !tab.favourite;
         let pin = tab.pinned || tab.favourite;
         let tip = icon_tip(tab, &self.layout);
         let tile = ICON_TILE as f32;
-        let body = self
-            .tab_base("tile", place.index, tab, dy, cx)
-            .group(group.clone())
+        let (body, hover) = self.tab_hover(
+            self.tab_base("tile", place.index, tab, dy, cx),
+            ("tile", id.0),
+            pace.still,
+            cx,
+        );
+        let body = body
             .relative()
             .flex()
             .flex_none()
@@ -257,8 +260,12 @@ impl WindowFrame {
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme::c(if active || high { t.text } else { t.quiet }))
             .when(!active, |el| {
-                el.when(place.square, |el| el.bg(theme::c(t.tile)))
-                    .hover(move |style| style.bg(theme::c(t.hover)))
+                let idle = if place.square {
+                    t.tile
+                } else {
+                    t.hover.with_alpha(0.)
+                };
+                el.bg(theme::c(super::tab_hover::blend(idle, t.hover, hover)))
             })
             .tooltip(move |_, cx| cx.new(|_| Tip(tip.clone())).into())
             .on_mouse_down(
@@ -307,12 +314,8 @@ impl WindowFrame {
             )
             .into_any_element()
         } else if place.square && shown_favicon(tab, &self.layout).is_none() {
-            self.dimmed(
-                div().child(SharedString::from(letter(tab))),
-                tab,
-                group.clone(),
-            )
-            .into_any_element()
+            self.dimmed(div().child(SharedString::from(letter(tab))), tab, hover)
+                .into_any_element()
         } else {
             // A tile wears its site's icon whatever "Tabs show" says; only
             // pinned squares follow it (Search `IconTile`, SideIcons.swift).
@@ -328,11 +331,9 @@ impl WindowFrame {
             if active {
                 mark.into_any_element()
             } else if self.dims(tab) {
-                self.dimmed(mark, tab, group.clone()).into_any_element()
+                self.dimmed(mark, tab, hover).into_any_element()
             } else {
-                mark.opacity(0.85)
-                    .group_hover(group.clone(), |s| s.opacity(1.))
-                    .into_any_element()
+                mark.opacity(0.85 + 0.15 * hover).into_any_element()
             }
         };
         body = body.child(
@@ -340,9 +341,7 @@ impl WindowFrame {
                 .flex()
                 .items_center()
                 .justify_center()
-                .when(closable, |face| {
-                    face.group_hover(group.clone(), |s| s.opacity(0.))
-                })
+                .when(closable, |face| face.opacity(1. - hover))
                 .child(face),
         );
         if closable {
@@ -358,8 +357,7 @@ impl WindowFrame {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .opacity(0.)
-                    .group_hover(group, |s| s.opacity(1.))
+                    .opacity(hover)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
@@ -409,7 +407,7 @@ impl WindowFrame {
     }
 
     /// The plus after the tiles (Search `SideBar.newTab`, icons branch): a
-    /// tile's size, the icon alone in the middle, "New Tab ⌘T" as its tip.
+    /// tile's size, the icon alone in the middle.
     fn new_tab_tile(&self, t: &Tokens, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.window_id;
         let t = *t;
@@ -418,8 +416,13 @@ impl WindowFrame {
         } else {
             t.faint
         };
-        div()
-            .id("new-tab")
+        let (button, hover) = self.tab_hover(
+            div().id("new-tab"),
+            ("new-tile", 0),
+            crate::motion::still(window, cx),
+            cx,
+        );
+        button
             .role(gpui::Role::Button)
             .aria_label("New Tab")
             .flex()
@@ -429,13 +432,12 @@ impl WindowFrame {
             .size(px(ICON_TILE as f32))
             .rounded(px(RADIUS))
             .cursor_pointer()
-            .hover(move |style| style.bg(theme::c(t.hover)))
-            .tooltip(|_, cx| cx.new(|_| Tip(SharedString::from("New Tab   ⌘T"))).into())
+            .when(hover > 0., |el| {
+                el.bg(theme::c(t.hover.with_alpha(t.hover.a * hover)))
+            })
+            .tooltip(|_, cx| cx.new(|_| Tip(SharedString::from("New Tab"))).into())
             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
-                this.send(AppMsg::Shortcut {
-                    window,
-                    shortcut: Shortcut::NewTab,
-                });
+                this.send(AppMsg::NewHome { window });
             }))
             .child(symbol("plus", 10., Weight::Medium, ink))
     }

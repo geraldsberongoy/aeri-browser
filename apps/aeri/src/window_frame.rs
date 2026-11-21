@@ -11,10 +11,12 @@ mod bookmarks_bar;
 mod doors;
 mod give;
 mod glide;
+mod home;
 mod icons;
 mod player;
 mod sidebar;
 mod strip;
+mod tab_hover;
 mod tab_items;
 mod tab_list;
 
@@ -126,6 +128,7 @@ pub struct WindowFrame {
     grip_seen: bool,
     /// What the tab list remembers between frames (`tab_list`).
     tab_list: tab_list::TabListState,
+    tab_hovers: tab_hover::TabHovers,
     /// ⌘ is held: the first tabs show their numbers.
     command_held: bool,
     /// Where the window's own buttons were last put, from the strip's top.
@@ -137,6 +140,7 @@ pub struct WindowFrame {
     /// How the tab rows are drawn by the tab preferences, and the player's rows.
     look: TabLook,
     player: Vec<PlayerTab>,
+    home: home::Home,
 }
 
 /// Which window draws a piece of chrome: the frame (pinned) or an overlay
@@ -185,8 +189,10 @@ impl WindowFrame {
             glide: None,
             marks: bookmarks_bar::Marks::default(),
             tab_list: tab_list::TabListState::default(),
+            tab_hovers: tab_hover::TabHovers::default(),
             look: TabLook::default(),
             player: Vec::new(),
+            home: home::Home::new(cx),
         }
     }
 
@@ -612,7 +618,10 @@ impl Render for WindowFrame {
             self.window_id,
             cx,
         )
+        .id("browser-frame")
         .line_height(gpui::relative(theme::LINE_HEIGHT))
+        .track_focus(&self.home.root)
+        .on_key_down(cx.listener(Self::home_key_down))
         .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
             this.resize_to(event, cx);
         }))
@@ -627,6 +636,9 @@ impl Render for WindowFrame {
             .then(|| self.sidebar(Host::Frame, cx));
         frame
             .children(self.card_edge(cx))
+            .when(self.home.tab.is_some(), |frame| {
+                frame.child(self.home(window, cx))
+            })
             .children(self.bookmarks_bar(window, cx))
             .when(self.layout.top_pinned, |frame| {
                 frame.child(self.strip(Host::Frame, cx))
