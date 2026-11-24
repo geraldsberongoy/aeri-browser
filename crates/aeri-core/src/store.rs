@@ -486,6 +486,7 @@ mod tests {
         let created = AppDb::open(&path).unwrap().launch_profile().unwrap();
         let reopened = AppDb::open(&path).unwrap();
         assert_eq!(reopened.profiles().unwrap(), vec![created]);
+        drop(reopened);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
