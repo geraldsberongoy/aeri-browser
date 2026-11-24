@@ -23,3 +23,12 @@ jobs:
       - run: cargo test --workspace
       - run: cargo xtask bundle
       - run: codesign --verify --deep --strict target/bundle/aeri.app
+
+  windows-core:
+    name: Windows (aeri-core)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked -p aeri-core
