@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/aeri-ribbon.png" width="144" height="75" alt="Aeri ribbon">
+  <img src="docs/assets/aeri-icon-light.png" width="96" height="96" alt="Black Aeri ribbon">
 </p>
 
 <h1 align="center">Aeri</h1>
