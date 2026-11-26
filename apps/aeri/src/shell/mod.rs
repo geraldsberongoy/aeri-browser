@@ -558,13 +558,17 @@ impl Shell {
                     tracing::warn!(%err, %profile, "could not save the profile avatar");
                     if let Some(manager) = self.manager {
                         let _ = manager.update(cx, |_, window, cx| {
-                            let _ = window.prompt(
+                            let answer = window.prompt(
                                 gpui::PromptLevel::Warning,
                                 "Couldn’t save the avatar",
                                 Some("Your current avatar is unchanged. Try again after checking that Aeri can write to its data folder."),
                                 &["OK"],
                                 cx,
                             );
+                            cx.spawn(async move |_, _| {
+                                let _ = answer.await;
+                            })
+                            .detach();
                         });
                     }
                 }
