@@ -199,53 +199,21 @@ impl WindowFrame {
 }
 
 impl WindowFrame {
-    /// Search `ProfileBadge`: the profile's letter, 10.5 semibold, in a
-    /// 17 pt ring (1.2 wide; 1 here) of muted ink, ink under the pointer.
-    /// Only once there is more than one profile.
-    pub(super) fn profile_badge(
-        &self,
-        hang: impl Hang,
-        cx: &mut Context<Self>,
-    ) -> Option<Stateful<Div>> {
-        if !self.several_profiles {
-            return None;
-        }
+    /// The current profile's avatar and menu, even with just one profile.
+    pub(super) fn profile_badge(&self, hang: impl Hang, cx: &mut Context<Self>) -> Stateful<Div> {
         let window = self.window_id;
         let t = theme::tokens_in(window, cx);
-        let (ink, ring) = (theme::c(t.text), theme::ca(t.text, 0.5));
-        Some(
-            door("profile", "Profile", t)
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .size(px(17.))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(theme::c(t.icon_muted.with_alpha(0.6)))
-                        .text_size(px(10.5))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme::c(t.icon_muted))
-                        .group_hover("profile", move |s| s.border_color(ring).text_color(ink))
-                        .child(SharedString::from(
-                            self.profile
-                                .name
-                                .chars()
-                                .next()
-                                .map_or_else(String::new, |c| c.to_uppercase().collect()),
-                        )),
-                )
-                .on_click(cx.listener(move |this, event: &ClickEvent, win, _| {
-                    let (x, y, align) = hang(event, win);
-                    this.send(AppMsg::ProfileMenu {
-                        window,
-                        x,
-                        y,
-                        align,
-                    });
-                })),
-        )
+        door("profile", "Profile", t)
+            .child(super::avatar(&self.profile, 19.))
+            .on_click(cx.listener(move |this, event: &ClickEvent, win, _| {
+                let (x, y, align) = hang(event, win);
+                this.send(AppMsg::ProfileMenu {
+                    window,
+                    x,
+                    y,
+                    align,
+                });
+            }))
     }
 
     /// Search `SpaceDot`: the space's colour at 0.14, 0.24 under the

@@ -131,3 +131,5 @@ Bug reports, documentation fixes, and code contributions are welcome. Read
 
 Aeri is licensed under [Apache License 2.0](LICENSE). Portions adapted from
 Search retain their [MIT license notice](apps/aeri/resources/Search-LICENSE.txt).
+Profile avatars from [Blobatar](https://blobatar.dev/) retain their
+[MIT license notice](apps/aeri/resources/Blobatar-LICENSE.txt).

@@ -164,11 +164,8 @@ impl WindowFrame {
             .w_full()
             .px(px(COLUMN_PAD))
             .pb(px(COLUMN_PAD));
-        let mut nth = 0;
-        if let Some(badge) = self.profile_badge(hang(nth), cx) {
-            foot = foot.child(badge);
-            nth += 1;
-        }
+        foot = foot.child(self.profile_badge(hang(0), cx));
+        let mut nth = 1;
         if let Some(dot) = self.space_dot(hang(nth), cx) {
             foot = foot.child(dot);
             nth += 1;

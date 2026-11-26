@@ -95,6 +95,10 @@ fn bundle(release: bool) -> Result<()> {
         app.join("Contents/Resources/Search-LICENSE.txt"),
     )?;
     std::fs::copy(
+        "apps/aeri/resources/Blobatar-LICENSE.txt",
+        app.join("Contents/Resources/Blobatar-LICENSE.txt"),
+    )?;
+    std::fs::copy(
         "apps/aeri/resources/aeri-intro.mp4",
         app.join("Contents/Resources/aeri-intro.mp4"),
     )?;

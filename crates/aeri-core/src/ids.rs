@@ -16,6 +16,11 @@ impl ProfileId {
     pub fn generate() -> Self {
         Self(Uuid::now_v7())
     }
+
+    /// The UUID's numeric value for deterministic local choices.
+    pub fn as_u128(self) -> u128 {
+        self.0.as_u128()
+    }
 }
 
 impl fmt::Display for ProfileId {

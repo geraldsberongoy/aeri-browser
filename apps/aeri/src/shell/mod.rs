@@ -552,6 +552,23 @@ impl Shell {
                 }
                 self.refresh_profiles(cx);
             }
+            AppMsg::SetAvatar { profile, avatar } => match self.db.set_avatar(profile, avatar) {
+                Ok(()) => self.refresh_profiles(cx),
+                Err(err) => {
+                    tracing::warn!(%err, %profile, "could not save the profile avatar");
+                    if let Some(manager) = self.manager {
+                        let _ = manager.update(cx, |_, window, cx| {
+                            let _ = window.prompt(
+                                gpui::PromptLevel::Warning,
+                                "Couldn’t save the avatar",
+                                Some("Your current avatar is unchanged. Try again after checking that Aeri can write to its data folder."),
+                                &["OK"],
+                                cx,
+                            );
+                        });
+                    }
+                }
+            },
             AppMsg::DeleteProfile { profile } => self.delete_profile(profile, cx),
             AppMsg::ShowProfiles { new } => self.show_profile_manager(new, cx),
             AppMsg::ProfileManagerClosed => self.manager = None,

@@ -84,7 +84,7 @@ impl WindowFrame {
                         .min_w_0()
                         .items_center()
                         .gap(px(TAB_GAP))
-                        .children(self.profile_badge(leading, cx))
+                        .child(self.profile_badge(leading, cx))
                         .children(self.space_dot(leading, cx))
                         .child(self.top_tabs(cx))
                         .child(self.new_tab_plus(t, cx)),
