@@ -224,6 +224,10 @@ pub enum AppMsg {
     WindowKey {
         window: u64,
     },
+    /// AppKit finished entering or leaving fullscreen.
+    FullscreenChanged {
+        window: u64,
+    },
     /// The Dock icon was clicked.
     Reopen,
     /// Another app handed Aeri links (`shell::open_urls`).

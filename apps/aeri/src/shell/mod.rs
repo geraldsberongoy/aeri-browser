@@ -605,6 +605,11 @@ impl Shell {
             AppMsg::SetTabLook { tab, name, icon } => self.set_tab_look(tab, name, icon, cx),
             AppMsg::TabEditorClosed => self.tab_editor = None,
             AppMsg::WindowKey { window } => self.window_key(window, cx),
+            AppMsg::FullscreenChanged { window } => {
+                if let Some(w) = self.window(window) {
+                    let _ = w.frame_window.update(cx, |_, _, cx| cx.notify());
+                }
+            }
             AppMsg::SplitFocus { window, tab } => self.focus_split_pane(window, tab, cx),
             AppMsg::OpenExternal(urls) => {
                 if !urls.is_empty() {

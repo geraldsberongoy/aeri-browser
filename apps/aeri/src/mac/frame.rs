@@ -195,6 +195,7 @@ impl Frame {
                 let minimizing = std::ptr::eq(name, NSWindowWillMiniaturizeNotification);
                 let entering = std::ptr::eq(name, NSWindowWillEnterFullScreenNotification);
                 let exiting = std::ptr::eq(name, NSWindowWillExitFullScreenNotification);
+                let entered = std::ptr::eq(name, NSWindowDidEnterFullScreenNotification);
                 let exited = std::ptr::eq(name, NSWindowDidExitFullScreenNotification);
                 let restored = std::ptr::eq(name, NSWindowDidDeminiaturizeNotification);
                 let block = RcBlock::new(move |_: NonNull<NSNotification>| {
@@ -218,6 +219,13 @@ impl Frame {
                     }
                     if !activated {
                         this.layout();
+                    }
+                    // AppKit can finish the transition after GPUI's last resize
+                    // paint. Invalidate the pinned chrome even at the same size.
+                    if entered || exited {
+                        let _ = this.tx.unbounded_send(AppMsg::FullscreenChanged {
+                            window: this.window_id,
+                        });
                     }
                     // A full-screen transition can leave the frame key
                     // without a fresh becomes-key, e.g. after the green

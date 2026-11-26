@@ -9,6 +9,7 @@ Aeri is a browser for the Mac in Rust and GPUI, with Chromium (CEF) rendering th
 - Pick any of 64 offline Blobatar faces in **Manage Profiles**, or reset to the automatic face. The sidebar avatar keeps your profile accent.
 - The macOS window buttons stay aligned after exiting full screen or restoring a minimized window, with tabs on the left, right, or top.
 - Choose **Bottom** under Settings → Appearance → Window → Tabs, or pick **Layout: Bottom Tabs** in the command palette. In full screen the tab bar appears at the bottom edge on hover.
+- The pinned sidebar now clears when entering fullscreen, so hovering the edge doesn't stack a second sidebar on top of it. Exiting fullscreen restores the windowed layout.
 
 ### 21 November 2026
 
