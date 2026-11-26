@@ -31,7 +31,7 @@ use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     App, BoxShadow, ClickEvent, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, SharedString, Window, div, img, point, prelude::*, px,
+    SharedString, Window, div, img, point, prelude::*, px,
 };
 
 use crate::native_menu::Align;
@@ -45,10 +45,6 @@ pub const STRIP_HEIGHT: f64 = 52.0;
 /// The strip with tabs along the top and "Shorter tab bar" on (Search
 /// `Metrics.strip` compact, `Design.swift`).
 const COMPACT_STRIP: f64 = 36.0;
-/// The close button's frame origin. Search centres it at (26, strip / 2)
-/// (`Lights.swift`); AppKit's button is about 14 x 14, so its origin is the
-/// centre less 7. The integrator checks this against a screenshot.
-pub const TRAFFIC_LIGHTS: gpui::Point<Pixels> = point(px(19.), px(19.));
 /// Where the strip's controls start after the three lights (Search
 /// `sideLights` 80 inside a 10 pt padding).
 const CONTROLS_LEFT: f32 = 90.;
@@ -128,8 +124,6 @@ pub struct WindowFrame {
     tab_hovers: tab_hover::TabHovers,
     /// ⌘ is held: the first tabs show their numbers.
     command_held: bool,
-    /// Where the window's own buttons were last put, from the strip's top.
-    lights_y: f32,
     /// The pinned column gliding between its full width and icons only.
     glide: Option<glide::Glide>,
     /// The profile's top-level bookmarks, for the bar above the page.
@@ -181,7 +175,6 @@ impl WindowFrame {
             on_edge: false,
             grip_seen: false,
             command_held: false,
-            lights_y: TRAFFIC_LIGHTS.y.into(),
             glide: None,
             marks: bookmarks_bar::Marks::default(),
             tab_list: tab_list::TabListState::default(),
@@ -587,17 +580,6 @@ impl Render for WindowFrame {
         }
         // The column's glide between full and icons only moves on here.
         self.step_glide(window, cx);
-        // The window's own buttons centre in the strip: lower in the full
-        // one, higher in the shorter one (Search `Lights.swift`).
-        let lights_y = if self.layout.top_pinned {
-            strip_height(&self.layout) as f32 / 2. - 7.
-        } else {
-            f32::from(TRAFFIC_LIGHTS.y)
-        };
-        if lights_y != self.lights_y {
-            self.lights_y = lights_y;
-            window.set_traffic_light_position(point(TRAFFIC_LIGHTS.x, px(lights_y)));
-        }
         let frame = theme::backdrop_in(
             div().relative().size_full().flex().flex_col(),
             self.window_id,

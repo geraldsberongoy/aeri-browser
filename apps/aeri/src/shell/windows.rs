@@ -26,7 +26,7 @@ use super::{Nav, Shell, content_view};
 use crate::address_bar::AddressBar;
 use crate::chrome_overlay::ChromeOverlay;
 use crate::mac::{BAR_HEIGHT, Frame};
-use crate::window_frame::{TRAFFIC_LIGHTS, WindowFrame};
+use crate::window_frame::WindowFrame;
 
 /// Where a tab lives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,7 +214,7 @@ impl Shell {
             titlebar: Some(TitlebarOptions {
                 title: Some(record.name.clone().into()),
                 appears_transparent: true,
-                traffic_light_position: Some(TRAFFIC_LIGHTS),
+                traffic_light_position: None,
             }),
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(480.), px(320.))),

@@ -33,9 +33,11 @@ use objc2_app_kit::{
     NSApplication, NSApplicationDidBecomeActiveNotification,
     NSApplicationDidResignActiveNotification, NSColor, NSWindow, NSWindowButton,
     NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
-    NSWindowDidBecomeMainNotification, NSWindowDidEnterFullScreenNotification,
-    NSWindowDidExitFullScreenNotification, NSWindowDidResignKeyNotification,
-    NSWindowDidResizeNotification, NSWindowOrderingMode, NSWindowStyleMask,
+    NSWindowDidBecomeMainNotification, NSWindowDidDeminiaturizeNotification,
+    NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
+    NSWindowDidResignKeyNotification, NSWindowDidResizeNotification, NSWindowOrderingMode,
+    NSWindowStyleMask, NSWindowWillEnterFullScreenNotification,
+    NSWindowWillMiniaturizeNotification,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -43,7 +45,7 @@ use objc2_foundation::{
 };
 
 use super::fold::Fold;
-use super::lights::Lights;
+use super::lights::{Lights, NativeLights};
 use super::reveal::{self, Reveal};
 use super::window_of;
 use crate::native_menu;
@@ -67,9 +69,9 @@ pub struct Frame {
     bar: RefCell<Option<Retained<NSWindow>>>,
     /// The sidebar and the strip as they slide in, by [`Edge`] index.
     pub(super) overlays: RefCell<Option<[Retained<NSWindow>; 2]>>,
-    /// The native window buttons over the chrome: side overlay, strip
-    /// overlay, frame (see [`super::lights`]).
-    pub(super) lights: RefCell<Option<[Lights; 3]>>,
+    /// Standalone native buttons for the sliding sidebar and tab strip.
+    pub(super) lights: RefCell<Option<[Lights; 2]>>,
+    pub(super) native_lights: NativeLights,
     pub(super) tabs: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
     pub(super) active: Cell<Option<TabId>>,
     /// A solo blank tab has native Home content below its Chromium window.
@@ -109,6 +111,7 @@ impl Frame {
             layout: Cell::new(Layout::default()),
             motion: Cell::new(Motion::default()),
             lights: RefCell::default(),
+            native_lights: NativeLights::default(),
             overlays: RefCell::default(),
             reveal: Reveal::default(),
             fold: Fold::default(),
@@ -154,6 +157,7 @@ impl Frame {
         bar.orderOut(None);
         self.make_lights(&frame, &side, &strip);
         *self.frame.borrow_mut() = Some(frame.clone());
+        self.native_lights.watch(self, &frame);
         *self.bar.borrow_mut() = Some(bar);
         *self.overlays.borrow_mut() = Some([side, strip]);
         self.install_divider(&frame);
@@ -175,6 +179,9 @@ impl Frame {
                 NSWindowDidResizeNotification,
                 NSWindowDidEnterFullScreenNotification,
                 NSWindowDidExitFullScreenNotification,
+                NSWindowDidDeminiaturizeNotification,
+                NSWindowWillEnterFullScreenNotification,
+                NSWindowWillMiniaturizeNotification,
                 NSWindowDidBecomeKeyNotification,
                 NSWindowDidBecomeMainNotification,
             ] {
@@ -182,8 +189,29 @@ impl Frame {
                 let resized = std::ptr::eq(name, NSWindowDidResizeNotification);
                 let activated = std::ptr::eq(name, NSWindowDidBecomeKeyNotification)
                     || std::ptr::eq(name, NSWindowDidBecomeMainNotification);
+                let minimizing = std::ptr::eq(name, NSWindowWillMiniaturizeNotification);
+                let entering = std::ptr::eq(name, NSWindowWillEnterFullScreenNotification);
+                let exited = std::ptr::eq(name, NSWindowDidExitFullScreenNotification);
+                let restored = std::ptr::eq(name, NSWindowDidDeminiaturizeNotification);
                 let block = RcBlock::new(move |_: NonNull<NSNotification>| {
                     let Some(this) = this.upgrade() else { return };
+                    if minimizing || entering {
+                        this.hide_chrome();
+                        if entering && let Some(frame) = this.frame.borrow().as_ref() {
+                            this.native_lights.suspend();
+                            show_window_buttons(frame, this.layout.get().window_buttons);
+                        }
+                        return;
+                    }
+                    if exited {
+                        this.native_lights.resume();
+                    }
+                    if (exited || restored || activated)
+                        && let Some(frame) = this.frame.borrow().as_ref()
+                    {
+                        this.native_lights.watch(&this, frame);
+                        this.place_native_lights(frame);
+                    }
                     if !activated {
                         this.layout();
                     }
@@ -282,11 +310,14 @@ impl Frame {
     pub(super) fn insets(&self, frame: &NSWindow) -> PageInsets {
         let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
         let layout = self.layout.get();
-        let side = self
-            .column
-            .get()
-            .unwrap_or_else(|| pinned_side_width(&layout, frame.frame().size.width));
+        let side = self.pinned_column_width(&layout, frame.frame().size.width);
         page_insets(&layout, fullscreen, side)
+    }
+
+    pub(super) fn pinned_column_width(&self, layout: &Layout, window_width: f64) -> f64 {
+        self.column
+            .get()
+            .unwrap_or_else(|| pinned_side_width(layout, window_width))
     }
 
     /// Where the active tab's window goes, in screen coordinates: the whole
@@ -357,6 +388,7 @@ impl Frame {
             }
         } else if let Some(frame) = self.frame.borrow().clone() {
             self.layout_panes(&frame);
+            self.place_native_lights(&frame);
         }
     }
 
@@ -738,6 +770,7 @@ impl Frame {
             // SAFETY: removing our own observer tokens on the main thread.
             unsafe { center.removeObserver(token.as_ref()) };
         }
+        self.native_lights.unwatch();
         self.remove_lights();
         self.forget_stage();
     }
@@ -774,28 +807,34 @@ pub(super) fn show_window_buttons(frame: &NSWindow, shown: bool) {
         NSWindowButton::ZoomButton,
     ] {
         if let Some(button) = frame.standardWindowButton(kind) {
-            button.setHidden(!shown);
-            button.setAlphaValue(1.0);
+            if button.isHidden() == shown {
+                button.setHidden(!shown);
+            }
+            if button.alphaValue() != 1.0 {
+                button.setAlphaValue(1.0);
+            }
         }
     }
 }
 
-/// Puts the frame's own buttons out of sight while the stacked group
-/// stands in for them ([`super::lights`]). The zoom button is only made
-/// transparent: AppKit hides every standalone zoom button of a window whose
-/// own one is hidden. It stays where GPUI keeps it, under the page.
+/// The sliding chrome uses standalone buttons. Keep the frame's zoom
+/// button transparent, not hidden: AppKit hides standalone zoom buttons
+/// when the frame's own zoom button is hidden.
 pub(super) fn stand_in_window_buttons(frame: &NSWindow) {
-    show_window_buttons(frame, true);
     for kind in [
         NSWindowButton::CloseButton,
         NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
     ] {
         if let Some(button) = frame.standardWindowButton(kind) {
-            button.setHidden(true);
+            let zoom = kind == NSWindowButton::ZoomButton;
+            if button.isHidden() == zoom {
+                button.setHidden(!zoom);
+            }
+            if zoom && button.alphaValue() != 0.0 {
+                button.setAlphaValue(0.0);
+            }
         }
-    }
-    if let Some(zoom) = frame.standardWindowButton(NSWindowButton::ZoomButton) {
-        zoom.setAlphaValue(0.0);
     }
 }
 

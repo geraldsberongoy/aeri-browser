@@ -1,31 +1,35 @@
-//! The window's close, minimise and zoom buttons where the page covers the
-//! frame's own: the native ones, standalone, in a view over the chrome that
-//! an overlay window or the frame draws.
+//! AppKit's own traffic lights follow pinned browser chrome. Sliding chrome
+//! lives in separate windows above the page and uses standalone AppKit buttons.
 //!
 //! A standalone window button shows its glyph (×, −, +) only when its
 //! superview answers AppKit's private `_mouseInGroup:` with yes, so the
 //! group view keeps a tracking area and answers for the pointer. The buttons'
 //! targets are the frame window, so they act like the frame's own.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
+use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+use aeri_core::layout::{ICON_LIGHTS, Side};
+use block2::RcBlock;
 use objc2::ClassType;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, Bool, Sel};
+use objc2::runtime::{AnyObject, Bool, ProtocolObject, Sel};
 use objc2::{
     AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
 };
 use objc2_app_kit::{
-    NSButton, NSEvent, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow, NSWindowButton,
-    NSWindowStyleMask,
+    NSButton, NSEvent, NSTrackingArea, NSTrackingAreaOptions, NSView,
+    NSViewFrameDidChangeNotification, NSWindow, NSWindowButton, NSWindowStyleMask,
 };
-use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
+};
 
-use super::frame::{Frame, pinned_side_width, show_window_buttons, stand_in_window_buttons};
+use super::frame::{Frame, show_window_buttons, stand_in_window_buttons};
 use crate::window_frame::strip_height;
-use aeri_core::layout::Side;
 static ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// `_hasActiveAppearanceForStandardWindowButton:` takes the button's kind
@@ -360,33 +364,183 @@ impl Lights {
     }
 }
 
+struct Titlebar {
+    views: [Retained<NSView>; 5],
+    tokens: [Retained<ProtocolObject<dyn NSObjectProtocol>>; 5],
+}
+
+#[derive(Default)]
+pub(super) struct NativeLights {
+    pitch: Cell<Option<f64>>,
+    placing: Cell<bool>,
+    suspended: Cell<bool>,
+    titlebar: RefCell<Option<Titlebar>>,
+}
+
+impl NativeLights {
+    pub(super) fn watch(&self, owner: &Rc<Frame>, window: &NSWindow) {
+        if self.suspended.get() || window.styleMask().contains(NSWindowStyleMask::FullScreen) {
+            return;
+        }
+        let [Some(close), Some(minimize), Some(zoom)] =
+            KINDS.map(|kind| window.standardWindowButton(kind))
+        else {
+            return;
+        };
+        // SAFETY: these are live AppKit views on the main thread.
+        let Some((bar, container)) = (unsafe {
+            close
+                .superview()
+                .and_then(|bar| bar.superview().map(|container| (bar, container)))
+        }) else {
+            return;
+        };
+        if self.pitch.get().is_none() {
+            // Like Search, measure once: AppKit may move one button before the next.
+            let measured = minimize.frame().origin.x - close.frame().origin.x;
+            self.pitch.set(Some(if (16.0..=32.0).contains(&measured) {
+                measured
+            } else {
+                PITCH
+            }));
+        }
+        let views = [
+            container,
+            bar,
+            close.into_super().into_super(),
+            minimize.into_super().into_super(),
+            zoom.into_super().into_super(),
+        ];
+        // AppKit can replace these views when returning from fullscreen.
+        if self.titlebar.borrow().as_ref().is_some_and(|old| {
+            old.views
+                .iter()
+                .zip(&views)
+                .all(|(a, b)| std::ptr::eq(&**a, &**b))
+        }) {
+            return;
+        }
+        self.unwatch();
+        let owner = Rc::downgrade(owner);
+        let changed = RcBlock::new(move |_: NonNull<NSNotification>| {
+            if let Some(owner) = owner.upgrade()
+                && let Some(window) = owner.frame.borrow().as_ref()
+            {
+                owner.place_native_lights(window);
+            }
+        });
+        let center = NSNotificationCenter::defaultCenter();
+        let tokens = std::array::from_fn(|i| {
+            let view = &views[i];
+            view.setPostsFrameChangedNotifications(true);
+            // SAFETY: AppKit lays out views on the main thread; the block holds Frame weakly.
+            unsafe {
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(NSViewFrameDidChangeNotification),
+                    Some(view),
+                    None,
+                    &changed,
+                )
+            }
+        });
+        *self.titlebar.borrow_mut() = Some(Titlebar { views, tokens });
+    }
+
+    pub(super) fn unwatch(&self) {
+        if let Some(old) = self.titlebar.take() {
+            let center = NSNotificationCenter::defaultCenter();
+            for token in old.tokens {
+                // SAFETY: this token was registered with this center.
+                unsafe { center.removeObserver(token.as_ref()) };
+            }
+        }
+    }
+
+    pub(super) fn suspend(&self) {
+        self.suspended.set(true);
+    }
+
+    pub(super) fn resume(&self) {
+        self.suspended.set(false);
+    }
+
+    fn place(&self, window: &NSWindow, layout: &aeri_core::layout::Layout, left: f64) {
+        // macOS owns the fullscreen title bar, in a separate window.
+        if self.suspended.get()
+            || window.styleMask().contains(NSWindowStyleMask::FullScreen)
+            || window.isMiniaturized()
+            || self.placing.replace(true)
+        {
+            return;
+        }
+        if !layout.window_buttons {
+            show_window_buttons(window, false);
+        } else if !layout.top_pinned && !layout.sidebar_pinned {
+            stand_in_window_buttons(window);
+        } else {
+            show_window_buttons(window, true);
+            if let Some(titlebar) = self.titlebar.borrow().as_ref() {
+                let [container, bar, buttons @ ..] = &titlebar.views;
+                let stacked = !layout.top_pinned && layout.icon_column();
+                let band = if stacked {
+                    ICON_LIGHTS
+                } else {
+                    strip_height(layout)
+                };
+                let height = window.frame().size.height;
+                let mut frame = container.frame();
+                frame.size.height = band;
+                frame.origin.y = height - band;
+                if frame != container.frame() {
+                    container.setFrame(frame);
+                    container.updateTrackingAreas();
+                }
+                let pitch = self.pitch.get().unwrap_or(PITCH);
+                for (index, button) in buttons.iter().enumerate() {
+                    let offset = pitch * index as f64;
+                    let (x, y) = if stacked {
+                        (left + CENTRE, STACK_TOP + offset)
+                    } else {
+                        (left + CENTRE + offset, band / 2.0)
+                    };
+                    let center = bar.convertPoint_fromView(NSPoint::new(x, height - y), None);
+                    let frame = button.frame();
+                    let origin = NSPoint::new(
+                        center.x - frame.size.width / 2.0,
+                        center.y - frame.size.height / 2.0,
+                    );
+                    if frame.origin != origin {
+                        button.setFrameOrigin(origin);
+                        button.updateTrackingAreas();
+                    }
+                }
+            }
+        }
+        self.placing.set(false);
+    }
+}
+
 impl Frame {
-    /// Builds the three groups: the side overlay's, the strip overlay's and
-    /// the frame's own (for a pinned sidebar on the right).
+    /// Builds the groups that travel with the sidebar and tab strip overlays.
     pub(super) fn make_lights(&self, frame: &NSWindow, side: &NSWindow, strip: &NSWindow) {
         let mtm = MainThreadMarker::from(frame);
         for window in [side, strip, frame] {
             borrow_active_appearance(window);
         }
-        let made = [side, strip, frame].map(|host| Lights::new(mtm, frame, host));
-        let [Some(a), Some(b), Some(c)] = made else {
+        let made = [side, strip].map(|host| Lights::new(mtm, frame, host));
+        let [Some(a), Some(b)] = made else {
             tracing::error!("standard window buttons unavailable");
             return;
         };
-        *self.lights.borrow_mut() = Some([a, b, c]);
+        *self.lights.borrow_mut() = Some([a, b]);
     }
 
-    /// Shows the groups where the page covers the frame's real buttons:
-    /// in the side overlay's band and in the strip overlay (unless a pinned
-    /// strip holds the real ones), and in the frame's band when a pinned
-    /// sidebar is on the right. With the column as icons only the three
-    /// are stacked down its band (Search `Lights`, `vertical`): the frame's
-    /// own are put away for the frame's group, which stacks them wherever
-    /// the column is. Hidden in full screen and with the buttons turned off.
+    /// Sliding chrome uses standalone buttons; pinned chrome uses the frame's.
     pub(super) fn place_lights(&self, frame: &NSWindow) {
+        self.place_native_lights(frame);
         let lights = self.lights.borrow();
         let overlays = self.overlays.borrow();
-        let (Some([side_lights, strip_lights, frame_lights]), Some([side, strip])) =
+        let (Some([side_lights, strip_lights]), Some([side, strip])) =
             (lights.as_ref(), overlays.as_ref())
         else {
             return;
@@ -421,28 +575,17 @@ impl Frame {
             side_lights.hide();
             strip_lights.hide();
         }
-        // The frame's group takes the place of the real buttons for a
-        // pinned column of icons, and stands in for them on the right.
-        let in_frame = shown && layout.sidebar_pinned && (stacked || layout.side == Side::Right);
-        if in_frame {
-            let left = match layout.side {
-                Side::Left => 0.0,
-                Side::Right => width - pinned_side_width(&layout, width),
-            };
-            let arrange = if stacked {
-                Arrange::Stack
-            } else {
-                Arrange::Row { centre_y: CENTRE }
-            };
-            frame_lights.show_at(frame, left, arrange);
+    }
+
+    pub(super) fn place_native_lights(&self, frame: &NSWindow) {
+        let layout = self.layout.get();
+        let width = frame.frame().size.width;
+        let left = if !layout.top_pinned && layout.sidebar_pinned && layout.side == Side::Right {
+            width - self.pinned_column_width(&layout, width)
         } else {
-            frame_lights.hide();
-        }
-        if in_frame && stacked {
-            stand_in_window_buttons(frame);
-        } else {
-            show_window_buttons(frame, layout.window_buttons);
-        }
+            0.0
+        };
+        self.native_lights.place(frame, &layout, left);
     }
 
     /// Redraws the buttons (their key state follows the frame's).
