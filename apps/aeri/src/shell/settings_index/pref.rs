@@ -258,7 +258,6 @@ impl Pref {
         let on = value.on();
         match self {
             Self::TabsLayout => {
-                let was_bottom = layout.tabs == TabPlace::Bottom;
                 let was_horizontal = layout.tabs.horizontal();
                 match value.index() {
                     ix @ (0 | 4) => {
@@ -269,9 +268,7 @@ impl Pref {
                         };
                         layout.top_pinned = true;
                         layout.rail = false;
-                        if ix == 4 {
-                            layout.sidebar_pinned = false;
-                        }
+                        layout.sidebar_pinned = false;
                     }
                     ix => {
                         layout.tabs = TabPlace::Side;
@@ -284,9 +281,7 @@ impl Pref {
                         // The column was never hidden by choice up there.
                         if was_horizontal {
                             layout.sidebar_pinned = true;
-                            if was_bottom {
-                                layout.top_pinned = false;
-                            }
+                            layout.top_pinned = false;
                         }
                     }
                 }

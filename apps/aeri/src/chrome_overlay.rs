@@ -138,13 +138,14 @@ impl ChromeOverlay {
         let edge = self.edge;
         let frame = self.frame.read(cx);
         let (right, bottom) = (frame.on_right(), frame.tabs_at_bottom());
+        let offset = if edge == Edge::Strip && bottom {
+            crate::shell::content_view(overlay).map_or(0., crate::mac::bottom_strip_offset)
+        } else {
+            0.
+        };
         let part = self.frame.update(cx, |frame, cx| match edge {
             Edge::Side => frame.sidebar(Host::Overlay, cx).into_any_element(),
-            Edge::Strip => {
-                let offset = crate::shell::content_view(overlay)
-                    .map_or(0., |view| crate::mac::strip_offset(view, bottom));
-                frame.strip(Host::Overlay, offset, cx).into_any_element()
-            }
+            Edge::Strip => frame.strip(Host::Overlay, offset, cx).into_any_element(),
         });
         match edge {
             Edge::Side => {

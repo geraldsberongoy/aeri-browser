@@ -98,21 +98,15 @@ pub fn drag_parent(view: *mut c_void) {
     }
 }
 
-/// The tab overlay's resting top edge in the parent window's coordinates.
-pub(crate) fn strip_offset(view: *mut c_void, bottom: bool) -> f32 {
+/// The bottom strip row's position in the browser frame.
+pub(crate) fn bottom_strip_offset(view: *mut c_void) -> f32 {
     let Some(window) = window_of(view) else {
         return 0.;
     };
     let Some(parent) = window.parentWindow() else {
         return 0.;
     };
-    let rect = parent.frame();
-    let top = if bottom {
-        rect.origin.y + window.frame().size.height
-    } else {
-        reveal::strip_top(&parent)
-    };
-    (rect.origin.y + rect.size.height - top) as f32
+    (parent.frame().size.height - window.frame().size.height) as f32
 }
 
 /// A double-click on empty chrome of the frame whose content view (or whose

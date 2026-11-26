@@ -38,6 +38,8 @@ use aeri_core::layout::{Layout, Side, TabPlace};
 /// Width of the side edge lane (Search `Fold.edge`) and height of the strip lane.
 const EDGE: f64 = 6.0;
 const STRIP_EDGE: f64 = 8.0;
+/// Leave the path to the native fullscreen window controls alone, as Search does.
+const FULLSCREEN_CORNER: f64 = 60.0;
 /// How far beyond the window's side edge a pointer that came from inside
 /// still counts as at the edge (Search `Fold.overshoot`).
 const OVERSHOOT: f64 = 48.0;
@@ -58,39 +60,6 @@ pub enum Edge {
 }
 
 const EDGES: [Edge; 2] = [Edge::Strip, Edge::Side];
-
-/// Where the top strip begins, below AppKit's own title bar in fullscreen.
-pub(super) fn strip_top(frame: &NSWindow) -> f64 {
-    let rect = frame.frame();
-    let top = rect.origin.y + rect.size.height;
-    if frame.styleMask().contains(NSWindowStyleMask::FullScreen)
-        && let Some(screen) = frame.screen()
-    {
-        let bounds = screen.frame();
-        let visible = screen.visibleFrame();
-        let safe_top = bounds.origin.y + bounds.size.height - screen.safeAreaInsets().top;
-        let usable = frame.convertRectToScreen(frame.contentLayoutRect());
-        let native = NSWindow::contentRectForFrameRect_styleMask(
-            rect,
-            NSWindowStyleMask::Titled,
-            MainThreadMarker::from(frame),
-        );
-        (top.min(safe_top)
-            .min(visible.origin.y + visible.size.height)
-            - (rect.size.height - native.size.height))
-            .min(usable.origin.y + usable.size.height)
-    } else {
-        top
-    }
-}
-
-pub(super) fn strip_origin(frame: &NSWindow, layout: &Layout, height: f64) -> f64 {
-    if layout.tabs == TabPlace::Bottom {
-        frame.frame().origin.y
-    } else {
-        strip_top(frame) - height
-    }
-}
 
 /// A one-shot timer, and whether it opens (else closes).
 type Pending = Option<(bool, Retained<NSTimer>)>;
@@ -270,7 +239,7 @@ impl Frame {
         // Pinned chrome has nothing to open: the default layout does no work
         // for the pointer, which moves hundreds of times a second.
         let layout = self.layout_now(&frame);
-        if !EDGES.into_iter().any(|edge| slides(&layout, edge)) {
+        if !watches_pointer(&layout) {
             return;
         }
         if !frame.isVisible() || frame.isMiniaturized() || !frame.isOnActiveSpace() {
@@ -308,29 +277,16 @@ impl Frame {
         let side_top = chrome_top(&layout, fullscreen);
         let side_bottom = rect.size.height - chrome_bottom(&layout, fullscreen);
         let strip_hit = if slides(&layout, Edge::Strip) && (0.0..=rect.size.width).contains(&x) {
-            if layout.tabs == TabPlace::Bottom {
-                let distance = at.y - rect.origin.y;
-                (
-                    (0.0..=STRIP_EDGE).contains(&distance),
-                    (0.0..=strip_h).contains(&distance),
-                )
+            // Stay within the browser; macOS owns the screen edge above it.
+            let distance = if layout.tabs == TabPlace::Bottom {
+                at.y - rect.origin.y
             } else {
-                let strip_top = strip_top(&frame);
-                let edge = if fullscreen {
-                    frame
-                        .screen()
-                        .map_or(rect.origin.y + rect.size.height, |screen| {
-                            let bounds = screen.frame();
-                            bounds.origin.y + bounds.size.height
-                        })
-                } else {
-                    rect.origin.y + rect.size.height
-                };
-                (
-                    (strip_top - STRIP_EDGE..=edge).contains(&at.y),
-                    (strip_top - strip_h..=edge).contains(&at.y),
-                )
-            }
+                y
+            };
+            (
+                (0.0..=STRIP_EDGE).contains(&distance),
+                (0.0..=strip_h).contains(&distance),
+            )
         } else {
             (false, false)
         };
@@ -347,8 +303,12 @@ impl Frame {
             let (lane, region) = match edge {
                 Edge::Strip => strip_hit,
                 Edge::Side => {
-                    let beside = (side_top..=side_bottom).contains(&y) && !strip_hit.0;
-                    (beside && at_edge(EDGE), beside && at_edge(reach))
+                    let beside = (side_top..=side_bottom).contains(&y);
+                    let can_open = !fullscreen || y >= FULLSCREEN_CORNER;
+                    (
+                        beside && can_open && at_edge(EDGE),
+                        beside && at_edge(reach),
+                    )
                 }
             };
             let i = edge as usize;
@@ -358,11 +318,7 @@ impl Frame {
                 } else {
                     self.cancel(edge);
                 }
-            } else if region
-                && !(edge == Edge::Side
-                    && self.reveal.shown[Edge::Strip as usize].get()
-                    && strip_hit.1)
-            {
+            } else if region {
                 self.reveal.entered[i].set(true);
                 self.cancel(edge);
             } else if clicked && on_page {
@@ -433,10 +389,10 @@ impl Frame {
             Motion::Subtle => 0.12,
             Motion::Standard => 0.18,
         };
-        // Standard motion slides in from the edge; leaving only fades, so
-        // the overlay ends where the layout put it.
+        // Animate windowed chrome in from the edge. In fullscreen, keep
+        // its geometry fixed while fading so it meets the native title bar.
         let target = overlay.frame();
-        let slide = shown && self.motion_now() == Motion::Standard;
+        let slide = shown && self.motion_now() == Motion::Standard && !self.in_full_screen();
         if slide {
             let mut start = target;
             start.origin.y += if self.layout.get().tabs == TabPlace::Bottom {
@@ -504,10 +460,14 @@ impl Frame {
     }
 }
 
+pub(super) fn watches_pointer(layout: &Layout) -> bool {
+    EDGES.into_iter().any(|edge| slides(layout, edge))
+}
+
 /// Unpinned chrome can slide in from its edge. A sidebar layout has no tab strip.
 fn slides(layout: &Layout, edge: Edge) -> bool {
     match edge {
-        Edge::Side => !layout.sidebar_pinned,
+        Edge::Side => layout.tabs == TabPlace::Side && !layout.sidebar_pinned,
         Edge::Strip => !layout.top_pinned && layout.tabs.horizontal(),
     }
 }

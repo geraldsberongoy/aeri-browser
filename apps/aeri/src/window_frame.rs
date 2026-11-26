@@ -442,7 +442,7 @@ pub fn cards_in(layout: &Layout, fullscreen: bool) -> bool {
 /// Width a pinned sidebar (or column of icons) keeps beside the page; 0
 /// when the sidebar slides in.
 pub fn pinned_side_width(layout: &Layout, window_width: f64) -> f64 {
-    if layout.sidebar_pinned {
+    if layout.tabs == TabPlace::Side && layout.sidebar_pinned {
         layout.column_width(window_width)
     } else {
         0.0
@@ -469,10 +469,8 @@ pub struct PageInsets {
 
 /// The page's place beside whatever is pinned, where `side` is the width
 /// the pinned column takes ([`pinned_side_width`], or less or more while it
-/// glides). Full screen pins nothing; the page then covers the frame, or is
-/// a card with a gap all round where the card is kept there. As a card it
-/// has Search's 8 pt gap and radius 10; edge to edge it meets the sidebar
-/// (a hairline on the sidebar's edge) and the strip with no gap and square
+/// glides). Cards use Search's 8 pt gap at the outside edges and radius
+/// 10, including with nothing pinned. Edge to edge has no gap and square
 /// corners (`Metrics.cardGap`, `cardRadius`, `Browser.asCards`).
 pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
     let cards = cards_in(layout, fullscreen);
@@ -481,20 +479,6 @@ pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
     let side = if fullscreen { 0. } else { side };
     let top_chrome = chrome_top(layout, fullscreen);
     let bottom_chrome = chrome_bottom(layout, fullscreen);
-    if side == 0. && top_chrome == 0. && bottom_chrome == 0. {
-        let kept = fullscreen && cards;
-        let edge = if kept { gap } else { 0. };
-        return PageInsets {
-            left: edge,
-            right: edge,
-            top: edge,
-            bottom: edge,
-            radius,
-            card: kept,
-            bar: 0.,
-            bar_top: 0.,
-        };
-    }
     let far = if cards { gap } else { 0. };
     let (left, right) = match layout.side {
         _ if side == 0. => (far, far),
@@ -522,6 +506,46 @@ pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
         card: cards,
         bar,
         bar_top: top_chrome,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folded_sidebar_keeps_a_gutter_only_in_card_mode() {
+        let mut layout = Layout {
+            sidebar_pinned: false,
+            cards: true,
+            ..Layout::default()
+        };
+        let edges = |i: PageInsets| [i.left, i.right, i.top, i.bottom];
+        let windowed = page_insets(&layout, false, 0.);
+        assert!(windowed.card);
+        assert_eq!(edges(windowed), [f64::from(PAGE_EDGE); 4]);
+        layout.cards_full_screen = true;
+        assert_eq!(page_insets(&layout, true, 0.), windowed);
+        layout.cards = false;
+        let flush = page_insets(&layout, false, 0.);
+        assert_eq!(edges(flush), [0.; 4]);
+        assert_eq!(flush.radius, 0.);
+    }
+
+    #[test]
+    fn horizontal_tabs_do_not_reserve_a_sidebar_even_with_an_old_pin() {
+        for tabs in [TabPlace::Top, TabPlace::Bottom] {
+            let layout = Layout {
+                tabs,
+                sidebar_pinned: true,
+                top_pinned: true,
+                ..Layout::default()
+            };
+            let side = pinned_side_width(&layout, 1024.);
+            let insets = page_insets(&layout, false, side);
+            assert_eq!((insets.left, insets.right, insets.radius), (0., 0., 0.));
+            assert_eq!(page_insets(&layout, true, side).top, 0.);
+        }
     }
 }
 
@@ -633,7 +657,8 @@ impl Render for WindowFrame {
         let windowed = !self.fullscreen;
         let bottom = self.tabs_at_bottom();
         let strip_pinned = windowed && self.layout.top_pinned;
-        let side = (windowed && self.layout.sidebar_pinned).then(|| self.sidebar(Host::Frame, cx));
+        let side = (windowed && self.layout.tabs == TabPlace::Side && self.layout.sidebar_pinned)
+            .then(|| self.sidebar(Host::Frame, cx));
         let title = (windowed && bottom).then(|| {
             let t = theme::tokens_in(self.window_id, cx);
             drag(Host::Frame)

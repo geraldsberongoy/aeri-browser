@@ -3,7 +3,7 @@
 //! the palette and Aeri's own window buttons. By default the sidebar is
 //! pinned beside the page, as in Search.
 
-use aeri_core::layout::{BarPlace, FavouriteStyle, Layout, Preset, Side, TabPlace};
+use aeri_core::layout::{BarPlace, FavouriteStyle, Layout, Preset, Side};
 use aeri_core::store::AppDb;
 use gpui::{
     App, AppContext, Bounds, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
@@ -140,7 +140,12 @@ impl Shell {
             return;
         };
         let mut layout = self.chrome.layout;
-        layout.sidebar_pinned &= !w.sidebar_hidden;
+        if layout.tabs.horizontal() {
+            layout.sidebar_pinned = false;
+            layout.top_pinned &= !w.tabs_hidden;
+        } else {
+            layout.sidebar_pinned &= !w.tabs_hidden;
+        }
         layout.bookmarks_bar = self.sync_bookmarks_bar(w, cx);
         let _ = w
             .frame_window
@@ -163,13 +168,22 @@ impl Shell {
         if let Err(err) = self.db.set_setting(LAYOUT, &self.chrome.layout.to_json()) {
             tracing::warn!(%err, "could not save the layout");
         }
-        // A column put away with ⌘S comes back only when where it lives
-        // changes, not for a colour or motion preference.
+        // A bar put away with ⌘S stays hidden through color or motion
+        // changes, but not through new tab placement or pinning.
         let after = self.chrome.layout;
-        let placement = |l: Layout| (l.tabs, l.side, l.rail, l.sidebar_pinned, l.fold_icons);
+        let placement = |l: Layout| {
+            (
+                l.tabs,
+                l.side,
+                l.rail,
+                l.sidebar_pinned,
+                l.top_pinned,
+                l.fold_icons,
+            )
+        };
         if placement(before) != placement(after) {
             for w in &mut self.windows {
-                w.sidebar_hidden = false;
+                w.tabs_hidden = false;
             }
         }
         self.apply_layout_everywhere(cx);
@@ -184,8 +198,8 @@ impl Shell {
         }
     }
 
-    /// ⌘S: a pinned sidebar steps aside until the next ⌘S (the layout
-    /// stays); an unpinned one (or a rail) slides in, or away.
+    /// ⌘S: pinned tabs step aside until the next ⌘S without changing the
+    /// layout; auto-hidden tabs (including in fullscreen) peek or fold.
     ///
     /// Folding gives the page the window at once and the sidebar leaves
     /// from its place. Unfolding slides it out over the page first; when it
@@ -193,19 +207,29 @@ impl Shell {
     /// and the page shrinks once. ⌘S while it slides out turns it round.
     pub(super) fn toggle_sidebar(&mut self, window_id: u64, cx: &mut App) {
         let layout = self.chrome.layout;
-        if let Some(w) = self.window(window_id)
-            && w.frame.in_full_screen()
-        {
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        let horizontal = layout.tabs.horizontal();
+        if w.frame.in_full_screen() || (horizontal && !layout.top_pinned) {
             let frame = w.frame.clone();
+            let edge = if horizontal { Edge::Strip } else { Edge::Side };
             self.later(move |_| {
-                frame.call(Edge::Side);
+                frame.call(edge);
             });
+            return;
+        }
+        if horizontal {
+            if let Some(w) = self.window_mut(window_id) {
+                w.tabs_hidden = !w.tabs_hidden;
+                self.apply_layout(window_id, cx);
+            }
             return;
         }
         // "⌘S makes the column icons only": the sidebar stays and its
         // width folds to the column of icons and back (Search
         // `Preferences.shrinks`, `Fold.swift`).
-        if layout.fold_icons && layout.sidebar_pinned && layout.tabs == TabPlace::Side {
+        if layout.fold_icons && layout.sidebar_pinned {
             self.change_layout(|layout| layout.rail = !layout.rail, cx);
             return;
         }
@@ -217,14 +241,14 @@ impl Shell {
             self.later(move |_| {
                 frame.call(Edge::Side);
             });
-        } else if !w.sidebar_hidden {
-            w.sidebar_hidden = true;
+        } else if !w.tabs_hidden {
+            w.tabs_hidden = true;
             // Before the layout unpins it: the overlay takes the column's
             // place as the page covers it.
             self.later(move |_| frame.fold());
             self.apply_layout(window_id, cx);
         } else if frame.take_landed() {
-            w.sidebar_hidden = false;
+            w.tabs_hidden = false;
             self.apply_layout(window_id, cx);
             self.later(move |_| frame.end_fold());
         } else if frame.is_unfolding() {

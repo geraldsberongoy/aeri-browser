@@ -23,7 +23,7 @@ use std::rc::Rc;
 use aeri_cef::TabObserver;
 use aeri_core::appearance::Motion;
 use aeri_core::ids::TabId;
-use aeri_core::layout::{Layout, Side};
+use aeri_core::layout::{Layout, Side, TabPlace};
 use block2::RcBlock;
 use futures::channel::mpsc::UnboundedSender;
 use objc2::rc::Retained;
@@ -139,6 +139,12 @@ impl Frame {
             tracing::error!("frame, address bar or overlay has no NSWindow");
             return;
         };
+        for overlay in [&side, &strip] {
+            // A titled panel rounds all four corners. Drop its title bar
+            // before changing the class, while AppKit still owns its KVO.
+            overlay.setStyleMask(NSWindowStyleMask::NonactivatingPanel);
+            style_clipped(overlay);
+        }
         for child in [&side, &strip, &bar] {
             // GPUI pop-ups float above every app; as children, follow
             // the frame.
@@ -473,6 +479,12 @@ impl Frame {
             let rect = frame.frame();
             let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
             let layout = self.layout_now(&frame);
+            // A folded card exposes a gutter belonging to the frame, not
+            // CEF; the edge watcher still needs moves over that gutter.
+            let watch_edge = reveal::watches_pointer(&layout);
+            if frame.acceptsMouseMovedEvents() != watch_edge {
+                frame.setAcceptsMouseMovedEvents(watch_edge);
+            }
             let strip_h = strip_height(&layout);
             let top = chrome_top(&layout, fullscreen);
             let bottom = chrome_bottom(&layout, fullscreen);
@@ -488,10 +500,29 @@ impl Frame {
             let strip_rect = NSRect::new(
                 NSPoint::new(
                     rect.origin.x,
-                    reveal::strip_origin(&frame, &layout, strip_h),
+                    if layout.tabs == TabPlace::Bottom {
+                        rect.origin.y
+                    } else {
+                        rect.origin.y + rect.size.height - strip_h
+                    },
                 ),
                 NSSize::new(rect.size.width, strip_h),
             );
+            // Only corners on the browser's actual outside edge are rounded.
+            // Core Animation's corner bits are bottom-left, bottom-right,
+            // top-left, top-right. Fullscreen chrome has square corners.
+            let side_corners = match layout.side {
+                Side::Left => 0b0101,
+                Side::Right => 0b1010,
+            } & (if top > 0. { 0b0011 } else { 0b1111 })
+                & (if bottom > 0. { 0b1100 } else { 0b1111 });
+            let strip_corners = if layout.tabs == TabPlace::Bottom {
+                0b0011
+            } else {
+                0b1100
+            };
+            clip_overlay(side, side_corners, fullscreen);
+            clip_overlay(strip, strip_corners, fullscreen);
             // Out of sight they are refitted without being drawn, and left
             // alone when they are already there (a live resize comes here
             // on every frame).
@@ -862,6 +893,10 @@ pub(super) fn stand_in_window_buttons(frame: &NSWindow) {
 /// corners its own (wider) way, so drop the title bar.
 pub(super) fn style_card(window: &NSWindow) {
     window.setStyleMask(NSWindowStyleMask::Borderless);
+    style_clipped(window);
+}
+
+fn style_clipped(window: &NSWindow) {
     window.setOpaque(false);
     window.setBackgroundColor(Some(&NSColor::clearColor()));
     window.setHasShadow(false);
@@ -894,6 +929,32 @@ pub(super) fn round_page(window: &NSWindow, radius: f64) {
         let layer: *mut AnyObject = msg_send![&*view, layer];
         if let Some(layer) = layer.as_ref() {
             let _: () = msg_send![layer, setCornerRadius: radius];
+        }
+    }
+}
+
+fn clip_overlay(window: &NSWindow, corners: usize, fullscreen: bool) {
+    // Match the frame's continuous outer corners in a normal window.
+    const FRAME_CORNER: f64 = 16.;
+    let Some(view) = window.contentView() else {
+        return;
+    };
+    // SAFETY: The overlay content's CALayer belongs to the main thread
+    // and stays live while `view` is held.
+    unsafe {
+        let layer: *mut AnyObject = msg_send![&*view, layer];
+        if let Some(layer) = layer.as_ref() {
+            let radius = if fullscreen { 0. } else { FRAME_CORNER };
+            let previous_radius: f64 = msg_send![layer, cornerRadius];
+            if previous_radius != radius {
+                let _: () = msg_send![layer, setCornerRadius: radius];
+            }
+            if !fullscreen {
+                let previous_corners: usize = msg_send![layer, maskedCorners];
+                if previous_corners != corners {
+                    let _: () = msg_send![layer, setMaskedCorners: corners];
+                }
+            }
         }
     }
 }

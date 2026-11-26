@@ -60,7 +60,7 @@ impl WindowFrame {
         } else {
             (width - 2. * COLUMN_PAD - HELM).clamp(0., LIGHTS)
         };
-        let owns_band = !self.layout.top_pinned && !self.tabs_at_bottom();
+        let owns_band = (self.fullscreen || !self.layout.top_pinned) && !self.tabs_at_bottom();
         let band = owns_band.then(|| {
             div()
                 .flex()
@@ -90,7 +90,8 @@ impl WindowFrame {
             .flex_none()
             .h_full()
             .min_h_0()
-            .w(px(width))
+            .when(host == Host::Frame, |column| column.w(px(width)))
+            .when(host == Host::Overlay, |column| column.w_full())
             .when(!owns_band, |column| column.pt(px(COLUMN_PAD)))
             // Edge to edge the column is on the page's ground, with a
             // hairline on its inner edge (Search `Side.swift`).

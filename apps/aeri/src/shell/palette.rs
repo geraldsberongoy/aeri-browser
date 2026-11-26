@@ -146,6 +146,8 @@ impl Shell {
                     && (self.spaces_on() || !is_space_palette(*command))
                     && (*command != PaletteCommand::SplitPage
                         || w.shown().is_some_and(|tab| w.split_eligible(tab)))
+                    && (*command != PaletteCommand::PinSidebar
+                        || !self.chrome.layout.tabs.horizontal())
                     && matches(&words, title)
             })
             .map(|(command, title)| BarRow {
@@ -244,6 +246,9 @@ impl Shell {
             PaletteCommand::ShowResources => "Show Resources",
             PaletteCommand::SiteSettings => "Site Settings…",
             PaletteCommand::OpenInDefaultBrowser => "Open in Default Browser",
+            PaletteCommand::ToggleSidebar if self.chrome.layout.tabs.horizontal() => {
+                "Show or Hide Tab Bar"
+            }
             PaletteCommand::ToggleSidebar => "Show or Hide Sidebar",
             PaletteCommand::PinSidebar if self.chrome.layout.sidebar_pinned => "Auto-hide Sidebar",
             PaletteCommand::PinSidebar => "Pin Sidebar",

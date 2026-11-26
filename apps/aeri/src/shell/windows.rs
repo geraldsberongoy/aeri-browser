@@ -47,8 +47,8 @@ pub(super) struct AeriWindow {
     pub(super) bar_shown: bool,
     /// The bar is the command palette.
     pub(super) palette: bool,
-    /// ⌘S stepped the pinned sidebar aside in this window.
-    pub(super) sidebar_hidden: bool,
+    /// ⌘S stepped the pinned tabs aside in this window.
+    pub(super) tabs_hidden: bool,
     /// The sidebar and the strip as they slide in, by [`Edge`] index.
     pub(super) overlays: [gpui::WindowHandle<ChromeOverlay>; 2],
     /// The space shown.
@@ -316,7 +316,7 @@ impl Shell {
             bar,
             bar_shown: false,
             palette: false,
-            sidebar_hidden: false,
+            tabs_hidden: false,
             overlays,
             space: seed.space,
             tabs,
