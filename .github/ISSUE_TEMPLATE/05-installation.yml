@@ -1,0 +1,24 @@
+name: Installation or update
+description: Report a problem installing, updating, or launching Aeri.
+labels: [installation, needs triage]
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: Aeri version, OS version, and device model
+    validations:
+      required: true
+  - type: input
+    id: build-source
+    attributes:
+      label: Where did you get the build?
+      placeholder: GitHub release filename or source commit
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: What were you doing, and what happened?
+      description: Include the exact error text, if any. Remove private information from attachments.
+    validations:
+      required: true

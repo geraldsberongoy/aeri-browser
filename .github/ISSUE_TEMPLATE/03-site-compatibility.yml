@@ -1,0 +1,24 @@
+name: Website compatibility
+description: Report a broken website, sign-in flow, or video or audio player.
+labels: [bug, site compatibility, needs triage]
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: Aeri and OS versions
+    validations:
+      required: true
+  - type: input
+    id: site
+    attributes:
+      label: Website
+      description: Use the site name or a public URL without sign-in tokens or other private details.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Steps and behavior
+      description: Tell us what you did, what you expected, and what happened. If you tried another browser, include its name and what happened there.
+    validations:
+      required: true

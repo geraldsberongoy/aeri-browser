@@ -1,0 +1,22 @@
+name: Crash or freeze
+description: Report Aeri closing unexpectedly or becoming unresponsive.
+labels: [bug, crash, needs triage]
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: Aeri and OS versions
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What happened before the crash or freeze?
+      description: Include the action you took, whether it happens every time, and how many windows or profiles were open.
+    validations:
+      required: true
+  - type: textarea
+    id: crash-report
+    attributes:
+      label: Crash report or error message
+      description: Remove private paths, URLs, and account details before sharing.
