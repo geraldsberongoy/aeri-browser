@@ -11,6 +11,7 @@ Aeri is a browser for the Mac in Rust and GPUI, with Chromium (CEF) rendering th
 - Choose **Bottom** under Settings → Appearance → Window → Tabs, or pick **Layout: Bottom Tabs** in the command palette. In full screen the tab bar appears at the bottom edge on hover.
 - The pinned sidebar now clears when entering fullscreen, so hovering the edge doesn't stack a second sidebar on top of it. Exiting fullscreen restores the windowed layout.
 - Hover sidebars and tab bars line up with the browser's edges in windowed and fullscreen modes. The fullscreen top bar takes one row, including in Compact Tabs mode. The top and bottom bars no longer bring along a spare sidebar; ⌘S acts on the chosen layout.
+- The red close button closes only its own window. Other profile windows stay open.
 
 ### 21 November 2026
 

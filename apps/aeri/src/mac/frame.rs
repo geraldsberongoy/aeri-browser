@@ -27,11 +27,11 @@ use aeri_core::layout::{Layout, Side, TabPlace};
 use block2::RcBlock;
 use futures::channel::mpsc::UnboundedSender;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, ProtocolObject, Sel};
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationDidBecomeActiveNotification,
-    NSApplicationDidResignActiveNotification, NSColor, NSWindow, NSWindowButton,
+    NSApplicationDidResignActiveNotification, NSColor, NSPanel, NSWindow, NSWindowButton,
     NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
     NSWindowDidBecomeMainNotification, NSWindowDidDeminiaturizeNotification,
     NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
@@ -140,8 +140,7 @@ impl Frame {
             return;
         };
         for overlay in [&side, &strip] {
-            // A titled panel rounds all four corners. Drop its title bar
-            // before changing the class, while AppKit still owns its KVO.
+            // A titled panel rounds all four corners.
             overlay.setStyleMask(NSWindowStyleMask::NonactivatingPanel);
             style_clipped(overlay);
         }
@@ -154,7 +153,13 @@ impl Frame {
             share_parent_key_state(child);
         }
         for overlay in [&side, &strip] {
-            make_overlay_mouse_only(overlay);
+            // AppKit's nonactivating panel policy keeps clicks from taking
+            // focus unless a control needs it. Replacing the panel's class
+            // would interfere with AppKit's KVO during deallocation.
+            let object: &AnyObject = overlay;
+            if let Some(panel) = object.downcast_ref::<NSPanel>() {
+                panel.setBecomesKeyOnlyIfNeeded(true);
+            }
             overlay.setAlphaValue(0.0);
             overlay.setIgnoresMouseEvents(true);
             // SAFETY: AppKit calls on the main thread.
@@ -957,35 +962,6 @@ fn clip_overlay(window: &NSWindow, corners: usize, fullscreen: bool) {
             }
         }
     }
-}
-
-/// The slide-out chrome has no editor. GPUI's panel class is key and main
-/// eligible even when transparent; these two overlays must not take focus
-/// from the frame, page, or floating address bar.
-fn make_overlay_mouse_only(window: &NSWindow) {
-    extern "C-unwind" fn no(_: &AnyObject, _: Sel) -> Bool {
-        Bool::NO
-    }
-
-    let window: &AnyObject = window;
-    let class = AnyClass::get(c"AeriChromeOverlayPanel").unwrap_or_else(|| {
-        let mut class = ClassBuilder::new(c"AeriChromeOverlayPanel", window.class())
-            .expect("could not create Aeri chrome overlay subclass");
-        // SAFETY: Both AppKit selectors return BOOL and take no arguments.
-        unsafe {
-            class.add_method(
-                sel!(canBecomeKeyWindow),
-                no as extern "C-unwind" fn(_, _) -> _,
-            );
-            class.add_method(
-                sel!(canBecomeMainWindow),
-                no as extern "C-unwind" fn(_, _) -> _,
-            );
-        }
-        class.register()
-    });
-    // SAFETY: The subclass adds no fields or destruction behavior.
-    unsafe { AnyObject::set_class(window, class) };
 }
 
 extern "C-unwind" fn shares_parent_key_state(
