@@ -18,7 +18,7 @@ impl Shell {
         }
         match shortcut {
             Shortcut::FocusAddressBar => self.show_bar(window_id, cx),
-            Shortcut::NewTab => self.toggle_new_tab_bar(window_id, cx),
+            Shortcut::NewTab => self.open_new_tab(window_id, cx),
             Shortcut::NewWindow => {
                 if let Some(profile) = self.window(window_id).map(|w| w.profile) {
                     self.new_window(profile, cx);

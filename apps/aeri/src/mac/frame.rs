@@ -19,6 +19,7 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::sync::{Once, OnceLock};
 
 use aeri_cef::TabObserver;
 use aeri_core::appearance::Motion;
@@ -27,7 +28,7 @@ use aeri_core::layout::{Layout, Side, TabPlace};
 use block2::RcBlock;
 use futures::channel::mpsc::UnboundedSender;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::runtime::{AnyClass, AnyObject, ProtocolObject, Sel};
 use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationDidBecomeActiveNotification,
@@ -64,6 +65,14 @@ pub const BAR_HEIGHT: f64 = 62.0;
 /// (Search's `FoldShadow`: radius 20, 4 pt away from the page).
 pub const SIDE_OVERLAY_EXTRA: f64 = 28.0;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum InspectorPlacement {
+    #[default]
+    Bottom,
+    Right,
+    Window,
+}
+
 pub struct Frame {
     pub(super) window_id: u64,
     pub(super) tx: UnboundedSender<AppMsg>,
@@ -75,6 +84,8 @@ pub struct Frame {
     pub(super) lights: RefCell<Option<[Lights; 2]>>,
     pub(super) native_lights: NativeLights,
     pub(super) tabs: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
+    inspectors: RefCell<Vec<(TabId, Retained<NSWindow>)>>,
+    inspector_placement: Cell<InspectorPlacement>,
     pub(super) active: Cell<Option<TabId>>,
     /// A solo blank tab has native Home content below its Chromium window.
     home_tab: Cell<Option<TabId>>,
@@ -95,6 +106,8 @@ pub struct Frame {
     /// The pinned column's width while it glides between its full width and
     /// icons only; `None` at rest, when the layout says.
     column: Cell<Option<f64>>,
+    /// The window's frame before filling this display's usable area.
+    before_fill: Cell<Option<NSRect>>,
 }
 
 impl Frame {
@@ -105,6 +118,8 @@ impl Frame {
             frame: RefCell::default(),
             bar: RefCell::default(),
             tabs: RefCell::default(),
+            inspectors: RefCell::default(),
+            inspector_placement: Cell::default(),
             active: Cell::new(None),
             home_tab: Cell::new(None),
             split: super::split::Stage::default(),
@@ -119,6 +134,7 @@ impl Frame {
             fold: Fold::default(),
             column: Cell::new(None),
             notifications: RefCell::default(),
+            before_fill: Cell::new(None),
         })
     }
 
@@ -298,6 +314,14 @@ impl Frame {
             }
             return;
         }
+        if self
+            .inspectors
+            .borrow()
+            .iter()
+            .any(|(_, window)| window.isKeyWindow())
+        {
+            return;
+        }
         // The find bar is up: the keyboard is the page's if it is there
         // (the Person clicked it), else the bar's. Taking it for the page
         // whenever the frame turns main sent the first ⌘F's typing away.
@@ -333,7 +357,10 @@ impl Frame {
     pub(super) fn insets(&self, frame: &NSWindow) -> PageInsets {
         let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
         let layout = self.layout.get();
-        let side = self.pinned_column_width(&layout, frame.frame().size.width);
+        let width = frame
+            .contentView()
+            .map_or_else(|| frame.frame().size.width, |view| view.bounds().size.width);
+        let side = self.pinned_column_width(&layout, width);
         page_insets(&layout, fullscreen, side)
     }
 
@@ -347,7 +374,7 @@ impl Frame {
     /// window with nothing pinned, else a card, or the page edge to edge,
     /// beside the pinned chrome.
     pub(super) fn page_rect(&self, frame: &NSWindow) -> NSRect {
-        let rect = frame.frame();
+        let rect = content_on_screen(frame);
         let i = self.insets(frame);
         NSRect::new(
             NSPoint::new(rect.origin.x + i.left, rect.origin.y + i.bottom),
@@ -434,11 +461,12 @@ impl Frame {
         let page = self.page_rect(frame);
         let radius = self.insets(frame).radius;
         self.sync_secondary(frame, page, radius);
-        let focused = self.focused_rect(page);
-        if let Some(window) = self.active_window()
-            && window.frame() != focused
-        {
-            window.setFrame_display(focused, true);
+        let (focused, corners) = self.layout_inspector(frame, self.focused_rect(page));
+        if let Some(window) = self.active_window() {
+            if window.frame() != focused {
+                window.setFrame_display(focused, true);
+            }
+            clip_pane(&window, radius, corners);
         }
         self.place_page_controls(focused);
     }
@@ -452,6 +480,82 @@ impl Frame {
         self.place_find(focused);
     }
 
+    pub(crate) fn place_inspector(&self, placement: InspectorPlacement) {
+        self.inspector_placement.set(placement);
+        self.layout();
+        self.raise_children();
+        let inspector = self
+            .inspectors
+            .borrow()
+            .iter()
+            .find(|(tab, _)| Some(*tab) == self.active.get())
+            .map(|(_, window)| window.clone());
+        if let Some(window) = inspector {
+            window.makeKeyAndOrderFront(None);
+        }
+    }
+
+    pub(crate) fn separate_inspector_has_key(&self) -> bool {
+        self.inspectors
+            .borrow()
+            .iter()
+            .any(|(_, window)| window.isKeyWindow() && window.parentWindow().is_none())
+    }
+
+    /// DevTools belongs to its source tab. Other inspectors stay alive but
+    /// out of the window order until their tab is selected again.
+    fn layout_inspector(&self, frame: &NSWindow, pane: NSRect) -> (NSRect, usize) {
+        let active = self
+            .active
+            .get()
+            .filter(|tab| self.home_tab.get() != Some(*tab));
+        let mut page = (pane, 0b1111);
+        let floating_style = NSWindowStyleMask::Titled
+            | NSWindowStyleMask::Closable
+            | NSWindowStyleMask::Resizable;
+        for (tab, inspector) in self.inspectors.borrow().iter() {
+            if active != Some(*tab) {
+                hide_inspector(inspector);
+                continue;
+            }
+            let placement = self.inspector_placement.get();
+            if placement == InspectorPlacement::Window {
+                if inspector.styleMask() != floating_style {
+                    hide_inspector(inspector);
+                    inspector.setStyleMask(floating_style);
+                    inspector.setTitle(ns_string!("Developer Tools"));
+                    inspector.setHasShadow(true);
+                    inspector.setLevel(frame.level());
+                    inspector.setContentSize(NSSize::new(
+                        pane.size.width.clamp(480., 950.),
+                        pane.size.height.clamp(300., 650.),
+                    ));
+                    inspector.center();
+                }
+                if !inspector.isVisible() {
+                    inspector.orderFront(None);
+                }
+                continue;
+            }
+            if inspector.styleMask() != NSWindowStyleMask::Borderless {
+                inspector.setStyleMask(NSWindowStyleMask::Borderless);
+                inspector.setHasShadow(false);
+            }
+            let (rect, remaining, corners) = inspector_rects(pane, placement);
+            let attached = inspector.parentWindow().is_some();
+            if inspector.frame() != rect {
+                inspector.setFrame_display(rect, attached);
+            }
+            if !attached {
+                // SAFETY: AppKit windows are used on the main thread.
+                unsafe { frame.addChildWindow_ordered(inspector, NSWindowOrderingMode::Above) };
+                inspector.orderFront(None);
+            }
+            page = (remaining, corners);
+        }
+        page
+    }
+
     /// Fits every tab window to the page, places the overlays along their
     /// edges and the address bar over the page.
     pub fn layout(&self) {
@@ -461,7 +565,7 @@ impl Frame {
         let page = self.page_rect(&frame);
         let radius = self.insets(&frame).radius;
         self.sync_secondary(&frame, page, radius);
-        let focused = self.focused_rect(page);
+        let (focused, corners) = self.layout_inspector(&frame, self.focused_rect(page));
         let active = self.active.get();
         for (id, tab) in self.tabs.borrow().iter() {
             if self
@@ -478,17 +582,16 @@ impl Frame {
             if tab.frame() != rect {
                 tab.setFrame_display(rect, visible);
             }
-            round_page(tab, radius);
+            clip_pane(tab, radius, if visible { corners } else { 0b1111 });
         }
         if let Some([side, strip]) = self.overlays.borrow().as_ref() {
-            let rect = frame.frame();
+            let rect = content_on_screen(&frame);
             let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
             let layout = self.layout_now(&frame);
-            // A folded card exposes a gutter belonging to the frame, not
-            // CEF; the edge watcher still needs moves over that gutter.
-            let watch_edge = reveal::watches_pointer(&layout);
-            if frame.acceptsMouseMovedEvents() != watch_edge {
-                frame.setAcceptsMouseMovedEvents(watch_edge);
+            // Edge detection can sleep when chrome is pinned, but GPUI still
+            // needs native moves to fade tab hover and track chrome controls.
+            if !frame.acceptsMouseMovedEvents() {
+                frame.setAcceptsMouseMovedEvents(true);
             }
             let strip_h = strip_height(&layout);
             let top = chrome_top(&layout, fullscreen);
@@ -574,6 +677,7 @@ impl Frame {
         let had_key = self.is_key();
         let show_home = active == home;
         self.order_page(&frame, &page, show_home);
+        self.layout();
         self.raise_children();
         if had_key && !self.bar_visible.get() {
             if show_home {
@@ -596,6 +700,7 @@ impl Frame {
             // SAFETY: AppKit calls on the main thread.
             unsafe { frame.addChildWindow_ordered(page, NSWindowOrderingMode::Above) };
             page.orderFront(None);
+            clear_native_page_corners(page);
         }
     }
 
@@ -606,6 +711,7 @@ impl Frame {
         self.float_arrive(tab);
         let (Some(frame), Some(next)) = (self.frame.borrow().clone(), self.active_window()) else {
             // Not created yet: `created` activates it.
+            self.layout();
             self.float_after_activate();
             return;
         };
@@ -720,6 +826,7 @@ impl Frame {
     /// float out of the frame before it goes.
     fn drop_tab_window(&self, tab: TabId, leaving: bool) {
         self.peek_origin_gone(tab);
+        self.remove_inspector(tab);
         let removed = {
             let mut tabs = self.tabs.borrow_mut();
             tabs.iter()
@@ -777,6 +884,7 @@ impl Frame {
             || key
                 .parentWindow()
                 .is_some_and(|parent| std::ptr::eq(&*parent, &*frame))
+            || self.separate_inspector_has_key()
     }
 
     /// Whether the active Chromium page, rather than a chrome overlay, has the keyboard.
@@ -794,7 +902,31 @@ impl Frame {
             if minimize {
                 frame.performMiniaturize(None);
             } else {
-                frame.performZoom(None);
+                self.toggle_fill(&frame);
+            }
+        }
+    }
+
+    pub(super) fn toggle_fill(&self, window: &NSWindow) {
+        if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
+            return;
+        }
+        let Some(screen) = window.screen() else {
+            return;
+        };
+        let usable = screen.visibleFrame();
+        let current = window.frame();
+        tracing::debug!(?current, ?usable, "toggling browser window fill");
+        let target = if current == usable {
+            self.before_fill.take()
+        } else {
+            self.before_fill.set(Some(current));
+            Some(usable)
+        };
+        if let Some(target) = target {
+            window.setFrame_display_animate(target, true, false);
+            if !self.is_key() {
+                window.makeKeyAndOrderFront(None);
             }
         }
     }
@@ -824,14 +956,68 @@ impl Frame {
         self.native_lights.unwatch();
         self.remove_lights();
         self.forget_stage();
+        for (_, inspector) in self.inspectors.take() {
+            hide_inspector(&inspector);
+        }
+    }
+
+    fn remove_inspector(&self, tab: TabId) {
+        let inspector = {
+            let mut inspectors = self.inspectors.borrow_mut();
+            inspectors
+                .iter()
+                .position(|(id, _)| *id == tab)
+                .map(|index| inspectors.remove(index).1)
+        };
+        if let Some(inspector) = inspector {
+            hide_inspector(&inspector);
+            self.layout();
+        }
+    }
+}
+
+fn hide_inspector(window: &NSWindow) {
+    if let Some(parent) = window.parentWindow() {
+        parent.removeChildWindow(window);
+    }
+    if window.isVisible() {
+        window.orderOut(None);
+    }
+}
+
+/// Split a pane once so the inspector and page share a one-point divider.
+/// Don't add a card radius to the page along the inspector seam.
+fn inspector_rects(pane: NSRect, placement: InspectorPlacement) -> (NSRect, NSRect, usize) {
+    let NSRect { origin, size } = pane;
+    match placement {
+        InspectorPlacement::Bottom => {
+            let height = (size.height * 0.4).clamp(140., 320.).min(size.height / 2.);
+            let divider = 1_f64.min(height);
+            let inspector = NSRect::new(origin, NSSize::new(size.width, height - divider));
+            let page = NSRect::new(
+                NSPoint::new(origin.x, origin.y + height),
+                NSSize::new(size.width, size.height - height),
+            );
+            (inspector, page, 0b1100)
+        }
+        InspectorPlacement::Right => {
+            let width = (size.width * 0.4).clamp(260., 510.).min(size.width / 2.);
+            let divider = 1_f64.min(width);
+            let page = NSRect::new(origin, NSSize::new(size.width - width, size.height));
+            let inspector = NSRect::new(
+                NSPoint::new(origin.x + page.size.width + divider, origin.y),
+                NSSize::new(width - divider, size.height),
+            );
+            (inspector, page, 0b0101)
+        }
+        InspectorPlacement::Window => unreachable!("a separate inspector does not split the page"),
     }
 }
 
 /// What a double-click on a title bar does, per System Settings › Desktop &
 /// Dock (Search `Strip.mouseUp`, `Stage.swift`): `AppleActionOnDoubleClick`
-/// is "Minimize" (miniaturize), "None" (nothing) or, unset or anything
-/// else, "Maximize" (zoom). Unset, the older `AppleMiniaturizeOnDoubleClick`
-/// still asks for a miniaturize. Full screen has no title bar to click.
+/// is "Minimize" (miniaturize), "None" (nothing) or fills the usable
+/// area of this display. Full screen has no title bar to click.
 pub(super) fn double_click_action(window: &NSWindow) {
     if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
         return;
@@ -841,12 +1027,33 @@ pub(super) fn double_click_action(window: &NSWindow) {
     match action.as_deref().map(ToString::to_string).as_deref() {
         Some("Minimize") => window.miniaturize(None),
         Some("None") => {}
-        Some(_) => window.zoom(None),
+        Some(_) => fill_browser_frame(window),
         None if defaults.boolForKey(ns_string!("AppleMiniaturizeOnDoubleClick")) => {
             window.miniaturize(None);
         }
-        None => window.zoom(None),
+        None => fill_browser_frame(window),
     }
+}
+
+fn fill_browser_frame(window: &NSWindow) {
+    if let Some(frame) = reveal::frames().into_iter().find(|frame| {
+        frame
+            .frame
+            .borrow()
+            .as_deref()
+            .is_some_and(|native| std::ptr::eq(native, window))
+    }) {
+        frame.toggle_fill(window);
+    } else {
+        window.performZoom(None);
+    }
+}
+
+pub(super) fn content_on_screen(window: &NSWindow) -> NSRect {
+    window.contentView().map_or_else(
+        || window.frame(),
+        |view| window.convertRectToScreen(view.convertRect_toView(view.bounds(), None)),
+    )
 }
 
 /// Shows or hides the frame's own close, minimise and zoom buttons
@@ -889,16 +1096,98 @@ pub(super) fn stand_in_window_buttons(frame: &NSWindow) {
     }
 }
 
-/// Makes a tab window a card like Search's: every corner rounded (by
-/// [`round_page`]; the page's scrollbars are overlays, see
-/// [`prefer_overlay_scrollers`](super::prefer_overlay_scrollers), so the
-/// corners clip nothing), clear around them, no shadow of its own (the
-/// frame casts the window's). CEF's
-/// frameless windows are still titled, and macOS rounds a titled window's
-/// corners its own (wider) way, so drop the title bar.
+/// Makes a tab window clear outside the page's corners, with no shadow of
+/// its own. CEF's frameless windows are still titled and macOS would round
+/// all their corners, regardless of the pane's position.
 pub(super) fn style_card(window: &NSWindow) {
+    remove_cef_borderless_radius_floor();
     window.setStyleMask(NSWindowStyleMask::Borderless);
     style_clipped(window);
+}
+
+type FrameRadius = unsafe extern "C-unwind" fn(&AnyObject, Sel) -> f64;
+static CEF_FRAME_RADIUS: OnceLock<FrameRadius> = OnceLock::new();
+
+extern "C-unwind" fn cef_frame_radius(frame: &AnyObject, selector: Sel) -> f64 {
+    // SAFETY: The frame view and its NSWindow belong to AppKit's main
+    // thread. The saved implementation has this same ABI.
+    unsafe {
+        let window: *const NSWindow = msg_send![frame, window];
+        if window
+            .as_ref()
+            .is_some_and(|window| window.styleMask().is_empty())
+        {
+            0.
+        } else {
+            CEF_FRAME_RADIUS
+                .get()
+                .map_or(0., |radius| radius(frame, selector))
+        }
+    }
+}
+
+/// CefNSWindow keeps a titled frame even in borderless mode. Its default
+/// radius is a floor for the native mask, independent of the content layer.
+fn remove_cef_borderless_radius_floor() {
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        let Some(class) = AnyClass::get(c"CefThemeFrame") else {
+            return;
+        };
+        // SAFETY: AppKit is on the main thread. Both selector versions
+        // return CGFloat (f64 on macOS). Only CEF's subclass is modified.
+        unsafe {
+            for selector in [
+                sel!(_getCachedDefaultWindowCornerRadius),
+                sel!(_getCachedWindowCornerRadius),
+            ] {
+                let method = objc2::ffi::class_getInstanceMethod(class, selector);
+                if method.is_null() {
+                    continue;
+                }
+                let Some(original) = objc2::ffi::method_getImplementation(method) else {
+                    continue;
+                };
+                let _ = CEF_FRAME_RADIUS.set(std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(),
+                    FrameRadius,
+                >(original));
+                let imp = std::mem::transmute::<*const c_void, unsafe extern "C-unwind" fn()>(
+                    cef_frame_radius as *const c_void,
+                );
+                objc2::ffi::class_addMethod(
+                    class as *const AnyClass as *mut AnyClass,
+                    selector,
+                    imp,
+                    c"d@:".as_ptr(),
+                );
+                break;
+            }
+        }
+    });
+}
+
+/// Once the CEF child is visible, let the content layer alone clip cards.
+/// AppKit can rebuild the native mask during attachment and key changes.
+pub(super) fn clear_native_page_corners(window: &NSWindow) {
+    // SAFETY: AppKit windows are used on the main thread. Check each
+    // selector; macOS 27 stores four radii rather than one CGFloat.
+    unsafe {
+        if let Some(class) = AnyClass::get(c"NSViewCornerRadii")
+            && window.respondsToSelector(sel!(_setCornerRadii:))
+            && !objc2::ffi::class_getClassMethod(class, sel!(zero)).is_null()
+        {
+            let radii: *const AnyObject = msg_send![class, zero];
+            let _: () = msg_send![
+                window,
+                performSelector: sel!(_setCornerRadii:),
+                withObject: radii,
+                afterDelay: 0.0_f64
+            ];
+        } else if window.respondsToSelector(sel!(_setCornerRadius:)) {
+            let _: () = msg_send![window, _setCornerRadius: 0.0_f64];
+        }
+    }
 }
 
 fn style_clipped(window: &NSWindow) {
@@ -922,9 +1211,22 @@ fn style_clipped(window: &NSWindow) {
     }
 }
 
+const FRAME_CORNER: f64 = 16.;
+
+/// Cards match GPUI's circular border. Edge to Edge passes a zero radius
+/// even for panes that meet the native window perimeter.
+pub(super) fn clip_pane(window: &NSWindow, radius: f64, corners: usize) {
+    set_page_corners(window, radius, corners, false);
+}
+
 /// The page's corner radius: 10 as a card, 0 edge to edge (Search
 /// `Metrics.cardRadius`, passed as `cards ? 10 : 0`, `Stage.swift`).
 pub(super) fn round_page(window: &NSWindow, radius: f64) {
+    set_page_corners(window, radius, 0b1111, true);
+}
+
+fn set_page_corners(window: &NSWindow, radius: f64, corners: usize, continuous: bool) {
+    let radius = if corners == 0 { 0. } else { radius };
     let Some(view) = window.contentView() else {
         return;
     };
@@ -933,14 +1235,36 @@ pub(super) fn round_page(window: &NSWindow, radius: f64) {
     unsafe {
         let layer: *mut AnyObject = msg_send![&*view, layer];
         if let Some(layer) = layer.as_ref() {
-            let _: () = msg_send![layer, setCornerRadius: radius];
+            let flipped: objc2::runtime::Bool = msg_send![layer, isGeometryFlipped];
+            let corners = if flipped.as_bool() {
+                (corners & 0b0011) << 2 | (corners & 0b1100) >> 2
+            } else {
+                corners
+            };
+            let old_corners: usize = msg_send![layer, maskedCorners];
+            if old_corners != corners {
+                let _: () = msg_send![layer, setMaskedCorners: corners];
+            }
+            let old_radius: f64 = msg_send![layer, cornerRadius];
+            if old_radius != radius {
+                let _: () = msg_send![layer, setCornerRadius: radius];
+            }
+            let curve = if continuous {
+                ns_string!("continuous")
+            } else {
+                ns_string!("circular")
+            };
+            let old_curve: *const AnyObject = msg_send![layer, cornerCurve];
+            let same: objc2::runtime::Bool = msg_send![curve, isEqual: old_curve];
+            if !same.as_bool() {
+                let _: () = msg_send![layer, setCornerCurve: curve];
+            }
         }
     }
 }
 
 fn clip_overlay(window: &NSWindow, corners: usize, fullscreen: bool) {
     // Match the frame's continuous outer corners in a normal window.
-    const FRAME_CORNER: f64 = 16.;
     let Some(view) = window.contentView() else {
         return;
     };
@@ -1029,5 +1353,32 @@ impl TabObserver for Frame {
             window: self.window_id,
             tab,
         });
+    }
+
+    fn supports_docked_inspector(&self) -> bool {
+        true
+    }
+
+    fn inspector_created(&self, tab: TabId, content_view: *mut c_void) -> bool {
+        let Some(window) = window_of(content_view) else {
+            tracing::warn!(?tab, "DevTools view has no native window");
+            return false;
+        };
+        window.setExcludedFromWindowsMenu(true);
+        window.setCollectionBehavior(NSWindowCollectionBehavior::FullScreenAuxiliary);
+        window.setStyleMask(NSWindowStyleMask::Borderless);
+        window.setHasShadow(false);
+        share_parent_key_state(&window);
+        self.inspectors.borrow_mut().push((tab, window.clone()));
+        self.layout();
+        self.raise_children();
+        if window.isVisible() {
+            window.makeKeyWindow();
+        }
+        true
+    }
+
+    fn inspector_destroyed(&self, tab: TabId) {
+        self.remove_inspector(tab);
     }
 }

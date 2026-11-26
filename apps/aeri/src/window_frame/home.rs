@@ -70,10 +70,14 @@ impl WindowFrame {
                 .input
                 .update(cx, |field, cx| field.set_text("", cx));
             if tab.is_some() {
-                window.focus(&self.home.root, cx);
+                self.focus_home_search(window, cx);
             }
             cx.notify();
         }
+    }
+
+    pub(crate) fn focus_home_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.home.input.focus_handle(cx), cx);
     }
 
     pub(super) fn home_key_down(

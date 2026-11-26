@@ -220,6 +220,7 @@ impl Shell {
         if !self.profiles.iter().any(|p| p.id == profile) {
             return;
         }
+        let picking = self.close_profile_picker(cx);
         let existing = self
             .windows
             .iter()
@@ -231,7 +232,14 @@ impl Shell {
                 cx.activate(true);
                 self.later(move |_| frame.bring_forward());
             }
-            None => self.open_profile_window(profile, Plan::Restore, cx),
+            None => {
+                let plan = if picking && self.prefs.spaces.start_fresh {
+                    Plan::Fresh
+                } else {
+                    Plan::Restore
+                };
+                self.open_profile_window(profile, plan, cx);
+            }
         }
     }
 
@@ -293,8 +301,54 @@ impl Shell {
     }
 
     pub(super) fn show_profile_manager(&mut self, new: bool, cx: &mut App) {
+        self.show_profiles(new, false, cx);
+    }
+
+    /// Normal launch and Dock reopen ask before starting a browsing session.
+    pub(super) fn show_profile_picker(&mut self, cx: &mut App) {
+        if self.quitting || !self.engine_ready || self.welcome.window.is_some() {
+            return;
+        }
+        if self.windows.is_empty()
+            && self.launch.is_empty()
+            && self.open.values().all(|profile| profile.plans.is_empty())
+        {
+            self.show_profiles(false, true, cx);
+        }
+    }
+
+    /// Returns true only if there was a live launch picker, not the editor.
+    pub(super) fn close_profile_picker(&mut self, cx: &mut App) -> bool {
+        let Some(handle) = self.manager else {
+            return false;
+        };
+        let closed = handle.update(cx, |view, window, _| {
+            if view.choosing() {
+                window.remove_window();
+                true
+            } else {
+                false
+            }
+        });
+        match closed {
+            Ok(false) => false,
+            _ => {
+                self.manager = None;
+                closed.unwrap_or(false)
+            }
+        }
+    }
+
+    fn show_profiles(&mut self, new: bool, choosing: bool, cx: &mut App) {
+        let title = if choosing {
+            "Choose a profile"
+        } else {
+            "Profiles"
+        };
         if let Some(manager) = &self.manager {
             let shown = manager.update(cx, |manager, window, cx| {
+                manager.set_choosing(choosing, window, cx);
+                window.set_window_title(title);
                 if new {
                     manager.focus_new(window, cx);
                 }
@@ -308,15 +362,20 @@ impl Shell {
                 return;
             }
         }
+        let height = if choosing {
+            232. + 128. * self.profiles.len().div_ceil(3).clamp(1, 2) as f32
+        } else {
+            560.
+        };
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some("Profiles".into()),
+                title: Some(title.into()),
                 appears_transparent: true,
                 traffic_light_position: None,
             }),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
-                size(px(600.), px(560.)),
+                size(px(600.), px(height)),
                 cx,
             ))),
             window_min_size: Some(size(px(480.), px(360.))),
@@ -327,7 +386,7 @@ impl Shell {
         let tx = self.tx.clone();
         match cx.open_window(options, |window, cx| {
             cx.new(|cx| {
-                let mut manager = ProfileManager::new(listed, suggested, tx, window, cx);
+                let mut manager = ProfileManager::new(listed, suggested, choosing, tx, window, cx);
                 if new {
                     manager.focus_new(window, cx);
                 }
@@ -386,6 +445,7 @@ impl Shell {
     pub(super) fn create_profile(&mut self, name: &str, accent: u32, cx: &mut App) {
         match self.db.create_profile(name, accent) {
             Ok(profile) => {
+                self.close_profile_picker(cx);
                 tracing::info!(profile = %profile.id, "profile created");
                 self.refresh_profiles(cx);
                 self.open_profile_window(profile.id, Plan::Restore, cx);

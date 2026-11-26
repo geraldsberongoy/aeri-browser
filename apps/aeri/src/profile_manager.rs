@@ -7,8 +7,8 @@ use aeri_core::ids::ProfileId;
 use aeri_core::store::{ACCENTS, Profile};
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    AnyElement, Context, Entity, FocusHandle, Focusable, FontWeight, PromptLevel, SharedString,
-    Stateful, Window, div, prelude::*, px, rgb,
+    AnyElement, Context, Entity, FocusHandle, Focusable, FontWeight, KeyDownEvent, PromptLevel,
+    SharedString, Stateful, Window, div, prelude::*, px, rgb,
 };
 
 use crate::shell::AppMsg;
@@ -37,19 +37,22 @@ pub struct ProfileManager {
     new_name: Entity<TextInput>,
     new_accent: u32,
     avatar_picker: Option<avatars::AvatarPicker>,
+    choosing: bool,
 }
 
 impl ProfileManager {
     pub fn new(
         profiles: Vec<Listed>,
         suggested_accent: u32,
+        choosing: bool,
         tx: UnboundedSender<AppMsg>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let closed = tx.clone();
+        let id = window.window_handle().window_id();
         window.on_window_should_close(cx, move |_, _| {
-            let _ = closed.unbounded_send(AppMsg::ProfileManagerClosed);
+            let _ = closed.unbounded_send(AppMsg::ProfileManagerClosed(id));
             true
         });
         let new_name = cx.new(|cx| TextInput::new("Name", cx));
@@ -68,8 +71,10 @@ impl ProfileManager {
             new_name,
             new_accent: suggested_accent,
             avatar_picker: None,
+            choosing: false,
         };
         this.set_profiles(profiles, suggested_accent, window, cx);
+        this.set_choosing(choosing, window, cx);
         this
     }
 
@@ -110,6 +115,22 @@ impl ProfileManager {
             self.avatar_picker = None;
         }
         self.new_accent = suggested_accent;
+        cx.notify();
+    }
+
+    pub fn choosing(&self) -> bool {
+        self.choosing
+    }
+
+    pub fn set_choosing(&mut self, choosing: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.choosing == choosing {
+            return;
+        }
+        self.choosing = choosing;
+        self.avatar_picker = None;
+        if choosing && let Some(row) = self.rows.first() {
+            window.focus(&row.avatar, cx);
+        }
         cx.notify();
     }
 
@@ -214,6 +235,49 @@ impl ProfileManager {
                     .on_click(cx.listener(move |this, _, _, cx| on_pick(this, accent, cx)))
                     .child(div().size_full().rounded_full().bg(rgb(accent)))
             }))
+    }
+
+    fn pick_card(&self, ix: usize, row: &Row, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme::tokens(cx);
+        let profile = &row.listed.profile;
+        let id = profile.id;
+        div()
+            .id(("pick-profile", ix))
+            .role(gpui::Role::Button)
+            .aria_label(SharedString::from(format!("Open {}", profile.name)))
+            .track_focus(&row.avatar)
+            .cursor_pointer()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .w(px(172.))
+            .h(px(116.))
+            .items_center()
+            .justify_center()
+            .gap(px(8.))
+            .p(px(12.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(theme::c(t.separator))
+            .bg(theme::c(t.inset))
+            .hover(move |style| style.bg(theme::c(t.hover)))
+            .focus_visible(move |style| style.border_color(theme::c(t.accent)))
+            .on_click(cx.listener(move |this, _, window, _| {
+                let _ = this.tx.unbounded_send(AppMsg::PickLaunchProfile {
+                    profile: id,
+                    picker: window.window_handle().window_id(),
+                });
+            }))
+            .child(avatar(profile, 48.))
+            .child(
+                div()
+                    .max_w_full()
+                    .truncate()
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(profile.name.clone()),
+            )
+            .into_any_element()
     }
 
     fn profile_row(&self, ix: usize, row: &Row, cx: &mut Context<Self>) -> AnyElement {
@@ -350,7 +414,13 @@ impl Render for ProfileManager {
             .rows
             .iter()
             .enumerate()
-            .map(|(ix, row)| self.profile_row(ix, row, cx))
+            .map(|(ix, row)| {
+                if self.choosing {
+                    self.pick_card(ix, row, cx)
+                } else {
+                    self.profile_row(ix, row, cx)
+                }
+            })
             .collect();
         let new_profile = div()
             .flex()
@@ -400,6 +470,18 @@ impl Render for ProfileManager {
             .bg(theme::c(t.panel))
             .text_color(theme::c(t.text))
             .line_height(gpui::relative(theme::LINE_HEIGHT))
+            .when(self.choosing, |view| {
+                view.on_key_down(|event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "tab" {
+                        if event.keystroke.modifiers.shift {
+                            window.focus_prev(cx);
+                        } else {
+                            window.focus_next(cx);
+                        }
+                        cx.stop_propagation();
+                    }
+                })
+            })
             .child(
                 div()
                     .flex()
@@ -409,7 +491,11 @@ impl Render for ProfileManager {
                         div()
                             .text_size(px(20.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Profiles"),
+                            .child(if self.choosing {
+                                "Choose a profile"
+                            } else {
+                                "Profiles"
+                            }),
                     )
                     .child(div().text_size(px(13.)).text_color(theme::c(t.text_tertiary)).child(
                         "Each profile keeps its own sign-ins, cookies, history and extensions.",
@@ -422,8 +508,10 @@ impl Render for ProfileManager {
                     .min_h_0()
                     .overflow_y_scroll()
                     .flex()
-                    .flex_col()
-                    .gap(px(8.))
+                    .when(self.choosing, |grid| {
+                        grid.flex_row().flex_wrap().content_start().gap(px(12.))
+                    })
+                    .when(!self.choosing, |list| list.flex_col().gap(px(8.)))
                     .children(rows),
             )
             .child(new_profile)

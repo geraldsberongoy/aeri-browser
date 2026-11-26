@@ -18,6 +18,8 @@ use super::{SidebarTab, WindowFrame};
 use crate::shell::{AppMsg, TabCommand};
 use crate::theme;
 
+pub(super) const PILL_RADIUS: f32 = 9.;
+
 /// A tab being dragged to a new place; also its drag preview.
 #[derive(Clone)]
 pub(super) struct DraggedTab {
@@ -227,25 +229,19 @@ impl WindowFrame {
     ) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
         let kept = tab.pinned || tab.favourite;
-        let (base, hover) = self.tab_hover(
-            self.tab_base("pill", index, tab, dy, cx),
-            ("pill", tab.id.0),
-            crate::motion::still(self.window_id, cx),
-            cx,
-        );
+        let still = crate::motion::still(self.window_id, cx);
+        let (base, hover) =
+            self.tab_hover(self.tab_base("pill", index, tab, dy, cx), ("pill", tab.id.0), still, cx);
         let base = self
             .select_on_click(base, tab, cx)
             .relative()
             .flex()
             .items_center()
             .h(px(28.))
-            .rounded(px(9.))
+            .rounded(px(PILL_RADIUS))
             .overflow_hidden()
             .text_size(px(12.5))
-            .when(tab.active, |pill| {
-                pill.bg(theme::c(if kept { t.pin_live } else { t.live }))
-                    .text_color(theme::c(t.text))
-            })
+            .when(tab.active, |pill| pill.text_color(theme::c(t.text)))
             .when(!tab.active, |pill| {
                 let idle = if kept { t.tile } else { t.hover.with_alpha(0.) };
                 pill.bg(theme::c(blend(idle, t.hover, hover)))
@@ -269,7 +265,7 @@ impl WindowFrame {
                 .gap(px(6.))
                 .children(self.pill_reading(tab, &t, cx))
                 .child(self.dimmed(mark(tab, 15., &t, &self.layout).flex_none(), tab, hover))
-                .child(self.dimmed(self.pill_title(tab, &t, hover), tab, hover))
+                .child(self.dimmed(self.pill_title(tab, &t, hover, still), tab, hover))
         }
     }
 
@@ -309,7 +305,7 @@ impl WindowFrame {
     /// The pill's title, or on the shown tab with "Show the address on the
     /// tab you're on" its site in the same place; the title returns under
     /// the pointer (Search `TitleAtRest`, `TabPill.titled`).
-    fn pill_title(&self, tab: &SidebarTab, t: &Tokens, hover: f32) -> gpui::Div {
+    fn pill_title(&self, tab: &SidebarTab, t: &Tokens, hover: f32, still: bool) -> gpui::Div {
         let label = div()
             .w_full()
             .overflow_hidden()
@@ -321,9 +317,22 @@ impl WindowFrame {
             .then(|| site_line(&tab.url, t))
             .flatten();
         match site {
-            Some(site) => slot
-                .child(label.opacity(hover))
-                .child(site.absolute().top_0().left_0().opacity(1. - hover)),
+            Some(site) => {
+                let site = site.absolute().top_0().left_0();
+                if still {
+                    return slot.child(label.opacity(hover)).child(site.opacity(1. - hover));
+                }
+                slot.child(label.with_animation(
+                    ("pill-rest-title", tab.id.0),
+                    crate::motion::swap(),
+                    move |d, v| d.opacity(1. - v * (1. - hover)),
+                ))
+                .child(site.with_animation(
+                    ("pill-rest-site", tab.id.0),
+                    crate::motion::swap(),
+                    move |d, v| d.opacity(v * (1. - hover)),
+                ))
+            }
             None => slot.child(label),
         }
     }

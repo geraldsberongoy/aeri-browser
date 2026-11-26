@@ -11,6 +11,7 @@ use futures::channel::mpsc::UnboundedSender;
 use gpui::{App, Menu, MenuItem, OsAction};
 
 use super::{AppMsg, NEW_TAB_URL, Nav, Plan, Shell};
+use crate::mac::InspectorPlacement;
 use crate::{address_bar as browser, text_input as edit};
 
 mod menu_action {
@@ -25,6 +26,11 @@ mod menu_action {
             CloseWindow,
             Minimize,
             Zoom,
+            DeveloperTools,
+            CloseDeveloperTools,
+            DeveloperToolsRight,
+            DeveloperToolsBottom,
+            DeveloperToolsWindow,
             WhatsNew,
             ShowWelcome
         ]
@@ -43,6 +49,9 @@ pub enum MenuCommand {
     CloseWindow,
     Minimize,
     Zoom,
+    DeveloperTools,
+    CloseDeveloperTools,
+    Inspector(InspectorPlacement),
     WhatsNew,
 }
 
@@ -104,6 +113,23 @@ pub(super) fn install_actions(tx: &UnboundedSender<AppMsg>, cx: &mut App) {
     on!(menu_action::CloseWindow, AppMsg::Menu(CloseWindow));
     on!(menu_action::Minimize, AppMsg::Menu(Minimize));
     on!(menu_action::Zoom, AppMsg::Menu(Zoom));
+    on!(menu_action::DeveloperTools, AppMsg::Menu(DeveloperTools));
+    on!(
+        menu_action::CloseDeveloperTools,
+        AppMsg::Menu(CloseDeveloperTools)
+    );
+    on!(
+        DeveloperToolsRight,
+        AppMsg::Menu(Inspector(InspectorPlacement::Right))
+    );
+    on!(
+        DeveloperToolsBottom,
+        AppMsg::Menu(Inspector(InspectorPlacement::Bottom))
+    );
+    on!(
+        DeveloperToolsWindow,
+        AppMsg::Menu(Inspector(InspectorPlacement::Window))
+    );
     on!(menu_action::WhatsNew, AppMsg::Menu(WhatsNew));
 }
 
@@ -155,6 +181,14 @@ pub(super) fn menus(profiles: &[Profile]) -> Vec<Menu> {
             item!("Zoom Out", browser::ZoomOut),
             separator(),
             item!("Toggle Full Screen", browser::ToggleFullScreen),
+            MenuItem::submenu(Menu::new("Developer Tools").items([
+                item!("Toggle Developer Tools", menu_action::DeveloperTools),
+                item!("Close Developer Tools", menu_action::CloseDeveloperTools),
+                separator(),
+                item!("Dock Right", DeveloperToolsRight),
+                item!("Dock Bottom", DeveloperToolsBottom),
+                item!("Separate Window", DeveloperToolsWindow),
+            ])),
         ]),
         Menu::new("Tabs").items([
             item!("Previous Tab", browser::PreviousTab),
@@ -208,10 +242,16 @@ impl Shell {
                         .url()
                 }
                 MenuCommand::WhatsNew => InternalPage::new(Kind::ReleaseNotes, None).url(),
+                MenuCommand::Shortcut(Shortcut::NewWindow | Shortcut::NewTab)
+                    if self.windows.is_empty() =>
+                {
+                    return self.show_profile_picker(cx);
+                }
                 MenuCommand::Shortcut(Shortcut::NewWindow | Shortcut::NewTab) => NEW_TAB_URL.into(),
                 MenuCommand::Edit(edit) => return edit_chrome(edit, cx),
                 _ => return,
             };
+            self.close_profile_picker(cx);
             match self.db.launch_profile() {
                 Ok(profile) => self.open_profile_window(profile.id, Plan::Url(url), cx),
                 Err(err) => tracing::error!(%err, "no profile to open from menu bar"),
@@ -219,6 +259,17 @@ impl Shell {
             return;
         };
         let id = window.id;
+        if matches!(
+            command,
+            MenuCommand::CloseWindow | MenuCommand::Shortcut(Shortcut::CloseTab)
+        )
+            && window.frame.separate_inspector_has_key()
+        {
+            if let Some(page) = self.shown_cef(id) {
+                self.later(move |_| page.close_inspector());
+            }
+            return;
+        }
         match command {
             MenuCommand::Shortcut(shortcut) => self.shortcut(id, shortcut, cx),
             MenuCommand::Navigate(nav) => self.nav(id, nav),
@@ -235,6 +286,22 @@ impl Shell {
             MenuCommand::Minimize | MenuCommand::Zoom => {
                 let frame = window.frame.clone();
                 self.later(move |_| frame.window_menu(matches!(command, MenuCommand::Minimize)));
+            }
+            MenuCommand::DeveloperTools
+            | MenuCommand::CloseDeveloperTools
+            | MenuCommand::Inspector(_) => {
+                if let Some(page) = self.shown_cef(id) {
+                    let frame = window.frame.clone();
+                    self.later(move |_| match command {
+                        MenuCommand::DeveloperTools => page.toggle_inspector(),
+                        MenuCommand::CloseDeveloperTools => page.close_inspector(),
+                        MenuCommand::Inspector(placement) => {
+                            frame.place_inspector(placement);
+                            page.show_inspector();
+                        }
+                        _ => unreachable!(),
+                    });
+                }
             }
             MenuCommand::WhatsNew => self.show_release_notes(id, cx),
         }

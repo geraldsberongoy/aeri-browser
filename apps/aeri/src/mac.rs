@@ -1,5 +1,5 @@
 //! App-level AppKit helpers: the window of a GPUI view, native menus,
-//! quit interception, overlay scrollers, Finder and the system browser.
+//! quit interception, Finder and the system browser.
 //! The per-window layering lives in [`frame`].
 //!
 //! Everything here runs on the main thread and touches only AppKit, so it is
@@ -37,10 +37,10 @@ use std::ffi::c_void;
 use std::path::Path;
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObjectProtocol};
+use objc2::runtime::AnyObject;
 use objc2::sel;
 use objc2_app_kit::{NSView, NSWindow, NSWorkspace, NSWorkspaceOpenConfiguration};
-use objc2_foundation::{NSArray, NSBundle, NSString, NSURL};
+use objc2_foundation::{NSArray, NSBundle, NSObjectProtocol, NSString, NSURL};
 
 use crate::native_menu;
 
@@ -51,7 +51,7 @@ pub use self::blur::{Blur, CardRect};
 pub use self::find::{FIND_HEIGHT, FIND_WIDTH};
 pub use self::float::LiftOpts;
 pub use self::fold::glide_column;
-pub use self::frame::{BAR_HEIGHT, Frame, SIDE_OVERLAY_EXTRA};
+pub use self::frame::{BAR_HEIGHT, Frame, InspectorPlacement, SIDE_OVERLAY_EXTRA};
 pub use self::little::{LittleFrame, Opener, Place};
 pub use self::modifiers::watch_command;
 pub use self::panels::{choose_folder, confirm_quit};
@@ -232,40 +232,3 @@ pub fn allow_termination() {
     TERMINATION_ALLOWED.with(|allowed| allowed.set(true));
 }
 
-/// `NSScrollerStyleOverlay`.
-const SCROLLER_STYLE_OVERLAY: isize = 1;
-
-extern "C-unwind" fn overlay_scroller_style(
-    _class: *mut AnyObject,
-    _sel: objc2::runtime::Sel,
-) -> isize {
-    SCROLLER_STYLE_OVERLAY
-}
-
-/// Pages draw thin overlay scrollbars that fade when idle, whatever pointing
-/// device is attached. Chromium asks `+[NSScroller preferredScrollerStyle]`
-/// in this (the browser) process and sends the answer to every renderer, so
-/// answering "overlay" here covers every page. A connected mouse otherwise
-/// gives pages a wide, always-on track along the card's edge. Call before
-/// CEF initializes.
-pub fn prefer_overlay_scrollers() {
-    // SAFETY: objc runtime calls on the main thread before any window
-    // exists; the IMP matches the `q@:` encoding (NSInteger return, Class
-    // self, SEL).
-    unsafe {
-        let class = objc2::ffi::objc_getClass(c"NSScroller".as_ptr());
-        let meta = objc2::ffi::object_getClass(class.cast());
-        if meta.is_null() {
-            tracing::warn!("no NSScroller; pages keep the system scrollbar style");
-            return;
-        }
-        objc2::ffi::class_replaceMethod(
-            meta as *mut objc2::runtime::AnyClass,
-            sel!(preferredScrollerStyle),
-            std::mem::transmute::<*const c_void, unsafe extern "C-unwind" fn()>(
-                overlay_scroller_style as *const c_void,
-            ),
-            c"q@:".as_ptr(),
-        );
-    }
-}

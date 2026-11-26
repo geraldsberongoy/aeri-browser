@@ -1,20 +1,22 @@
 //! The floating address bar, after Zen's floating URL bar: a GPUI view in a
 //! transparent child window over the page (ADR 0002), painting one frosted
 //! card (see [`card`]) over the unchanged page. ⌘L shows the shown address
-//! to edit for this tab, ⌘T the last text typed for a new tab, ⌥⌘P the
+//! to edit for this tab, and ⌥⌘P opens the
 //! command palette. It goes away after Return, Escape, a click outside or
 //! losing the keyboard; while the Person types it lists suggestions in the
 //! same card.
 
 mod card;
 
+use std::sync::Arc;
+
 use aeri_core::keymap::{Keymap, Shortcut};
 use aeri_core::layout::BarPlace;
 use aeri_core::tab::Tab;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    Action, App, Context, Entity, FocusHandle, Focusable, KeyBinding, ScrollHandle, Window,
-    actions, div, prelude::*,
+    Action, App, Context, Entity, FocusHandle, Focusable, KeyBinding, RenderImage, ScrollHandle,
+    Window, actions, div, prelude::*,
 };
 
 use crate::mac::{Blur, CardRect};
@@ -162,6 +164,7 @@ pub struct AddressBar {
     /// The current reveal ended in a pick.
     picked: bool,
     rows: Vec<BarRow>,
+    row_icons: Vec<Option<Arc<RenderImage>>>,
     selected: usize,
     /// A row is chosen: false while Recent places stand under an empty
     /// field until an arrow key chooses one, so Return opens nothing.
@@ -234,6 +237,7 @@ impl AddressBar {
             last_search: String::new(),
             picked: false,
             rows: Vec::new(),
+            row_icons: Vec::new(),
             selected: 0,
             chosen: true,
             list: ScrollHandle::new(),
@@ -320,6 +324,7 @@ impl AddressBar {
         self.editing = true;
         self.picked = false;
         self.rows.clear();
+        self.row_icons.clear();
         self.selected = 0;
         self.chosen = true;
         // A blank tab asks for an address; over a page, the field says it
@@ -348,6 +353,7 @@ impl AddressBar {
         self.mode = BarMode::Address;
         self.editing = false;
         self.rows.clear();
+        self.row_icons.clear();
         self.selected = 0;
         self.chosen = true;
         let text = self.shown_text();
@@ -373,6 +379,7 @@ impl AddressBar {
         query: &str,
         rows: Vec<BarRow>,
         selected: usize,
+        icon: impl FnMut(&BarRow) -> Option<Arc<RenderImage>>,
         cx: &mut Context<Self>,
     ) {
         if self.input.read(cx).text() != query {
@@ -380,18 +387,27 @@ impl AddressBar {
         }
         self.chosen = true;
         self.selected = selected.min(rows.len().saturating_sub(1));
+        self.row_icons.clear();
+        self.row_icons.extend(rows.iter().map(icon));
         self.rows = rows;
         self.list.scroll_to_item(self.selected);
         cx.notify();
     }
 
     /// Recent places under an empty field: listed, none chosen yet.
-    pub fn set_recent(&mut self, rows: Vec<BarRow>, cx: &mut Context<Self>) {
+    pub fn set_recent(
+        &mut self,
+        rows: Vec<BarRow>,
+        icon: impl FnMut(&BarRow) -> Option<Arc<RenderImage>>,
+        cx: &mut Context<Self>,
+    ) {
         if !self.input.read(cx).text().is_empty() {
             return;
         }
         self.selected = 0;
         self.chosen = rows.is_empty();
+        self.row_icons.clear();
+        self.row_icons.extend(rows.iter().map(icon));
         self.rows = rows;
         self.list.scroll_to_item(0);
         cx.notify();

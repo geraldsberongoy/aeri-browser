@@ -41,6 +41,16 @@ pub trait TabObserver {
     fn created(&self, tab: TabId, content_view: *mut c_void);
     /// The tab's window is gone; its browser has closed.
     fn destroyed(&self, tab: TabId);
+    fn supports_docked_inspector(&self) -> bool {
+        false
+    }
+
+    /// Returns true if this host will manage the inspector's native window.
+    fn inspector_created(&self, _tab: TabId, _content_view: *mut c_void) -> bool {
+        false
+    }
+
+    fn inspector_destroyed(&self, _tab: TabId) {}
 }
 
 /// An Edit menu command for Chromium's currently focused document or field.
@@ -193,6 +203,7 @@ impl TabWindow {
     /// windows). If the window exists, the new observer gets
     /// [`TabObserver::created`] for it at once; the old one is not told.
     pub fn move_to(&self, observer: Rc<dyn TabObserver>) {
+        self.close_inspector();
         *self.state.observer.borrow_mut() = observer.clone();
         let window = self.state.window.borrow().clone();
         if let Some(window) = window {
@@ -433,9 +444,38 @@ impl TabWindow {
         request_window_id(&self.state, vec![waiting]);
     }
 
+    pub fn toggle_inspector(&self) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            if host.has_dev_tools() != 0 {
+                host.close_dev_tools();
+            } else {
+                tracing::debug!(tab = ?self.state.tab, "opening native DevTools");
+                host.show_dev_tools(None, None, None, None);
+            }
+        }
+    }
+
+    /// Opens DevTools without toggling it closed if it is already open.
+    pub fn show_inspector(&self) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host())
+            && host.has_dev_tools() == 0
+        {
+            host.show_dev_tools(None, None, None, None);
+        }
+    }
+
+    pub fn close_inspector(&self) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host())
+            && host.has_dev_tools() != 0
+        {
+            host.close_dev_tools();
+        }
+    }
+
     /// Starts an orderly close: the browser closes first, then the window,
     /// then [`TabObserver::destroyed`] fires.
     pub fn close(&self) {
+        self.close_inspector();
         if let Some(window) = self.state.window.borrow().clone() {
             window.close();
         }
@@ -650,6 +690,50 @@ wrap_window_delegate! {
     }
 }
 
+wrap_window_delegate! {
+    struct InspectorWindowDelegate {
+        view: BrowserView,
+        tab: TabId,
+        observer: Rc<dyn TabObserver>,
+        docked: Cell<bool>,
+    }
+
+    impl ViewDelegate {}
+    impl PanelDelegate {}
+
+    impl WindowDelegate {
+        fn on_window_created(&self, window: Option<&mut Window>) {
+            let Some(window) = window else { return };
+            let mut view = View::from(&self.view);
+            window.add_child_view(Some(&mut view));
+            let docked = self.observer.inspector_created(self.tab, window.window_handle());
+            self.docked.set(docked);
+            if !docked {
+                window.show();
+            }
+        }
+
+        fn on_window_destroyed(&self, _window: Option<&mut Window>) {
+            if self.docked.get() {
+                self.observer.inspector_destroyed(self.tab);
+            }
+        }
+
+        fn can_close(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int {
+            i32::from(self.view.browser().and_then(|browser| browser.host())
+                .is_none_or(|host| host.try_close_browser() != 0))
+        }
+
+        fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> ::std::os::raw::c_int {
+            1
+        }
+
+        fn window_runtime_style(&self) -> RuntimeStyle {
+            RuntimeStyle::CHROME
+        }
+    }
+}
+
 wrap_browser_view_delegate! {
     struct AeriBrowserViewDelegate {}
 
@@ -686,11 +770,23 @@ wrap_browser_view_delegate! {
             popup_browser_view: Option<&mut BrowserView>,
             is_devtools: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
-            let (Some(view), 0) = (popup_browser_view, is_devtools) else { return 0 };
+            let Some(view) = popup_browser_view else { return 0 };
             let opener = browser_view
                 .and_then(|opener| opener.browser())
                 .and_then(|browser| BY_BROWSER.with_borrow(|tabs| tabs.get(&browser.identifier()).cloned()))
                 .and_then(|state| state.upgrade());
+            if is_devtools != 0 {
+                tracing::debug!(known_opener = opener.is_some(), "mounting DevTools browser view");
+                let Some(opener) = opener else { return 0 };
+                let observer = opener.observer.borrow().clone();
+                if !observer.supports_docked_inspector() {
+                    return 0;
+                }
+                let mut delegate = InspectorWindowDelegate::new(
+                    view.clone(), opener.tab, observer, Cell::new(false),
+                );
+                return i32::from(window_create_top_level(Some(&mut delegate)).is_some());
+            }
             let popup = POPUPS.with_borrow_mut(|popups| popups.pending.pop_front());
             let (Some(opener), Some(popup)) = (opener, popup) else {
                 tracing::warn!("popup without a known opener; CEF opens it");

@@ -99,6 +99,12 @@ wrap_client! {
     }
 }
 
+wrap_client! {
+    struct InspectorClient {}
+
+    impl Client {}
+}
+
 wrap_load_handler! {
     struct TabLoadHandler {
         tab: TabId,
@@ -364,6 +370,26 @@ wrap_life_span_handler! {
 
         fn on_before_popup_aborted(&self, _browser: Option<&mut Browser>, popup_id: ::std::os::raw::c_int) {
             crate::window::popup_aborted(self.tab, popup_id);
+        }
+
+        fn on_before_dev_tools_popup(
+            &self,
+            _browser: Option<&mut Browser>,
+            _window_info: Option<&mut cef::WindowInfo>,
+            client: Option<&mut Option<Client>>,
+            _settings: Option<&mut cef::BrowserSettings>,
+            _extra_info: Option<&mut Option<cef::DictionaryValue>>,
+            use_default_window: Option<&mut ::std::os::raw::c_int>,
+        ) {
+            tracing::debug!(tab = ?self.tab, "creating DevTools frontend");
+            // The frontend is not an Aeri tab and must not publish the
+            // inspected tab's navigation, focus or close signals.
+            if let Some(client) = client {
+                *client = Some(InspectorClient::new());
+            }
+            if let Some(use_default_window) = use_default_window {
+                *use_default_window = 0;
+            }
         }
     }
 }

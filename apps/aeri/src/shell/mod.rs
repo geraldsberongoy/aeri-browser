@@ -247,7 +247,7 @@ thread_local! {
     static SHELL_TX: RefCell<Option<UnboundedSender<AppMsg>>> = RefCell::default();
 }
 
-/// The Dock icon was clicked: with no window open, open one.
+/// The Dock icon was clicked: with no window open, offer the profiles.
 pub fn reopen() {
     SHELL_TX.with_borrow(|tx| {
         if let Some(tx) = tx {
@@ -270,8 +270,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     );
     // Chromium is not running yet, so deleted profiles can go now.
     remove_deleted_profiles(&db, &config.data_dir);
-    // An explicit start address opens one window on it; otherwise each
-    // profile restores its session.
+    // Only an explicit development profile or start address skips the picker.
     let fresh = prefs.spaces.start_fresh;
     let plan = || match &config.start_url {
         Some(url) => Plan::Url(url.clone()),
@@ -287,8 +286,12 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
         };
         launch.push((profile.id, plan()));
     }
-    if launch.is_empty() {
+    if launch.is_empty() && config.start_url.is_some() {
         launch.push((db.launch_profile()?.id, plan()));
+    }
+    let mut profiles = db.profiles()?;
+    if profiles.is_empty() {
+        profiles.push(db.launch_profile()?);
     }
     let root_cache_path = config.data_dir.join("Chromium");
 
@@ -338,7 +341,7 @@ pub fn start(runtime: Rc<Runtime>, config: Config, cx: &mut App) -> Result<()> {
     let chrome = chrome::Chrome::load(&db);
 
     let mut shell = Shell {
-        profiles: db.profiles()?,
+        profiles,
         db,
         data_dir: config.data_dir,
         root_cache_path,
@@ -485,7 +488,7 @@ impl Shell {
             AppMsg::Library(msg) => self.library_msg(msg, cx),
             AppMsg::AddressDismissed { window, session } => self.dismiss_bar(window, session, cx),
             AppMsg::Shortcut { window, shortcut } => self.shortcut(window, shortcut, cx),
-            AppMsg::NewHome { window } => self.add_new_tab(window, true, cx),
+            AppMsg::NewHome { window } => self.open_new_tab(window, cx),
             AppMsg::HomeSubmit { window, tab, text } => {
                 if self
                     .window(window)
@@ -539,6 +542,14 @@ impl Shell {
             } => self.extensions_menu(window, x, y, align),
             AppMsg::DownloadPick { window, pick } => self.download_pick(window, pick, cx),
             AppMsg::OpenProfile { profile } => self.show_profile(profile, cx),
+            AppMsg::PickLaunchProfile { profile, picker } => {
+                if self
+                    .manager
+                    .is_some_and(|manager| manager.window_id() == picker)
+                {
+                    self.show_profile(profile, cx);
+                }
+            }
             AppMsg::CreateProfile { name, accent } => self.create_profile(&name, accent, cx),
             AppMsg::RenameProfile { profile, name } => {
                 if let Err(err) = self.db.rename_profile(profile, &name) {
@@ -575,7 +586,14 @@ impl Shell {
             },
             AppMsg::DeleteProfile { profile } => self.delete_profile(profile, cx),
             AppMsg::ShowProfiles { new } => self.show_profile_manager(new, cx),
-            AppMsg::ProfileManagerClosed => self.manager = None,
+            AppMsg::ProfileManagerClosed(id) => {
+                if self
+                    .manager
+                    .is_some_and(|manager| manager.window_id() == id)
+                {
+                    self.manager = None;
+                }
+            }
             AppMsg::SpaceMenu {
                 window,
                 x,
@@ -623,11 +641,8 @@ impl Shell {
             AppMsg::Reopen => {
                 if self.welcome.window.is_some() {
                     self.show_welcome(cx);
-                } else if self.windows.is_empty() && self.launch.is_empty() && !self.quitting {
-                    match self.db.launch_profile() {
-                        Ok(profile) => self.open_profile_window(profile.id, Plan::Restore, cx),
-                        Err(err) => tracing::error!(%err, "no profile to open"),
-                    }
+                } else {
+                    self.show_profile_picker(cx);
                 }
             }
             AppMsg::RestCheck => self.rest_check(cx),
@@ -685,6 +700,10 @@ impl Shell {
     }
 
     fn open_launch_windows(&mut self, cx: &mut App) {
+        if self.launch.is_empty() {
+            self.show_profile_picker(cx);
+            return;
+        }
         for (profile, plan) in std::mem::take(&mut self.launch) {
             self.open_profile_window(profile, plan, cx);
         }

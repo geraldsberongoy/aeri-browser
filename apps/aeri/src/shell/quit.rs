@@ -78,6 +78,7 @@ impl Shell {
         }
         self.quitting = true;
         self.close_welcome(cx);
+        self.close_profile_picker(cx);
         tracing::info!(windows = self.windows.len(), "quitting");
         // The profile in front opens at the next launch.
         if let Some(front) = self.windows.iter().find(|w| w.frame.is_key()) {

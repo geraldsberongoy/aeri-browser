@@ -2,6 +2,8 @@
 //! and what a pick does. Suggestions come only from the window's profile;
 //! nothing typed leaves the machine before a pick.
 
+use std::sync::Arc;
+
 use aeri_core::appearance::AppAppearance;
 use aeri_core::engine::Command;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
@@ -9,13 +11,13 @@ use aeri_core::internal::InternalPage;
 use aeri_core::omnibox::{self, AddressCommand, Destination};
 use aeri_core::prefs::Browsing;
 use aeri_core::suggest::{self, Candidate, Source};
-use gpui::App;
+use gpui::{App, RenderImage};
 
 use super::palette::{PaletteCommand, shortcut_of};
 use super::session::now;
 use super::suggest::{engine_rows, stop as stop_asking_engine};
 use super::tabs::{Place, TabEntry, TabStart};
-use super::windows::Spot;
+use super::windows::{Spot, host_of};
 use super::{NEW_TAB_URL, Shell};
 use crate::address_bar::{AddressBar, BarMode};
 
@@ -143,8 +145,26 @@ impl Shell {
         self.reveal_bar(window_id, BarMode::Address, cx);
     }
 
-    /// ⌘T: the bar for a new tab, with the last text typed into it. Pressed
-    /// again while it is open, it closes.
+    /// The New Tab button and ⌘T reuse a Home page already on screen.
+    pub(super) fn open_new_tab(&mut self, window_id: u64, cx: &mut App) {
+        self.hide_bar(window_id, cx);
+        let Some(w) = self.window(window_id) else {
+            return;
+        };
+        if w.active_split().is_none()
+            && self
+                .shown_model(w)
+                .is_some_and(|tab| tab.url == NEW_TAB_URL)
+        {
+            let _ = w.frame_window.update(cx, |view, window, cx| {
+                view.focus_home_search(window, cx);
+            });
+        } else {
+            self.add_new_tab(window_id, true, cx);
+        }
+    }
+
+    /// The global launcher still opens a floating composer over the page.
     pub(super) fn toggle_new_tab_bar(&mut self, window_id: u64, cx: &mut App) {
         let open = self.window(window_id).is_some_and(|w| {
             w.bar_shown
@@ -284,29 +304,61 @@ impl Shell {
         if palette {
             stop_asking_engine();
             let rows = self.palette_rows(window_id, &text, cx);
-            self.show_rows(window_id, &text, rows, cx);
+            self.show_rows(window_id, &text, rows, 0, cx);
             return;
         }
         if text.is_empty() && new_tab && self.prefs().spaces.newtab_recent {
             stop_asking_engine();
             let rows = self.recent_rows(window_id);
             if let Some(w) = self.window(window_id) {
-                let _ = w.bar.update(cx, |bar, _, cx| bar.set_recent(rows, cx));
+                let _ = w.bar.update(cx, |bar, _, cx| {
+                    bar.set_recent(rows, |row| self.suggestion_icon(w.profile, row), cx);
+                });
             }
             return;
         }
         let words = self.ask_engine(window_id, &text);
         let rows = self.address_rows(window_id, &text, &words);
-        self.show_rows(window_id, &text, rows, cx);
+        self.show_rows(window_id, &text, rows, 0, cx);
     }
 
-    fn show_rows(&self, window_id: u64, text: &str, rows: Vec<BarRow>, cx: &mut App) {
+    pub(super) fn show_rows(
+        &self,
+        window_id: u64,
+        text: &str,
+        rows: Vec<BarRow>,
+        selected: usize,
+        cx: &mut App,
+    ) {
         let Some(w) = self.window(window_id) else {
             return;
         };
-        let _ = w
-            .bar
-            .update(cx, |bar, _, cx| bar.set_rows(text, rows, 0, cx));
+        let _ = w.bar.update(cx, |bar, _, cx| {
+            bar.set_rows(
+                text,
+                rows,
+                selected,
+                |row| self.suggestion_icon(w.profile, row),
+                cx,
+            );
+        });
+    }
+
+    fn suggestion_icon(&self, profile: ProfileId, row: &BarRow) -> Option<Arc<RenderImage>> {
+        let open = self.open.get(&profile)?;
+        let url = match &row.pick {
+            Pick::Open(url) => url.as_str(),
+            Pick::Tab(tab) => {
+                let entry = match self.spot(*tab)? {
+                    Spot::Window(id) => self.window(id)?.tabs.get(*tab)?,
+                    Spot::Favourite(_) => open.favourites.get(*tab)?,
+                    Spot::Parked(_, space) => open.parked.get(&space)?.tabs.get(*tab)?,
+                };
+                entry.value.url()
+            }
+            _ => return None,
+        };
+        open.icons.get(&host_of(url))
     }
 
     /// Recent places in the new tab: before anything is typed, the last

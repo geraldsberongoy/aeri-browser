@@ -151,11 +151,6 @@ impl Shell {
         }
         SUGGESTER.with_borrow_mut(|s| s.last = (text.clone(), words.clone()));
         let rows = self.address_rows(window_id, &text, &words);
-        let Some(w) = self.window(window_id) else {
-            return;
-        };
-        let _ = w.bar.update(cx, |bar, _, cx| {
-            bar.set_rows(&text, rows, chosen.unwrap_or(0), cx)
-        });
+        self.show_rows(window_id, &text, rows, chosen.unwrap_or(0), cx);
     }
 }

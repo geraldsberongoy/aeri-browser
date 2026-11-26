@@ -6,7 +6,7 @@
 use aeri_core::appearance::{Mode, Rgba};
 use aeri_core::layout::BarPlace;
 use gpui::{
-    AnimationExt, AnyElement, BoxShadow, Div, MouseButton, SharedString, Window, div, point,
+    AnimationExt, AnyElement, BoxShadow, Div, MouseButton, SharedString, Window, div, img, point,
     prelude::*, px, rgba,
 };
 
@@ -385,7 +385,10 @@ impl AddressBar {
                     .items_center()
                     .justify_center()
                     .size(px(24.))
-                    .child(symbol(name, 13., Weight::Medium, icon)),
+                    .child(match &self.row_icons[ix] {
+                        Some(image) => img(image.clone()).size(px(16.)).into_any_element(),
+                        None => symbol(name, 13., Weight::Medium, icon).into_any_element(),
+                    }),
             )
             .child(
                 div()

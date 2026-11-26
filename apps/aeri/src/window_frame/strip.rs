@@ -1,10 +1,20 @@
 //! The horizontal tab strip and the room shared with the sidebar's traffic lights.
 
-use gpui::{ClickEvent, Context, div, prelude::*, px};
+use std::cell::Cell;
+use std::rc::Rc;
+use std::time::Instant;
+
+use aeri_core::ids::TabId;
+use gpui::{
+    ClickEvent, ContentMask, Context, ScrollHandle, SpringState, Window, canvas, div, fill,
+    prelude::*, px,
+};
 
 use super::doors::symbol_door;
+use super::tab_items::PILL_RADIUS;
 use super::{COLUMN_PAD, CONTROLS_LEFT, Host, PAGE_EDGE, WindowFrame, drag, strip_height};
 use crate::mac::Edge;
+use crate::motion::Pace;
 use crate::native_menu::Align;
 use crate::shell::{AppMsg, ChromeMsg};
 use crate::symbol::{Weight, symbol};
@@ -74,17 +84,18 @@ impl WindowFrame {
                 strip.child(drag(host).w(px(COLUMN_PAD))).child(
                     div()
                         .flex()
-                        .flex_shrink(1.)
+                        .flex_1()
                         .min_w_0()
                         .items_center()
                         .gap(px(TAB_GAP))
                         .child(self.profile_badge(leading, cx))
                         .children(self.space_dot(leading, cx))
-                        .child(self.horizontal_tabs(dy, cx))
-                        .child(self.new_tab_plus(t, cx)),
+                        .child(self.horizontal_tabs(host, dy, cx))
+                        .child(self.new_tab_plus(t, cx))
+                        .child(drag(host).flex_1().min_w(px(16.))),
                 )
             })
-            .child(drag(host).flex_1())
+            .child(drag(host).when(!horizontal, |room| room.flex_1()))
             .when(self.popup_blocked, |strip| {
                 strip.child(self.notice(
                     "popup-blocked",
@@ -122,10 +133,7 @@ impl WindowFrame {
             .child(drag(host).w(px(if horizontal { TRAILING } else { PAGE_EDGE })))
     }
 
-    /// The way to a new page, right after the tabs so it is there however
-    /// far the run has scrolled; out of sight until the pointer is in the
-    /// strip (Search `TabBar`: 10 medium plus, 15 square, padding 7 / 6,
-    /// radius 9).
+    /// The way to a new page, outside the scrolling tab lane.
     fn new_tab_plus(
         &self,
         t: aeri_core::appearance::Tokens,
@@ -152,8 +160,6 @@ impl WindowFrame {
             .when(hover > 0., |el| {
                 el.bg(theme::c(t.hover.with_alpha(t.hover.a * hover)))
             })
-            .invisible()
-            .group_hover("strip", |style| style.visible())
             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                 this.send(AppMsg::NewHome { window });
             }))
@@ -200,23 +206,141 @@ impl WindowFrame {
 
 impl WindowFrame {
     /// Favourites and pinned tabs as letters, then the space's tabs.
-    fn horizontal_tabs(&self, dy: f32, cx: &mut Context<Self>) -> impl IntoElement {
+    fn horizontal_tabs(&self, host: Host, dy: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        let host = usize::from(host == Host::Overlay);
+        let scroll = &self.horizontal_scroll[host];
         let mut lane = div()
             .id("horizontal-tabs")
             .flex()
-            .flex_shrink(1.)
             .min_w_0()
             .items_center()
             .gap(px(TAB_GAP))
-            .overflow_x_scroll();
-        let favourites = self.tabs.iter().filter(|t| t.favourite);
-        for (index, tab) in favourites.enumerate() {
+            .overflow_x_scroll()
+            .track_scroll(scroll);
+        let favourites = self.tabs.iter().filter(|tab| tab.favourite).enumerate();
+        let tabs = self.tabs.iter().filter(|tab| !tab.favourite).enumerate();
+        let mut active = None;
+        for (slot, (index, tab)) in favourites.chain(tabs).enumerate() {
+            if tab.active {
+                active = Some((slot, tab));
+            }
             lane = lane.child(self.tab_pill(index, tab, dy, cx));
         }
-        let tabs = self.tabs.iter().filter(|t| !t.favourite);
-        for (index, tab) in tabs.enumerate() {
-            lane = lane.child(self.tab_pill(index, tab, dy, cx));
+        let ground = if let Some((slot, tab)) = active {
+            let t = theme::tokens_in(self.window_id, cx);
+            let color = theme::c(if tab.pinned || tab.favourite {
+                t.pin_live
+            } else {
+                t.live
+            });
+            let pace = Pace::of(self.window_id, cx);
+            let scroll = scroll.clone();
+            let selection = self.horizontal_selection[host].clone();
+            let id = tab.id;
+            Some(
+                canvas(
+                    |_, _, _| {},
+                    move |_, (), window, _| {
+                        selection.paint(id, slot, &scroll, color, pace, window);
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+        } else {
+            self.horizontal_selection[host].clear();
+            None
+        };
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_shrink(1.)
+            .min_w_0()
+            .children(ground)
+            .child(lane)
+    }
+}
+
+/// One spring-driven pill per strip host, painted beneath the real tab hit targets.
+#[derive(Clone, Default)]
+pub(super) struct Selection(Rc<Cell<Option<Slide>>>);
+
+#[derive(Clone, Copy)]
+struct Slide {
+    tab: TabId,
+    goal: [f32; 2],
+    springs: [SpringState; 2],
+    last_frame: Option<Instant>,
+}
+
+impl Selection {
+    pub(super) fn clear(&self) {
+        self.0.set(None);
+    }
+
+    fn paint(
+        &self,
+        tab: TabId,
+        slot: usize,
+        scroll: &ScrollHandle,
+        color: gpui::Rgba,
+        pace: Pace,
+        window: &mut Window,
+    ) {
+        let Some(mut rect) = scroll.bounds_for_item(slot) else {
+            return;
+        };
+        let viewport = scroll.bounds();
+        // Spring in content coordinates. Scrolling moves both the tabs and the
+        // ground immediately; it doesn't restart the selection animation.
+        let goal = [
+            f32::from(rect.left() - viewport.left()),
+            f32::from(rect.size.width),
+        ];
+        let initial = || Slide {
+            tab,
+            goal,
+            springs: goal.map(|position| SpringState {
+                position,
+                velocity: 0.,
+            }),
+            last_frame: None,
+        };
+        let mut slide = self.0.get().unwrap_or_else(initial);
+        if pace.still || (slide.tab == tab && slide.goal != goal) {
+            slide = initial();
+        } else if slide.tab != tab || slide.last_frame.is_some() {
+            let now = Instant::now();
+            if let Some(last) = slide.last_frame {
+                let dt = now.duration_since(last).as_secs_f32();
+                for (state, target) in slide.springs.iter_mut().zip(slide.goal) {
+                    if state.position != target || state.velocity != 0. {
+                        *state = pace.glide.step(*state, target, dt);
+                    }
+                }
+            }
+            slide.tab = tab;
+            slide.goal = goal;
+            if slide
+                .springs
+                .iter()
+                .zip(goal)
+                .all(|(&state, target)| pace.glide.is_settled(state, target, 0.02))
+            {
+                slide = initial();
+            } else {
+                slide.last_frame = Some(now);
+                window.request_animation_frame();
+            }
         }
-        lane
+        self.0.set(Some(slide));
+
+        let scroll_x = window.pixel_snap_point(scroll.offset()).x;
+        rect.origin.x = viewport.left() + px(slide.springs[0].position) + scroll_x;
+        rect.size.width = px(slide.springs[1].position.max(1.));
+        window.with_content_mask(Some(ContentMask { bounds: viewport }), |window| {
+            window.paint_quad(fill(rect, color).corner_radii(px(PILL_RADIUS)));
+        });
     }
 }

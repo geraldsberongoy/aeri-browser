@@ -76,7 +76,6 @@ fn main() -> Result<()> {
     if let Err(error) = runtime.devtools() {
         tracing::error!(error, "no DevTools pipe: extension actions are unavailable");
     }
-    mac::prefer_overlay_scrollers();
 
     let app = gpui_platform::application();
     app.on_reopen(|_| shell::reopen());

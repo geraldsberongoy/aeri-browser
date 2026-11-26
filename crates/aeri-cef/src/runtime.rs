@@ -205,6 +205,8 @@ wrap_app! {
                 // preconnects for Chrome's own omnibox (Aeri has its own and
                 // its own search provider), and network time queries.
                 append_to_list(command_line, "disable-features", DISABLED_FEATURES);
+                #[cfg(target_os = "macos")]
+                append_to_list(command_line, "disable-features", "OverlayScrollbar");
                 // Chrome loads its last-used profile at start-up and keeps
                 // it loaded for the whole run. That would be the Aeri
                 // profile whose window was last active, which then never

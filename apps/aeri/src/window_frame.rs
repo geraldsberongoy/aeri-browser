@@ -31,7 +31,7 @@ use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     App, BoxShadow, ClickEvent, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    SharedString, Window, div, img, point, prelude::*, px,
+    ScrollHandle, SharedString, Window, div, img, point, prelude::*, px,
 };
 
 use crate::native_menu::Align;
@@ -121,6 +121,9 @@ pub struct WindowFrame {
     grip_seen: bool,
     /// What the tab list remembers between frames (`tab_list`).
     tab_list: tab_list::TabListState,
+    /// The pinned and revealed horizontal strips live in different windows.
+    horizontal_scroll: [ScrollHandle; 2],
+    horizontal_selection: [strip::Selection; 2],
     tab_hovers: tab_hover::TabHovers,
     /// ⌘ is held: the first tabs show their numbers.
     command_held: bool,
@@ -178,6 +181,8 @@ impl WindowFrame {
             glide: None,
             marks: bookmarks_bar::Marks::default(),
             tab_list: tab_list::TabListState::default(),
+            horizontal_scroll: std::array::from_fn(|_| ScrollHandle::new()),
+            horizontal_selection: std::array::from_fn(|_| strip::Selection::default()),
             tab_hovers: tab_hover::TabHovers::default(),
             look: TabLook::default(),
             player: Vec::new(),
@@ -188,6 +193,20 @@ impl WindowFrame {
     /// Mirrors the window's tabs, in order.
     pub fn set_tabs(&mut self, tabs: Vec<SidebarTab>, cx: &mut Context<Self>) {
         if self.tabs != tabs {
+            let shown = tabs.iter().find(|tab| tab.active);
+            let previous = self.tabs.iter().find(|tab| tab.active).map(|tab| tab.id);
+            if let Some(shown) = shown
+                && previous != Some(shown.id)
+                && let Some(index) = tabs
+                    .iter()
+                    .filter(|tab| tab.favourite)
+                    .chain(tabs.iter().filter(|tab| !tab.favourite))
+                    .position(|tab| tab.id == shown.id)
+            {
+                for scroll in &self.horizontal_scroll {
+                    scroll.scroll_to_item(index);
+                }
+            }
             self.tabs = tabs;
             cx.notify();
         }
@@ -207,6 +226,11 @@ impl WindowFrame {
         if self.layout != layout {
             let from = self.drawn_width();
             let before = std::mem::replace(&mut self.layout, layout);
+            if before.tabs != self.layout.tabs || before.top_pinned != self.layout.top_pinned {
+                for selection in &self.horizontal_selection {
+                    selection.clear();
+                }
+            }
             self.follow_column(&before, from, cx);
             cx.notify();
         }

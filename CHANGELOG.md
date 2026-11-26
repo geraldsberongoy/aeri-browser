@@ -12,11 +12,22 @@ Aeri is a browser for the Mac in Rust and GPUI, with Chromium (CEF) rendering th
 - The pinned sidebar now clears when entering fullscreen, so hovering the edge doesn't stack a second sidebar on top of it. Exiting fullscreen restores the windowed layout.
 - Hover sidebars and tab bars line up with the browser's edges in windowed and fullscreen modes. The fullscreen top bar takes one row, including in Compact Tabs mode. The top and bottom bars no longer bring along a spare sidebar; ⌘S acts on the chosen layout.
 - The red close button closes only its own window. Other profile windows stay open.
+- Aeri asks which profile to open before restoring a browser window. On a fresh install, the welcome tour leads to the same picker.
+- Top and bottom tabs shrink before scrolling, with the New Tab button always visible. Sidebars scroll vertically.
+- The New Tab button and ⌘T focus Home’s inline search, reusing an already blank tab. Address suggestions show saved site icons.
+- ⌘Delete clears back to the beginning of a line in Aeri's text fields.
+- Double-click empty chrome to fill the usable display without entering fullscreen. Edge to edge mode uses the same viewport bounds for the web page, sidebar, and toolbar.
+- Edge to Edge is the default for new layouts. Page scrollbars use Chromium’s wider, always-visible style on macOS.
+- Web content no longer gets rounded corners in Edge to Edge mode. Cards keep their rounded border.
+- Tab hover fades work with the tab strip pinned as well as in the sidebars.
+- The active tab highlight glides between tabs in the top and bottom strips, using the same spring as the sidebars.
+- Inspect opens Developer Tools for its own tab. In **View → Developer Tools**, dock it right or below, move it to a separate window, or close it.
+- The profile picker shows saved profiles as cards.
 
 ### 21 November 2026
 
 - Aeri’s black-and-white macOS disk image is a standard drag to Applications. On first launch, Aeri’s ribbon and wordmark ease into view in a silent film. Skip straight to the interactive tour or use it to choose a tab layout and appearance. Replay from Help → Welcome to Aeri….
-- Blank tabs open Aeri Home: a solid background, the Aeri ribbon, inline search, and shortcuts to Bookmarks, History, and Settings. ⌘T and ⌘L still open the quick-search composer.
+- Blank tabs open Aeri Home: a solid background, the Aeri ribbon, inline search, and shortcuts to Bookmarks, History, and Settings. ⌘L opens the floating address composer.
 - Aeri’s ribbon is visible in the Dock in light, dark and tinted appearances.
 - The macOS menu bar has native browser commands, a live Profiles list, and Settings under Aeri (⌘,).
 - Tab highlights, close buttons, and title-to-address changes fade smoothly as you move the pointer, without delaying clicks.

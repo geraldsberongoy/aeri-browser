@@ -129,8 +129,8 @@ pub struct Layout {
 }
 
 impl Default for Layout {
-    /// Search's: the sidebar beside the page, which is a card; ⌘S folds
-    /// the sidebar away and it slides back out at the window's edge.
+    /// The sidebar sits flush beside the page; ⌘S folds it away and it
+    /// slides back out at the window's edge.
     fn default() -> Self {
         Self {
             sidebar_pinned: true,
@@ -142,7 +142,7 @@ impl Default for Layout {
             favourites: FavouriteStyle::Grid,
             bar: BarPlace::Centre,
             window_buttons: true,
-            cards: true,
+            cards: false,
             cards_full_screen: false,
             slides: false,
             fold_icons: false,

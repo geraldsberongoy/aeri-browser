@@ -12,7 +12,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
-use super::frame::{Frame, round_page};
+use super::frame::{Frame, clear_native_page_corners, clip_pane};
 use crate::shell::AppMsg;
 
 const GUTTER: f64 = 7.;
@@ -182,7 +182,7 @@ impl Frame {
             if window.frame() != rects[index] {
                 window.setFrame_display(rects[index], true);
             }
-            round_page(&window, radius);
+            clip_pane(&window, radius, 0b1111);
             Some((window, rects[1].origin.x - GUTTER))
         });
         if let Some(divider) = self.split.divider.borrow().as_ref() {
@@ -221,6 +221,7 @@ impl Frame {
             // SAFETY: main-thread AppKit windows; the frame retains the child.
             unsafe { frame.addChildWindow_ordered(&window, NSWindowOrderingMode::Above) };
             window.orderFront(None);
+            clear_native_page_corners(&window);
             self.raise_children();
         }
     }

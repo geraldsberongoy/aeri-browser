@@ -252,7 +252,7 @@ impl Frame {
             self.reveal.inside.set(false);
             return;
         }
-        let rect = frame.frame();
+        let rect = super::frame::content_on_screen(&frame);
         let at = NSEvent::mouseLocation();
         let y = rect.origin.y + rect.size.height - at.y;
         // How far the pointer is inside the sidebar's own window edge,

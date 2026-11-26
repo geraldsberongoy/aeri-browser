@@ -161,7 +161,11 @@ pub enum AppMsg {
     ShowProfiles {
         new: bool,
     },
-    ProfileManagerClosed,
+    ProfileManagerClosed(gpui::WindowId),
+    PickLaunchProfile {
+        profile: ProfileId,
+        picker: gpui::WindowId,
+    },
     /// From the profile menu: where the profile's sign-ins are saved.
     SetPasswordProvider {
         profile: ProfileId,

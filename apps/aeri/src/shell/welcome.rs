@@ -123,10 +123,11 @@ impl Shell {
                 self.set_app_appearance(appearance, cx);
             }
         }
-        if std::mem::take(&mut self.welcome.first_launch) {
+        let first_launch = std::mem::take(&mut self.welcome.first_launch);
+        if first_launch {
             save_pending(&self.db, false);
         }
-        if self.engine_ready {
+        if first_launch && self.engine_ready {
             self.open_launch_windows(cx);
         }
     }
@@ -135,9 +136,6 @@ impl Shell {
     pub(super) fn set_welcome_aside(&mut self, cx: &mut App) {
         if std::mem::take(&mut self.welcome.first_launch) {
             self.close_welcome(cx);
-            if self.engine_ready {
-                self.open_launch_windows(cx);
-            }
         }
     }
 

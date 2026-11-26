@@ -24,6 +24,7 @@ actions!(
     [
         Backspace,
         Delete,
+        DeleteToBeginningOfLine,
         Left,
         Right,
         SelectLeft,
@@ -49,6 +50,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("backspace", Backspace, context),
         KeyBinding::new("delete", Delete, context),
+        KeyBinding::new("cmd-backspace", DeleteToBeginningOfLine, context),
         KeyBinding::new("left", Left, context),
         KeyBinding::new("right", Right, context),
         KeyBinding::new("shift-left", SelectLeft, context),
@@ -241,6 +243,22 @@ impl TextInput {
             self.select_to(next, window, cx)
         }
         self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_to_beginning_of_line(
+        &mut self,
+        _: &DeleteToBeginningOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            if self.cursor_offset() == 0 {
+                window.play_system_bell();
+                return;
+            }
+            self.select_to(0, window, cx);
+        }
+        self.replace_text_in_range(None, "", window, cx);
     }
 
     fn on_mouse_down(
@@ -593,6 +611,7 @@ impl Render for TextInput {
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
+            .on_action(cx.listener(Self::delete_to_beginning_of_line))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::select_left))
