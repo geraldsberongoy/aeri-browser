@@ -26,17 +26,18 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSApplication,
     NSApplicationDidResignActiveNotification, NSEvent, NSEventMask, NSEventType, NSWindow,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSTimer};
 
 use super::frame::Frame;
-use crate::window_frame::strip_height;
+use crate::window_frame::{chrome_bottom, chrome_top, strip_height};
 use aeri_core::appearance::Motion;
 use aeri_core::layout::{Layout, Side, TabPlace};
 
-/// Width of the side edge lane (Search `Fold.edge`), and of the top one.
+/// Width of the side edge lane (Search `Fold.edge`) and height of the strip lane.
 const EDGE: f64 = 6.0;
-const TOP_EDGE: f64 = 8.0;
+const STRIP_EDGE: f64 = 8.0;
 /// How far beyond the window's side edge a pointer that came from inside
 /// still counts as at the edge (Search `Fold.overshoot`).
 const OVERSHOOT: f64 = 48.0;
@@ -46,17 +47,50 @@ const DWELL: f64 = 0.15;
 /// How long after the pointer leaves before the chrome goes back (Search
 /// `Fold.grace`).
 const GRACE: f64 = 0.065;
-/// How far the top strip travels as it slides in, in points.
+/// How far the strip travels as it slides in, in points.
 const SLIDE: f64 = 14.0;
 
 /// An edge chrome slides in from; the index of its overlay window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edge {
     Side = 0,
-    Top = 1,
+    Strip = 1,
 }
 
-const EDGES: [Edge; 2] = [Edge::Top, Edge::Side];
+const EDGES: [Edge; 2] = [Edge::Strip, Edge::Side];
+
+/// Where the top strip begins, below AppKit's own title bar in fullscreen.
+pub(super) fn strip_top(frame: &NSWindow) -> f64 {
+    let rect = frame.frame();
+    let top = rect.origin.y + rect.size.height;
+    if frame.styleMask().contains(NSWindowStyleMask::FullScreen)
+        && let Some(screen) = frame.screen()
+    {
+        let bounds = screen.frame();
+        let visible = screen.visibleFrame();
+        let safe_top = bounds.origin.y + bounds.size.height - screen.safeAreaInsets().top;
+        let usable = frame.convertRectToScreen(frame.contentLayoutRect());
+        let native = NSWindow::contentRectForFrameRect_styleMask(
+            rect,
+            NSWindowStyleMask::Titled,
+            MainThreadMarker::from(frame),
+        );
+        (top.min(safe_top)
+            .min(visible.origin.y + visible.size.height)
+            - (rect.size.height - native.size.height))
+            .min(usable.origin.y + usable.size.height)
+    } else {
+        top
+    }
+}
+
+pub(super) fn strip_origin(frame: &NSWindow, layout: &Layout, height: f64) -> f64 {
+    if layout.tabs == TabPlace::Bottom {
+        frame.frame().origin.y
+    } else {
+        strip_top(frame) - height
+    }
+}
 
 /// A one-shot timer, and whether it opens (else closes).
 type Pending = Option<(bool, Retained<NSTimer>)>;
@@ -151,17 +185,32 @@ fn on_event(event: &NSEvent) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
-    let Some(window) = event.window(mtm) else {
-        return;
-    };
-    let frame = FRAMES.with_borrow(|frames| {
+    let window = event.window(mtm);
+    let kind = event.r#type();
+    let owner = FRAMES.with_borrow(|frames| {
         frames
             .iter()
             .filter_map(Weak::upgrade)
-            .find(|f| f.owns(&window))
+            .find(|f| window.as_ref().is_some_and(|window| f.owns(window)))
     });
-    if let Some(frame) = frame {
-        frame.pointer(event.r#type(), Some(&window));
+    if let Some(owner) = owner {
+        owner.pointer(kind, window.as_deref());
+    } else if kind == NSEventType::MouseMoved {
+        // AppKit's fullscreen title bar is outside our family of windows.
+        let app = NSApplication::sharedApplication(mtm);
+        if let Some(main) = app.mainWindow()
+            && main.styleMask().contains(NSWindowStyleMask::FullScreen)
+        {
+            let owner = FRAMES.with_borrow(|frames| {
+                frames
+                    .iter()
+                    .filter_map(Weak::upgrade)
+                    .find(|f| f.owns(&main))
+            });
+            if let Some(owner) = owner {
+                owner.pointer(kind, None);
+            }
+        }
     }
 }
 
@@ -224,6 +273,9 @@ impl Frame {
         if !EDGES.into_iter().any(|edge| slides(&layout, edge)) {
             return;
         }
+        if !frame.isVisible() || frame.isMiniaturized() || !frame.isOnActiveSpace() {
+            return;
+        }
         // Over other apps' windows only while Aeri is the front app.
         if window.is_none()
             && !NSApplication::sharedApplication(MainThreadMarker::from(&*frame)).isActive()
@@ -252,8 +304,36 @@ impl Frame {
         let clicked = kind != NSEventType::MouseMoved;
         let on_page = self.is_page(window);
         let strip_h = strip_height(&layout);
-        let side_top = if layout.top_pinned { strip_h } else { 0.0 };
-        let top_slides = slides(&layout, Edge::Top);
+        let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
+        let side_top = chrome_top(&layout, fullscreen);
+        let side_bottom = rect.size.height - chrome_bottom(&layout, fullscreen);
+        let strip_hit = if slides(&layout, Edge::Strip) && (0.0..=rect.size.width).contains(&x) {
+            if layout.tabs == TabPlace::Bottom {
+                let distance = at.y - rect.origin.y;
+                (
+                    (0.0..=STRIP_EDGE).contains(&distance),
+                    (0.0..=strip_h).contains(&distance),
+                )
+            } else {
+                let strip_top = strip_top(&frame);
+                let edge = if fullscreen {
+                    frame
+                        .screen()
+                        .map_or(rect.origin.y + rect.size.height, |screen| {
+                            let bounds = screen.frame();
+                            bounds.origin.y + bounds.size.height
+                        })
+                } else {
+                    rect.origin.y + rect.size.height
+                };
+                (
+                    (strip_top - STRIP_EDGE..=edge).contains(&at.y),
+                    (strip_top - strip_h..=edge).contains(&at.y),
+                )
+            }
+        } else {
+            (false, false)
+        };
         let reach = layout.column_width(rect.size.width);
         for edge in EDGES {
             if !slides(&layout, edge) {
@@ -263,12 +343,12 @@ impl Frame {
             if edge == Edge::Side && self.is_unfolding() {
                 continue;
             }
-            // In the shared corner the top wins.
+            // Let the strip take priority where it meets the sidebar.
             let (lane, region) = match edge {
-                Edge::Top => (in_window && y <= TOP_EDGE, in_window && y <= strip_h),
+                Edge::Strip => strip_hit,
                 Edge::Side => {
-                    let below = tall && y >= side_top && !(top_slides && y <= TOP_EDGE);
-                    (below && at_edge(EDGE), below && at_edge(reach))
+                    let beside = (side_top..=side_bottom).contains(&y) && !strip_hit.0;
+                    (beside && at_edge(EDGE), beside && at_edge(reach))
                 }
             };
             let i = edge as usize;
@@ -278,7 +358,10 @@ impl Frame {
                 } else {
                     self.cancel(edge);
                 }
-            } else if region && !(edge == Edge::Side && self.reveal.shown[1].get() && y <= strip_h)
+            } else if region
+                && !(edge == Edge::Side
+                    && self.reveal.shown[Edge::Strip as usize].get()
+                    && strip_hit.1)
             {
                 self.reveal.entered[i].set(true);
                 self.cancel(edge);
@@ -356,7 +439,11 @@ impl Frame {
         let slide = shown && self.motion_now() == Motion::Standard;
         if slide {
             let mut start = target;
-            start.origin.y += SLIDE;
+            start.origin.y += if self.layout.get().tabs == TabPlace::Bottom {
+                -SLIDE
+            } else {
+                SLIDE
+            };
             overlay.setFrame_display(start, false);
         }
         let changes = RcBlock::new(move |context: NonNull<NSAnimationContext>| {
@@ -417,13 +504,10 @@ impl Frame {
     }
 }
 
-/// Whether the chrome at `edge` slides in under this layout: it is not
-/// pinned. As in Search, a strip only exists for tabs along the top: with
-/// tabs in the sidebar, the sidebar's band carries the lights and history,
-/// and nothing comes down from the top edge.
+/// Unpinned chrome can slide in from its edge. A sidebar layout has no tab strip.
 fn slides(layout: &Layout, edge: Edge) -> bool {
     match edge {
         Edge::Side => !layout.sidebar_pinned,
-        Edge::Top => !layout.top_pinned && layout.tabs == TabPlace::Top,
+        Edge::Strip => !layout.top_pinned && layout.tabs.horizontal(),
     }
 }

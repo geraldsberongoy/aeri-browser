@@ -17,8 +17,8 @@ pub(super) fn sidebar(m: &SettingsModel) -> bool {
     m.layout.tabs == TabPlace::Side
 }
 
-pub(super) fn top(m: &SettingsModel) -> bool {
-    m.layout.tabs == TabPlace::Top
+pub(super) fn horizontal(m: &SettingsModel) -> bool {
+    m.layout.tabs.horizontal()
 }
 
 pub(super) fn titles_in_column(m: &SettingsModel) -> bool {

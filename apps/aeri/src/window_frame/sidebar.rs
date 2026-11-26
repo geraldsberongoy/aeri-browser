@@ -60,7 +60,8 @@ impl WindowFrame {
         } else {
             (width - 2. * COLUMN_PAD - HELM).clamp(0., LIGHTS)
         };
-        let band = (!self.layout.top_pinned).then(|| {
+        let owns_band = !self.layout.top_pinned && !self.tabs_at_bottom();
+        let band = owns_band.then(|| {
             div()
                 .flex()
                 .flex_none()
@@ -90,7 +91,7 @@ impl WindowFrame {
             .h_full()
             .min_h_0()
             .w(px(width))
-            .when(self.layout.top_pinned, |column| column.pt(px(COLUMN_PAD)))
+            .when(!owns_band, |column| column.pt(px(COLUMN_PAD)))
             // Edge to edge the column is on the page's ground, with a
             // hairline on its inner edge (Search `Side.swift`).
             .when(self.flat(host), |column| column.bg(theme::c(t.panel)))
@@ -140,11 +141,7 @@ impl WindowFrame {
         } else {
             0.
         };
-        let dy = if host == Host::Overlay && self.layout.top_pinned {
-            super::strip_height(&self.layout) as f32
-        } else {
-            0.
-        };
+        let dy = self.side_offset(host);
         // A menu hangs above its door: its bottom edge on the door's top.
         let hang = move |nth: usize| {
             move |_: &ClickEvent, win: &gpui::Window| {

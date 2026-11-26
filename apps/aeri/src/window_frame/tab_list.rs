@@ -135,11 +135,7 @@ impl WindowFrame {
         let still = pace.still;
         let room = (self.column_width() - 20.).max(20.);
         let space = self.spaces.iter().find(|s| s.current).map_or(0, |s| s.id.0);
-        let dy = if host == Host::Overlay && self.layout.top_pinned {
-            super::strip_height(&self.layout) as f32
-        } else {
-            0.
-        };
+        let dy = self.side_offset(host);
         let adjusted = self.chosen_tabs();
         let tabs: &[SidebarTab] = adjusted.as_deref().unwrap_or(&self.tabs);
         let favourites: Vec<&SidebarTab> = tabs.iter().filter(|t| t.favourite).collect();

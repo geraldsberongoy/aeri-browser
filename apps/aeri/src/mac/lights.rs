@@ -12,7 +12,7 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-use aeri_core::layout::{ICON_LIGHTS, Side};
+use aeri_core::layout::{ICON_LIGHTS, Layout, Side, TabPlace};
 use block2::RcBlock;
 use objc2::ClassType;
 use objc2::rc::Retained;
@@ -29,7 +29,7 @@ use objc2_foundation::{
 };
 
 use super::frame::{Frame, show_window_buttons, stand_in_window_buttons};
-use crate::window_frame::strip_height;
+use crate::window_frame::{BOTTOM_TITLE_HEIGHT, strip_height};
 static ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// `_hasActiveAppearanceForStandardWindowButton:` takes the button's kind
@@ -464,7 +464,7 @@ impl NativeLights {
         self.suspended.set(false);
     }
 
-    fn place(&self, window: &NSWindow, layout: &aeri_core::layout::Layout, left: f64) {
+    fn place(&self, window: &NSWindow, layout: &Layout, left: f64) {
         // macOS owns the fullscreen title bar, in a separate window.
         if self.suspended.get()
             || window.styleMask().contains(NSWindowStyleMask::FullScreen)
@@ -473,16 +473,19 @@ impl NativeLights {
         {
             return;
         }
+        let bottom = layout.tabs == TabPlace::Bottom;
         if !layout.window_buttons {
             show_window_buttons(window, false);
-        } else if !layout.top_pinned && !layout.sidebar_pinned {
+        } else if !bottom && !layout.top_pinned && !layout.sidebar_pinned {
             stand_in_window_buttons(window);
         } else {
             show_window_buttons(window, true);
             if let Some(titlebar) = self.titlebar.borrow().as_ref() {
                 let [container, bar, buttons @ ..] = &titlebar.views;
                 let stacked = !layout.top_pinned && layout.icon_column();
-                let band = if stacked {
+                let band = if bottom {
+                    BOTTOM_TITLE_HEIGHT
+                } else if stacked {
                     ICON_LIGHTS
                 } else {
                     strip_height(layout)
@@ -547,7 +550,10 @@ impl Frame {
         };
         let layout = self.layout_now(frame);
         let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
-        let shown = layout.window_buttons && !fullscreen && !layout.top_pinned;
+        let shown = layout.window_buttons
+            && !fullscreen
+            && !layout.top_pinned
+            && layout.tabs != TabPlace::Bottom;
         let stacked = layout.icon_column();
         let width = frame.frame().size.width;
         let column = layout.column_width(width);
@@ -580,7 +586,11 @@ impl Frame {
     pub(super) fn place_native_lights(&self, frame: &NSWindow) {
         let layout = self.layout.get();
         let width = frame.frame().size.width;
-        let left = if !layout.top_pinned && layout.sidebar_pinned && layout.side == Side::Right {
+        let left = if layout.tabs != TabPlace::Bottom
+            && !layout.top_pinned
+            && layout.sidebar_pinned
+            && layout.side == Side::Right
+        {
             width - self.pinned_column_width(&layout, width)
         } else {
             0.0

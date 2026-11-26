@@ -55,6 +55,7 @@ pub(crate) struct Welcome {
     tx: UnboundedSender<AppMsg>,
     side: FocusHandle,
     top: FocusHandle,
+    bottom: FocusHandle,
     skip: FocusHandle,
     start: FocusHandle,
     back: FocusHandle,
@@ -87,6 +88,7 @@ impl Welcome {
             tx,
             side: handle(cx),
             top: handle(cx),
+            bottom: handle(cx),
             skip: handle(cx),
             start: handle(cx),
             back: handle(cx),
@@ -222,14 +224,18 @@ impl Welcome {
                 }
             }
             "left" | "right" if self.step == Step::Setup => {
-                let on_side = self.side.is_focused(window);
-                if on_side || self.top.is_focused(window) {
+                let choices = [
+                    (TabPlace::Side, &self.side),
+                    (TabPlace::Top, &self.top),
+                    (TabPlace::Bottom, &self.bottom),
+                ];
+                if let Some(i) = choices
+                    .iter()
+                    .position(|(_, handle)| handle.is_focused(window))
+                {
                     cx.stop_propagation();
-                    let (place, handle) = if (key == "right") == on_side {
-                        (TabPlace::Top, &self.top)
-                    } else {
-                        (TabPlace::Side, &self.side)
-                    };
+                    let step = if key == "right" { 1 } else { choices.len() - 1 };
+                    let (place, handle) = choices[(i + step) % choices.len()];
                     window.focus(handle, cx);
                     self.choose(place, cx);
                 }
@@ -276,6 +282,7 @@ impl Welcome {
         let (id, handle) = match place {
             TabPlace::Side => ("welcome-side", &self.side),
             TabPlace::Top => ("welcome-top", &self.top),
+            TabPlace::Bottom => ("welcome-bottom", &self.bottom),
         };
         let on = self.choices.tabs.or(self.initial.tabs) == Some(place);
         div()
@@ -569,6 +576,12 @@ impl Welcome {
                                     "Top Tabs",
                                     "Tabs across the top",
                                     cx,
+                                ))
+                                .child(self.card(
+                                    TabPlace::Bottom,
+                                    "Bottom Tabs",
+                                    "Tabs below the page",
+                                    cx,
                                 )),
                         )
                         .child(caption("Appearance"))
@@ -696,19 +709,28 @@ fn diagram(place: TabPlace, on: bool) -> impl IntoElement {
                     .child(div().h(px(9.)).rounded_full().bg(tab(false))),
             )
             .child(page),
-        TabPlace::Top => frame
-            .flex_col()
-            .child(
+        TabPlace::Top | TabPlace::Bottom => {
+            let pill = |width, active| {
                 div()
-                    .h(px(11.))
-                    .flex_none()
-                    .flex()
-                    .gap(px(4.))
-                    .child(div().w(px(42.)).rounded_full().bg(tab(true)))
-                    .child(div().w(px(32.)).rounded_full().bg(tab(false)))
-                    .child(div().w(px(32.)).rounded_full().bg(tab(false))),
-            )
-            .child(page),
+                    .w(px(width))
+                    .flex_shrink(1.)
+                    .rounded_full()
+                    .bg(tab(active))
+            };
+            let tabs = div()
+                .h(px(11.))
+                .flex_none()
+                .flex()
+                .gap(px(4.))
+                .child(pill(32., true))
+                .child(pill(26., false))
+                .child(pill(26., false));
+            if place == TabPlace::Top {
+                frame.flex_col().child(tabs).child(page)
+            } else {
+                frame.flex_col().child(page).child(tabs)
+            }
+        }
     }
 }
 

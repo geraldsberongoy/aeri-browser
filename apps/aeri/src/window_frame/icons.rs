@@ -143,11 +143,7 @@ impl WindowFrame {
         let t = theme::tokens_in(window, cx);
         let pace = crate::motion::Pace::of(window, cx);
         let space = self.spaces.iter().find(|s| s.current).map_or(0, |s| s.id.0);
-        let dy = if host == Host::Overlay && self.layout.top_pinned {
-            super::strip_height(&self.layout) as f32
-        } else {
-            0.
-        };
+        let dy = self.side_offset(host);
         let adjusted = self.chosen_tabs();
         let plan = plan(adjusted.as_deref().unwrap_or(&self.tabs));
         let numbers = self.layout.tab_numbers && self.command_held;
@@ -456,11 +452,7 @@ impl WindowFrame {
             ICON_COLUMN as f32
         };
         let align = if right { Align::Right } else { Align::Left };
-        let dy = if host == Host::Overlay && self.layout.top_pinned {
-            super::strip_height(&self.layout) as f32
-        } else {
-            0.
-        };
+        let dy = self.side_offset(host);
         let hang =
             move |event: &ClickEvent, _: &Window| (x, f32::from(event.position().y) + dy, align);
         let mut foot = div()

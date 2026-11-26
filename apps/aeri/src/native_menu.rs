@@ -64,6 +64,8 @@ pub enum Align {
     /// The menu opens to the right of `x` and ends at `top`: it hangs above
     /// a button at the foot of the sidebar.
     Above,
+    /// Like `Above`, but its right edge ends at `x`.
+    AboveRight,
 }
 
 /// Shows `entries` hanging from (`x`, `top`), points from the view's
@@ -89,10 +91,10 @@ pub fn pop_up(
     TARGET.with_borrow_mut(|slot| *slot = Some(target));
     let x = match align {
         Align::Left | Align::Above => x,
-        Align::Right => (x - menu.size().width).max(0.0),
+        Align::Right | Align::AboveRight => (x - menu.size().width).max(0.0),
     };
     let top = match align {
-        Align::Above => (top - menu.size().height).max(0.0),
+        Align::Above | Align::AboveRight => (top - menu.size().height).max(0.0),
         Align::Left | Align::Right => top,
     };
     let y = if view.isFlipped() {

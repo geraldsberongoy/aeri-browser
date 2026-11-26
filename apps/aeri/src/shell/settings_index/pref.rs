@@ -141,6 +141,7 @@ impl Pref {
                 (TabPlace::Side, true, _) => 3,
                 (TabPlace::Side, false, Side::Left) => 1,
                 (TabPlace::Side, false, Side::Right) => 2,
+                (TabPlace::Bottom, _, _) => 4,
             }),
             Self::HideColumn => Value::On(!l.sidebar_pinned),
             Self::Slides => Value::On(l.slides),
@@ -257,12 +258,20 @@ impl Pref {
         let on = value.on();
         match self {
             Self::TabsLayout => {
-                let was_top = layout.tabs == TabPlace::Top;
+                let was_bottom = layout.tabs == TabPlace::Bottom;
+                let was_horizontal = layout.tabs.horizontal();
                 match value.index() {
-                    0 => {
-                        layout.tabs = TabPlace::Top;
+                    ix @ (0 | 4) => {
+                        layout.tabs = if ix == 0 {
+                            TabPlace::Top
+                        } else {
+                            TabPlace::Bottom
+                        };
                         layout.top_pinned = true;
                         layout.rail = false;
+                        if ix == 4 {
+                            layout.sidebar_pinned = false;
+                        }
                     }
                     ix => {
                         layout.tabs = TabPlace::Side;
@@ -273,8 +282,11 @@ impl Pref {
                             _ => {}
                         }
                         // The column was never hidden by choice up there.
-                        if was_top {
+                        if was_horizontal {
                             layout.sidebar_pinned = true;
+                            if was_bottom {
+                                layout.top_pinned = false;
+                            }
                         }
                     }
                 }

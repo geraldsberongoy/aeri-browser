@@ -98,6 +98,23 @@ pub fn drag_parent(view: *mut c_void) {
     }
 }
 
+/// The tab overlay's resting top edge in the parent window's coordinates.
+pub(crate) fn strip_offset(view: *mut c_void, bottom: bool) -> f32 {
+    let Some(window) = window_of(view) else {
+        return 0.;
+    };
+    let Some(parent) = window.parentWindow() else {
+        return 0.;
+    };
+    let rect = parent.frame();
+    let top = if bottom {
+        rect.origin.y + window.frame().size.height
+    } else {
+        reveal::strip_top(&parent)
+    };
+    (rect.origin.y + rect.size.height - top) as f32
+}
+
 /// A double-click on empty chrome of the frame whose content view (or whose
 /// overlay's) is `view`: what the Mac does for a title bar, per System
 /// Settings (see [`frame::double_click_action`]). Not inside a GPUI update:

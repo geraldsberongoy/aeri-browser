@@ -329,6 +329,10 @@ impl WindowFrame {
         self.window_id
     }
 
+    pub(crate) fn tabs_at_bottom(&self) -> bool {
+        self.layout.tabs == TabPlace::Bottom
+    }
+
     /// A plain text button in the strip; a click sends `msg` with the point
     /// clicked, where its menu hangs.
     fn notice(
@@ -336,10 +340,10 @@ impl WindowFrame {
         id: &'static str,
         label: String,
         msg: fn(u64, f32, f32, Align) -> AppMsg,
+        hang: impl doors::Hang,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let window = self.window_id;
-        let strip = strip_height(&self.layout) as f32;
         let t = theme::tokens_in(self.window_id, cx);
         div()
             .id(id)
@@ -355,9 +359,9 @@ impl WindowFrame {
             .text_color(theme::c(t.icon))
             .hover(move |style| style.bg(theme::c(t.hover)))
             .active(move |style| style.bg(theme::c(t.pressed)))
-            .on_click(cx.listener(move |this, event: &ClickEvent, _, _| {
-                let x = f32::from(event.position().x);
-                this.send(msg(window, x, strip - 6., Align::Right));
+            .on_click(cx.listener(move |this, event: &ClickEvent, win, _| {
+                let (x, y, align) = hang(event, win);
+                this.send(msg(window, x, y, align));
             }))
             .child(SharedString::from(label))
     }
@@ -394,13 +398,36 @@ pub(crate) fn avatar(profile: &Profile, size: f32) -> impl IntoElement {
         .child(img(crate::blobatar::image(profile.avatar_slot())).size(px(size * 0.8)))
 }
 
-/// The strip's height in `layout`: 52 pt, or 36 with tabs along the top
+/// The strip's height in `layout`: 52 pt, or 36 with horizontal tabs
 /// and "Shorter tab bar" on (Search `Metrics.strip`).
 pub fn strip_height(layout: &Layout) -> f64 {
-    if layout.compact_strip && layout.tabs == TabPlace::Top {
+    if layout.compact_strip && layout.tabs.horizontal() {
         COMPACT_STRIP
     } else {
         STRIP_HEIGHT
+    }
+}
+
+/// Room for the native traffic lights and a drag surface above bottom tabs.
+pub const BOTTOM_TITLE_HEIGHT: f64 = COMPACT_STRIP;
+
+pub fn chrome_top(layout: &Layout, fullscreen: bool) -> f64 {
+    if fullscreen {
+        0.
+    } else if layout.tabs == TabPlace::Bottom {
+        BOTTOM_TITLE_HEIGHT
+    } else if layout.top_pinned {
+        strip_height(layout)
+    } else {
+        0.
+    }
+}
+
+pub fn chrome_bottom(layout: &Layout, fullscreen: bool) -> f64 {
+    if !fullscreen && layout.tabs == TabPlace::Bottom && layout.top_pinned {
+        strip_height(layout)
+    } else {
+        0.
     }
 }
 
@@ -451,12 +478,10 @@ pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
     let cards = cards_in(layout, fullscreen);
     let radius = if cards { f64::from(CARD_RADIUS) } else { 0. };
     let gap = f64::from(PAGE_EDGE);
-    let (side, top_pinned) = if fullscreen {
-        (0., false)
-    } else {
-        (side, layout.top_pinned)
-    };
-    if side == 0. && !top_pinned {
+    let side = if fullscreen { 0. } else { side };
+    let top_chrome = chrome_top(layout, fullscreen);
+    let bottom_chrome = chrome_bottom(layout, fullscreen);
+    if side == 0. && top_chrome == 0. && bottom_chrome == 0. {
         let kept = fullscreen && cards;
         let edge = if kept { gap } else { 0. };
         return PageInsets {
@@ -483,25 +508,32 @@ pub fn page_insets(layout: &Layout, fullscreen: bool, side: f64) -> PageInsets {
     } else {
         0.
     };
-    let band = if top_pinned { strip_height(layout) } else { 0. };
-    let top = match (bar > 0., top_pinned) {
-        (true, _) => band + bar,
-        (false, true) => band,
-        (false, false) => far,
+    let top = if top_chrome > 0. || bar > 0. {
+        top_chrome + bar
+    } else {
+        far
     };
     PageInsets {
         left,
         right,
         top,
-        bottom: far,
+        bottom: far + bottom_chrome,
         radius,
         card: cards,
         bar,
-        bar_top: band,
+        bar_top: top_chrome,
     }
 }
 
 impl WindowFrame {
+    fn side_offset(&self, host: Host) -> f32 {
+        if host == Host::Overlay {
+            chrome_top(&self.layout, self.fullscreen) as f32
+        } else {
+            0.
+        }
+    }
+
     /// The page card's edge, behind the page (Search `CardEdge`,
     /// `Design.swift`): a rounded rectangle at the page's place with a 1 pt
     /// hairline just outside it and a soft shadow. The page window, rounded
@@ -571,10 +603,12 @@ fn drag(host: Host) -> gpui::Div {
 
 impl Render for WindowFrame {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let width = f32::from(window.viewport_size().width);
-        if (self.fullscreen, self.window_width) != (window.is_fullscreen(), width) {
-            // The overlays draw from this view too: let them catch up.
-            self.fullscreen = window.is_fullscreen();
+        let size = window.viewport_size();
+        let (width, height) = (f32::from(size.width), f32::from(size.height));
+        let fullscreen = window.is_fullscreen();
+        if (self.fullscreen, self.window_width) != (fullscreen, width) {
+            // The overlays draw from this view too.
+            self.fullscreen = fullscreen;
             self.window_width = width;
             cx.notify();
         }
@@ -596,20 +630,30 @@ impl Render for WindowFrame {
             MouseButton::Left,
             cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_resize(cx)),
         );
-        // With nothing pinned the page covers the frame: draw nothing more.
-        let side = self
-            .layout
-            .sidebar_pinned
-            .then(|| self.sidebar(Host::Frame, cx));
+        let windowed = !self.fullscreen;
+        let bottom = self.tabs_at_bottom();
+        let strip_pinned = windowed && self.layout.top_pinned;
+        let side = (windowed && self.layout.sidebar_pinned).then(|| self.sidebar(Host::Frame, cx));
+        let title = (windowed && bottom).then(|| {
+            let t = theme::tokens_in(self.window_id, cx);
+            drag(Host::Frame)
+                .flex_none()
+                .w_full()
+                .h(px(BOTTOM_TITLE_HEIGHT as f32))
+                .bg(theme::c(t.panel))
+                .border_b_1()
+                .border_color(theme::c(t.separator))
+        });
         frame
             .children(self.card_edge(cx))
             .when(self.home.tab.is_some(), |frame| {
                 frame.child(self.home(window, cx))
             })
-            .children(self.bookmarks_bar(window, cx))
-            .when(self.layout.top_pinned, |frame| {
-                frame.child(self.strip(Host::Frame, cx))
+            .children(title)
+            .when(strip_pinned && !bottom, |frame| {
+                frame.child(self.strip(Host::Frame, 0., cx))
             })
+            .children(self.bookmarks_bar(window, cx))
             .child(
                 div()
                     .flex()
@@ -620,5 +664,9 @@ impl Render for WindowFrame {
                     })
                     .children(side),
             )
+            .when(strip_pinned && bottom, |frame| {
+                let offset = height - strip_height(&self.layout) as f32;
+                frame.child(self.strip(Host::Frame, offset, cx))
+            })
     }
 }

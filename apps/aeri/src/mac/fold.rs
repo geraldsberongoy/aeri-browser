@@ -192,7 +192,7 @@ impl Frame {
         self.overlays.borrow().as_ref().map(|o| o[0].clone())
     }
 
-    fn in_full_screen(&self) -> bool {
+    pub(crate) fn in_full_screen(&self) -> bool {
         self.frame
             .borrow()
             .as_ref()
@@ -504,7 +504,11 @@ impl Frame {
 
     /// Re-applies the slide after the overlay was refitted.
     pub(super) fn replace_side(&self) {
-        self.show_position(self.fold.state.get().position);
+        let fold = &self.fold;
+        let position = fold.state.get().position;
+        if position != 0. || fold.goal.get() != 0. {
+            self.show_position(position);
+        }
     }
 }
 

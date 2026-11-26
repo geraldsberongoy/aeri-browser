@@ -44,12 +44,13 @@ pub enum LayoutChoice {
 }
 
 impl LayoutChoice {
-    const ALL: [LayoutChoice; 12] = [
+    const ALL: [LayoutChoice; 13] = [
         Self::Preset(Preset::PageFirst),
         Self::Preset(Preset::Sidebar),
         Self::Preset(Preset::SidebarAndTop),
         Self::Preset(Preset::Collapsed),
         Self::Preset(Preset::TopTabs),
+        Self::Preset(Preset::BottomTabs),
         Self::Side(Side::Left),
         Self::Side(Side::Right),
         Self::Favourites(FavouriteStyle::Grid),
@@ -123,7 +124,7 @@ pub(super) fn open_overlays(
             .ok()
     };
     let side = open(Edge::Side)?;
-    let Some(strip) = open(Edge::Top) else {
+    let Some(strip) = open(Edge::Strip) else {
         let _ = side.update(cx, |_, window, _| window.remove_window());
         return None;
     };
@@ -192,6 +193,15 @@ impl Shell {
     /// and the page shrinks once. ⌘S while it slides out turns it round.
     pub(super) fn toggle_sidebar(&mut self, window_id: u64, cx: &mut App) {
         let layout = self.chrome.layout;
+        if let Some(w) = self.window(window_id)
+            && w.frame.in_full_screen()
+        {
+            let frame = w.frame.clone();
+            self.later(move |_| {
+                frame.call(Edge::Side);
+            });
+            return;
+        }
         // "⌘S makes the column icons only": the sidebar stays and its
         // width folds to the column of icons and back (Search
         // `Preferences.shrinks`, `Fold.swift`).
@@ -231,7 +241,7 @@ impl Shell {
                 self.change_layout(
                     |layout| match edge {
                         Edge::Side => layout.sidebar_pinned = pinned,
-                        Edge::Top => layout.top_pinned = pinned,
+                        Edge::Strip => layout.top_pinned = pinned,
                     },
                     cx,
                 );

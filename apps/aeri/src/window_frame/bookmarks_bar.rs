@@ -42,7 +42,7 @@ const MORE: f32 = 22.;
 pub fn shown(layout: &Layout, fullscreen: bool) -> bool {
     let tabs = match layout.tabs {
         TabPlace::Side => layout.sidebar_pinned || layout.top_pinned,
-        TabPlace::Top => layout.top_pinned,
+        TabPlace::Top | TabPlace::Bottom => layout.top_pinned,
     };
     layout.bookmarks_bar && !fullscreen && tabs
 }

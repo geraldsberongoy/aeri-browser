@@ -222,12 +222,13 @@ impl WindowFrame {
         &self,
         index: usize,
         tab: &SidebarTab,
+        dy: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let t = theme::tokens_in(self.window_id, cx);
         let kept = tab.pinned || tab.favourite;
         let (base, hover) = self.tab_hover(
-            self.tab_base("pill", index, tab, 0., cx),
+            self.tab_base("pill", index, tab, dy, cx),
             ("pill", tab.id.0),
             crate::motion::still(self.window_id, cx),
             cx,

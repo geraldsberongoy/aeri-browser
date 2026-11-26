@@ -33,6 +33,13 @@ pub enum TabPlace {
     #[default]
     Side,
     Top,
+    Bottom,
+}
+
+impl TabPlace {
+    pub fn horizontal(self) -> bool {
+        self != Self::Side
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,7 +74,7 @@ pub enum Glyph {
 pub struct Layout {
     /// The sidebar keeps its place beside the page (else it slides in).
     pub sidebar_pinned: bool,
-    /// The strip keeps its place above the page (else it slides in).
+    /// Keeps the strip pinned on its chosen edge (stored as `topPinned`).
     pub top_pinned: bool,
     pub side: Side,
     /// The full sidebar's width, in points.
@@ -93,7 +100,7 @@ pub struct Layout {
     /// ⌘S makes the sidebar an icon column instead of hiding it
     /// (`sidebar.foldIcons`).
     pub fold_icons: bool,
-    /// Back, forward and reload beside the window buttons, top tabs only
+    /// Back, forward and reload before the tabs in a horizontal strip
     /// (`toolbar.left`).
     pub nav_left: bool,
     /// A shorter strip, 36 pt (`tabs.compact`).
@@ -166,15 +173,17 @@ pub enum Preset {
     Collapsed,
     /// Tabs across the top, as in a classic browser.
     TopTabs,
+    BottomTabs,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 5] = [
+    pub const ALL: [Preset; 6] = [
         Self::PageFirst,
         Self::Sidebar,
         Self::SidebarAndTop,
         Self::Collapsed,
         Self::TopTabs,
+        Self::BottomTabs,
     ];
 
     pub fn name(self) -> &'static str {
@@ -184,6 +193,7 @@ impl Preset {
             Self::SidebarAndTop => "Sidebar and Top Bar",
             Self::Collapsed => "Collapsed Sidebar",
             Self::TopTabs => "Top Tabs",
+            Self::BottomTabs => "Bottom Tabs",
         }
     }
 
@@ -214,6 +224,7 @@ impl Preset {
             Self::SidebarAndTop => (true, true, false, TabPlace::Side),
             Self::Collapsed => (true, false, true, TabPlace::Side),
             Self::TopTabs => (false, true, false, TabPlace::Top),
+            Self::BottomTabs => (false, true, false, TabPlace::Bottom),
         }
     }
 }
@@ -298,6 +309,18 @@ mod tests {
             favourites: FavouriteStyle::Rows,
             ..Layout::default()
         };
+        assert_eq!(Layout::from_json(&layout.to_json()), layout);
+    }
+
+    #[test]
+    fn bottom_tab_placement_survives_restart_without_resetting_auto_hide() {
+        let saved =
+            r#"{"tabs":"bottom","topPinned":false,"sidebarPinned":false,"compactStrip":true}"#;
+        let layout = Layout::from_json(saved);
+        assert_eq!(layout.tabs, TabPlace::Bottom);
+        assert!(!layout.top_pinned);
+        assert!(!layout.sidebar_pinned);
+        assert!(layout.compact_strip);
         assert_eq!(Layout::from_json(&layout.to_json()), layout);
     }
 

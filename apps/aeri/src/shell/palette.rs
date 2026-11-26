@@ -247,6 +247,15 @@ impl Shell {
             PaletteCommand::ToggleSidebar => "Show or Hide Sidebar",
             PaletteCommand::PinSidebar if self.chrome.layout.sidebar_pinned => "Auto-hide Sidebar",
             PaletteCommand::PinSidebar => "Pin Sidebar",
+            PaletteCommand::PinTopBar
+                if self.chrome.layout.tabs == aeri_core::layout::TabPlace::Bottom =>
+            {
+                if self.chrome.layout.top_pinned {
+                    "Auto-hide Bottom Tabs"
+                } else {
+                    "Pin Bottom Tabs"
+                }
+            }
             PaletteCommand::PinTopBar if self.chrome.layout.top_pinned => "Auto-hide Top Bar",
             PaletteCommand::PinTopBar => "Pin Top Bar",
             PaletteCommand::ToggleFullScreen => "Enter or Exit Full Screen",
@@ -313,7 +322,7 @@ impl Shell {
             ),
             PaletteCommand::PinTopBar => self.chrome_msg(
                 ChromeMsg::Pin {
-                    edge: Edge::Top,
+                    edge: Edge::Strip,
                     pinned: !self.chrome.layout.top_pinned,
                 },
                 cx,

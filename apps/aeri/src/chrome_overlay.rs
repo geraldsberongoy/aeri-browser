@@ -118,7 +118,7 @@ impl Drop for ChromeOverlay {
 }
 
 impl Render for ChromeOverlay {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, overlay: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window = self.frame.read(cx).window_id();
         if self.key.is_none() {
             self.listen(window, cx);
@@ -128,18 +128,23 @@ impl Render for ChromeOverlay {
         if !self.shown {
             return div().size_full().into_any_element();
         }
-        self.draw(window, cx).into_any_element()
+        self.draw(window, overlay, cx).into_any_element()
     }
 }
 
 impl ChromeOverlay {
-    fn draw(&mut self, window: u64, cx: &mut Context<Self>) -> impl IntoElement {
+    fn draw(&mut self, window: u64, overlay: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme::tokens_in(window, cx);
         let edge = self.edge;
-        let right = self.frame.read(cx).on_right();
+        let frame = self.frame.read(cx);
+        let (right, bottom) = (frame.on_right(), frame.tabs_at_bottom());
         let part = self.frame.update(cx, |frame, cx| match edge {
             Edge::Side => frame.sidebar(Host::Overlay, cx).into_any_element(),
-            Edge::Top => frame.strip(Host::Overlay, cx).into_any_element(),
+            Edge::Strip => {
+                let offset = crate::shell::content_view(overlay)
+                    .map_or(0., |view| crate::mac::strip_offset(view, bottom));
+                frame.strip(Host::Overlay, offset, cx).into_any_element()
+            }
         });
         match edge {
             Edge::Side => {
@@ -180,10 +185,10 @@ impl ChromeOverlay {
                     )
                     .child(div().h_full().w(margin).flex_none())
             }
-            // A bar across the top, its lower edge marked.
-            Edge::Top => theme::opaque_backdrop_in(div().size_full().flex(), window, cx)
+            Edge::Strip => theme::opaque_backdrop_in(div().size_full().flex(), window, cx)
                 .line_height(gpui::relative(theme::LINE_HEIGHT))
-                .border_b_1()
+                .when(bottom, |strip| strip.border_t_1())
+                .when(!bottom, |strip| strip.border_b_1())
                 .border_color(theme::c(t.separator))
                 .child(part),
         }

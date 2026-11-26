@@ -1,7 +1,5 @@
-//! The strip across the top (Top Tabs, or a pinned top bar) and the window
-//! lights the strip and the sidebar's band share.
+//! The horizontal tab strip and the room shared with the sidebar's traffic lights.
 
-use aeri_core::layout::TabPlace;
 use gpui::{ClickEvent, Context, div, prelude::*, px};
 
 use super::doors::symbol_door;
@@ -19,45 +17,41 @@ const TRAILING: f32 = 12.;
 const TAB_GAP: f32 = 2.;
 
 impl WindowFrame {
-    /// The strip (Top Tabs, or a pinned top bar), after Search's `TabBar`:
-    /// the window's lights, then (Top Tabs) the profile badge and space dot
-    /// when there are several, the tabs and the plus that shows while the
-    /// pointer is in the strip; at the far end the downloads, the
-    /// extensions, Back / Forward / Reload and the bookmarks. Its empty
-    /// parts move the window; a double-click zooms (or minimises, per
+    /// The horizontal strip (or a pinned toolbar in a sidebar layout):
+    /// the native lights when on top, then the profile, space, tabs and
+    /// new-tab button. Downloads, extensions, navigation and bookmarks
+    /// sit at the far end. Empty parts move the window; double-clicking
+    /// zooms (or minimises, per
     /// System Settings). The doors sit between them, so a press on one is
     /// never a drag. In an overlay, `mac::Frame` puts native window buttons
     /// over the lights' room (the real ones are under the page).
-    pub fn strip(&self, host: Host, cx: &mut Context<Self>) -> gpui::Div {
-        let room = if self.lights_hidden() {
+    pub fn strip(&self, host: Host, offset: f32, cx: &mut Context<Self>) -> gpui::Div {
+        let bottom = self.tabs_at_bottom();
+        let room = if bottom || self.lights_hidden() {
             COLUMN_PAD
         } else {
             CONTROLS_LEFT
         };
         let t = theme::tokens_in(self.window_id, cx);
-        let top_tabs = self.layout.tabs == TabPlace::Top;
-        // Back, Forward and Reload sit beside the window's buttons before the
-        // tabs under "on the left", else at the trailing end, as in Search's
-        // tab bar. The strip of a sidebar layout has no tabs: they stay left.
-        let helm_left = self.layout.nav_left || !top_tabs;
+        let horizontal = self.layout.tabs.horizontal();
+        let helm_left = self.layout.nav_left || !horizontal;
         let flat = host == Host::Frame && !self.cards_now();
         let height = strip_height(&self.layout) as f32;
-        // A menu hangs from the strip's bottom edge, under the door that
-        // was pressed: opening to the right of a door at the row's start,
-        // ending at one at its end.
+        let dy = if host == Host::Overlay { offset } else { 0. };
+        let menu_y = offset + if bottom { 6. } else { height - 6. };
         let leading = move |event: &ClickEvent, _: &gpui::Window| {
-            (
-                f32::from(event.position().x) - super::doors::DOOR / 2.,
-                height - 6.,
-                Align::Left,
-            )
+            let x = f32::from(event.position().x) - super::doors::DOOR / 2.;
+            let align = if bottom { Align::Above } else { Align::Left };
+            (x, menu_y, align)
         };
         let trailing = move |event: &ClickEvent, _: &gpui::Window| {
-            (
-                f32::from(event.position().x) + super::doors::DOOR / 2.,
-                height - 6.,
-                Align::Right,
-            )
+            let x = f32::from(event.position().x) + super::doors::DOOR / 2.;
+            let align = if bottom {
+                Align::AboveRight
+            } else {
+                Align::Right
+            };
+            (x, menu_y, align)
         };
         let strip = div()
             .group("strip")
@@ -66,17 +60,17 @@ impl WindowFrame {
             .w_full()
             .items_center()
             .h(px(height))
-            // Edge to edge the strip is on the page's ground with a
-            // hairline under it (Search's tab bar has no card).
+            // The hairline goes on the edge shared with the page.
             .when(flat, |strip| {
                 strip
                     .bg(theme::c(t.panel))
-                    .border_b_1()
+                    .when(bottom, |strip| strip.border_t_1())
+                    .when(!bottom, |strip| strip.border_b_1())
                     .border_color(theme::c(t.separator))
             })
             .child(self.lights(host, room))
             .when(helm_left, |strip| strip.child(self.helm(cx)))
-            .when(top_tabs, |strip| {
+            .when(horizontal, |strip| {
                 strip.child(drag(host).w(px(COLUMN_PAD))).child(
                     div()
                         .flex()
@@ -86,7 +80,7 @@ impl WindowFrame {
                         .gap(px(TAB_GAP))
                         .child(self.profile_badge(leading, cx))
                         .children(self.space_dot(leading, cx))
-                        .child(self.top_tabs(cx))
+                        .child(self.horizontal_tabs(dy, cx))
                         .child(self.new_tab_plus(t, cx)),
                 )
             })
@@ -101,6 +95,7 @@ impl WindowFrame {
                         y,
                         align,
                     },
+                    trailing,
                     cx,
                 ))
             });
@@ -111,10 +106,10 @@ impl WindowFrame {
                     .flex_none()
                     .items_center()
                     .gap(px(TAB_GAP))
-                    .when(host == Host::Overlay, |doors| {
-                        doors.child(self.pin_button(Edge::Top, host, cx))
+                    .when(host == Host::Overlay || bottom, |doors| {
+                        doors.child(self.pin_button(Edge::Strip, host, cx))
                     })
-                    .when(top_tabs, |doors| {
+                    .when(horizontal, |doors| {
                         doors
                             .children(self.downloads_door(trailing, cx))
                             .children(self.extensions_door(trailing, cx))
@@ -124,7 +119,7 @@ impl WindowFrame {
                             .child(self.bookmark_door(cx))
                     }),
             )
-            .child(drag(host).w(px(if top_tabs { TRAILING } else { PAGE_EDGE })))
+            .child(drag(host).w(px(if horizontal { TRAILING } else { PAGE_EDGE })))
     }
 
     /// The way to a new page, right after the tabs so it is there however
@@ -189,8 +184,8 @@ impl WindowFrame {
         let (id, label, symbol) = match (edge, pinned) {
             (Edge::Side, false) => ("pin-sidebar", "Pin", "pin"),
             (Edge::Side, true) => ("pin-sidebar", "Auto-hide", "pin.slash"),
-            (Edge::Top, false) => ("pin-strip", "Pin", "pin"),
-            (Edge::Top, true) => ("pin-strip", "Auto-hide", "pin.slash"),
+            (Edge::Strip, false) => ("pin-strip", "Pin", "pin"),
+            (Edge::Strip, true) => ("pin-strip", "Auto-hide", "pin.slash"),
         };
         symbol_door(id, label, symbol, true, t)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
@@ -204,11 +199,10 @@ impl WindowFrame {
 }
 
 impl WindowFrame {
-    /// The tabs across the strip (Top Tabs layout): favourites and pinned
-    /// tabs as letters, then the space's tabs.
-    fn top_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Favourites and pinned tabs as letters, then the space's tabs.
+    fn horizontal_tabs(&self, dy: f32, cx: &mut Context<Self>) -> impl IntoElement {
         let mut lane = div()
-            .id("top-tabs")
+            .id("horizontal-tabs")
             .flex()
             .flex_shrink(1.)
             .min_w_0()
@@ -217,11 +211,11 @@ impl WindowFrame {
             .overflow_x_scroll();
         let favourites = self.tabs.iter().filter(|t| t.favourite);
         for (index, tab) in favourites.enumerate() {
-            lane = lane.child(self.tab_pill(index, tab, cx));
+            lane = lane.child(self.tab_pill(index, tab, dy, cx));
         }
         let tabs = self.tabs.iter().filter(|t| !t.favourite);
         for (index, tab) in tabs.enumerate() {
-            lane = lane.child(self.tab_pill(index, tab, cx));
+            lane = lane.child(self.tab_pill(index, tab, dy, cx));
         }
         lane
     }

@@ -115,6 +115,7 @@ impl Shell {
                 let preset = match tabs {
                     TabPlace::Side => Preset::Sidebar,
                     TabPlace::Top => Preset::TopTabs,
+                    TabPlace::Bottom => Preset::BottomTabs,
                 };
                 self.change_layout(|layout| preset.apply(layout), cx);
             }

@@ -37,7 +37,7 @@ use objc2_app_kit::{
     NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
     NSWindowDidResignKeyNotification, NSWindowDidResizeNotification, NSWindowOrderingMode,
     NSWindowStyleMask, NSWindowWillEnterFullScreenNotification,
-    NSWindowWillMiniaturizeNotification,
+    NSWindowWillExitFullScreenNotification, NSWindowWillMiniaturizeNotification,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -51,7 +51,9 @@ use super::window_of;
 use crate::native_menu;
 use crate::shell::AppMsg;
 pub(super) use crate::window_frame::pinned_side_width;
-use crate::window_frame::{PageInsets, column_glides, page_insets, strip_height};
+use crate::window_frame::{
+    PageInsets, chrome_bottom, chrome_top, column_glides, page_insets, strip_height,
+};
 
 /// The address bar's input row, in points, as Zen's floating URL bar has it
 /// (see `address_bar`): the bar's window covers the whole page and paints
@@ -181,6 +183,7 @@ impl Frame {
                 NSWindowDidExitFullScreenNotification,
                 NSWindowDidDeminiaturizeNotification,
                 NSWindowWillEnterFullScreenNotification,
+                NSWindowWillExitFullScreenNotification,
                 NSWindowWillMiniaturizeNotification,
                 NSWindowDidBecomeKeyNotification,
                 NSWindowDidBecomeMainNotification,
@@ -191,11 +194,12 @@ impl Frame {
                     || std::ptr::eq(name, NSWindowDidBecomeMainNotification);
                 let minimizing = std::ptr::eq(name, NSWindowWillMiniaturizeNotification);
                 let entering = std::ptr::eq(name, NSWindowWillEnterFullScreenNotification);
+                let exiting = std::ptr::eq(name, NSWindowWillExitFullScreenNotification);
                 let exited = std::ptr::eq(name, NSWindowDidExitFullScreenNotification);
                 let restored = std::ptr::eq(name, NSWindowDidDeminiaturizeNotification);
                 let block = RcBlock::new(move |_: NonNull<NSNotification>| {
                     let Some(this) = this.upgrade() else { return };
-                    if minimizing || entering {
+                    if minimizing || entering || exiting {
                         this.hide_chrome();
                         if entering && let Some(frame) = this.frame.borrow().as_ref() {
                             this.native_lights.suspend();
@@ -459,22 +463,25 @@ impl Frame {
         }
         if let Some([side, strip]) = self.overlays.borrow().as_ref() {
             let rect = frame.frame();
-            let window_top = rect.origin.y + rect.size.height;
+            let fullscreen = frame.styleMask().contains(NSWindowStyleMask::FullScreen);
             let layout = self.layout_now(&frame);
-            // A pinned strip stays; the sliding sidebar comes in below it.
             let strip_h = strip_height(&layout);
-            let below = if layout.top_pinned { strip_h } else { 0.0 };
+            let top = chrome_top(&layout, fullscreen);
+            let bottom = chrome_bottom(&layout, fullscreen);
             let width = layout.column_width(rect.size.width) + SIDE_OVERLAY_EXTRA;
             let x = match layout.side {
                 Side::Left => rect.origin.x,
                 Side::Right => rect.origin.x + rect.size.width - width,
             };
             let side_rect = NSRect::new(
-                NSPoint::new(x, rect.origin.y),
-                NSSize::new(width, (rect.size.height - below).max(1.0)),
+                NSPoint::new(x, rect.origin.y + bottom),
+                NSSize::new(width, (rect.size.height - top - bottom).max(1.0)),
             );
             let strip_rect = NSRect::new(
-                NSPoint::new(rect.origin.x, window_top - strip_h),
+                NSPoint::new(
+                    rect.origin.x,
+                    reveal::strip_origin(&frame, &layout, strip_h),
+                ),
                 NSSize::new(rect.size.width, strip_h),
             );
             // Out of sight they are refitted without being drawn, and left
@@ -489,7 +496,7 @@ impl Frame {
                 (
                     strip,
                     strip_rect,
-                    self.reveal.shown[reveal::Edge::Top as usize].get(),
+                    self.reveal.shown[reveal::Edge::Strip as usize].get(),
                 ),
             ] {
                 if window.frame() != wanted {

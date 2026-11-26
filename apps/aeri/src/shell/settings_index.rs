@@ -219,6 +219,7 @@ pub enum Picture {
     Left,
     Right,
     IconsOnly,
+    Bottom,
     Card,
     Edge,
     Light,

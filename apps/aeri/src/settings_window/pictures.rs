@@ -148,6 +148,22 @@ pub fn picture(kind: Picture, t: &Tokens) -> impl IntoElement {
                     .child(bar(10., 4., dim(i))),
             )
             .child(page(i, 3.)),
+        Picture::Bottom => frame(i)
+            .p(px(5.))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(lights(i, false))
+            .child(page(i, 3.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(3.))
+                    .child(bar(14., 4., lit(i)))
+                    .child(bar(14., 4., dim(i)))
+                    .child(bar(10., 4., dim(i))),
+            ),
         Picture::Left => frame(i)
             .p(px(5.))
             .flex()
