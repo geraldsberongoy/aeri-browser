@@ -495,6 +495,6 @@ impl WindowFrame {
             .children(self.extensions_door(hang, cx))
             .child(self.bookmark_door(cx))
             .children(self.space_dot(hang, cx))
-            .children(self.profile_badge(hang, cx))
+            .child(self.profile_badge(hang, cx))
     }
 }

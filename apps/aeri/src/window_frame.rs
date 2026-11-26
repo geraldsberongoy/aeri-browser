@@ -30,8 +30,8 @@ use aeri_core::layout::{DEFAULT_SIDEBAR, Layout, Side, TabPlace, clamp_width};
 use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    App, BoxShadow, ClickEvent, Context, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, SharedString, Window, div, point, prelude::*, px, rgb,
+    App, BoxShadow, ClickEvent, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, SharedString, Window, div, img, point, prelude::*, px,
 };
 
 use crate::native_menu::Align;
@@ -109,9 +109,6 @@ pub struct WindowFrame {
     popup_blocked: bool,
     /// The profile's downloads this session, as the strip labels them.
     downloads: Option<String>,
-    /// More than one profile exists (Search `Profiles.shared.several`): the
-    /// profile badge shows.
-    several_profiles: bool,
     /// The profile has extensions installed (Search `ExtensionSlot`).
     has_extensions: bool,
     /// The shown page is bookmarked: the bookmark door is filled.
@@ -176,7 +173,6 @@ impl WindowFrame {
             layout: Layout::default(),
             popup_blocked: false,
             downloads: None,
-            several_profiles: false,
             has_extensions: false,
             bookmarked: false,
             fullscreen: false,
@@ -326,19 +322,11 @@ impl WindowFrame {
         }
     }
 
-    /// Which doors the profile has use for: the badge (several profiles),
-    /// the puzzle (extensions installed), and whether the shown page is
-    /// kept.
-    pub fn set_doors(
-        &mut self,
-        several_profiles: bool,
-        has_extensions: bool,
-        bookmarked: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let now = (several_profiles, has_extensions, bookmarked);
-        if (self.several_profiles, self.has_extensions, self.bookmarked) != now {
-            (self.several_profiles, self.has_extensions, self.bookmarked) = now;
+    /// Updates extension and bookmark doors for the active page.
+    pub fn set_doors(&mut self, has_extensions: bool, bookmarked: bool, cx: &mut Context<Self>) {
+        let now = (has_extensions, bookmarked);
+        if (self.has_extensions, self.bookmarked) != now {
+            (self.has_extensions, self.bookmarked) = now;
             cx.notify();
         }
     }
@@ -400,8 +388,8 @@ impl WindowFrame {
     }
 }
 
-/// A profile's avatar: its monogram on its accent colour.
-pub fn avatar(profile: &Profile, size: f32) -> impl IntoElement {
+/// A stable Blobatar with the profile's current accent as its surround.
+pub(crate) fn avatar(profile: &Profile, size: f32) -> impl IntoElement {
     div()
         .flex()
         .flex_none()
@@ -409,11 +397,8 @@ pub fn avatar(profile: &Profile, size: f32) -> impl IntoElement {
         .justify_center()
         .size(px(size))
         .rounded_full()
-        .bg(rgb(profile.accent))
-        .text_size(px(size * 0.55))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme::c(Rgba::WHITE))
-        .child(SharedString::from(profile.monogram()))
+        .bg(theme::c(Rgba::rgb(profile.accent)))
+        .child(img(crate::blobatar::image(profile.avatar_slot())).size(px(size * 0.8)))
 }
 
 /// The strip's height in `layout`: 52 pt, or 36 with tabs along the top

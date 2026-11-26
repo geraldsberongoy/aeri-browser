@@ -36,15 +36,34 @@ pub struct Profile {
     pub name: String,
     /// Accent colour as 0xRRGGBB.
     pub accent: u32,
+    /// A manually chosen Blobatar; `None` keeps the profile's automatic face.
+    pub avatar: Option<AvatarSlot>,
+}
+
+/// Stable index into Aeri's bundled Blobatar set. Never reorder those assets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AvatarSlot(u8);
+
+impl AvatarSlot {
+    pub const COUNT: usize = 64;
+
+    pub fn automatic(profile: ProfileId) -> Self {
+        Self((profile.as_u128() % Self::COUNT as u128) as u8)
+    }
+
+    pub fn from_index(index: usize) -> Option<Self> {
+        (index < Self::COUNT).then_some(Self(index as u8))
+    }
+
+    pub fn index(self) -> usize {
+        usize::from(self.0)
+    }
 }
 
 impl Profile {
-    /// The avatar's letter: the name's first character, upper-cased.
-    pub fn monogram(&self) -> String {
-        self.name
-            .chars()
-            .next()
-            .map_or_else(String::new, |c| c.to_uppercase().collect())
+    pub fn avatar_slot(&self) -> AvatarSlot {
+        self.avatar
+            .unwrap_or_else(|| AvatarSlot::automatic(self.id))
     }
 }
 
@@ -93,6 +112,9 @@ const MIGRATIONS: &[&str] = &[
      );",
     // 4: app-wide settings, one value per key.
     "CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
+    // 5: optional index into the stable 64-face Blobatar set.
+    "ALTER TABLE profiles ADD COLUMN avatar INTEGER
+     CHECK (avatar IS NULL OR (typeof(avatar) = 'integer' AND avatar BETWEEN 0 AND 63));",
 ];
 
 const REST_AFTER: &str = "rest_after_minutes";
@@ -140,18 +162,24 @@ impl AppDb {
     pub fn profiles(&self) -> Result<Vec<Profile>> {
         let mut statement = self
             .conn
-            .prepare("SELECT id, name, accent FROM profiles ORDER BY position")?;
+            .prepare("SELECT id, name, accent, avatar FROM profiles ORDER BY position")?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, u32>(2)?,
+                row.get::<_, Option<u8>>(3)?.map(AvatarSlot),
             ))
         })?;
         rows.map(|row| {
-            let (id, name, accent) = row?;
+            let (id, name, accent, avatar) = row?;
             let id = id.parse().map_err(|_| StoreError::CorruptId(id))?;
-            Ok(Profile { id, name, accent })
+            Ok(Profile {
+                id,
+                name,
+                accent,
+                avatar,
+            })
         })
         .collect()
     }
@@ -167,6 +195,7 @@ impl AppDb {
             id: ProfileId::generate(),
             name: name.to_owned(),
             accent,
+            avatar: None,
         };
         self.conn.execute(
             "INSERT INTO profiles (id, name, accent, position)
@@ -217,6 +246,13 @@ impl AppDb {
         self.update_one(
             "UPDATE profiles SET accent = ?2 WHERE id = ?1",
             params![id.to_string(), accent],
+        )
+    }
+
+    pub fn set_avatar(&self, id: ProfileId, avatar: Option<AvatarSlot>) -> Result<()> {
+        self.update_one(
+            "UPDATE profiles SET avatar = ?2 WHERE id = ?1",
+            params![id.to_string(), avatar.map(|slot| slot.0)],
         )
     }
 
@@ -487,6 +523,37 @@ mod tests {
         let reopened = AppDb::open(&path).unwrap();
         assert_eq!(reopened.profiles().unwrap(), vec![created]);
         drop(reopened);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn avatars_are_independent_and_reset_after_migrating_an_existing_database() {
+        let dir = std::env::temp_dir().join(format!("aeri-store-test-{}", ProfileId::generate()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.db");
+        let old = AppDb {
+            conn: Connection::open(&path).unwrap(),
+        };
+        migrate(&old.conn, &MIGRATIONS[..4]).unwrap();
+        let work = old.create_profile("Work", ACCENTS[0]).unwrap();
+        let personal = old.create_profile("Personal", ACCENTS[1]).unwrap();
+        drop(old);
+
+        let db = AppDb::open(&path).unwrap();
+        let default = work.avatar_slot();
+        assert_eq!(db.profile(work.id).unwrap().avatar_slot(), default);
+        let picked = AvatarSlot::from_index((default.index() + 1) % AvatarSlot::COUNT).unwrap();
+        db.set_avatar(work.id, Some(picked)).unwrap();
+        db.rename_profile(work.id, "Projects").unwrap();
+        db.set_accent(work.id, ACCENTS[3]).unwrap();
+        drop(db);
+
+        let db = AppDb::open(&path).unwrap();
+        assert_eq!(db.profile(work.id).unwrap().avatar_slot(), picked);
+        assert_eq!(db.profile(personal.id).unwrap(), personal);
+        db.set_avatar(work.id, None).unwrap();
+        assert_eq!(db.profile(work.id).unwrap().avatar_slot(), default);
+        drop(db);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

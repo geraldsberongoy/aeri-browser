@@ -1,6 +1,7 @@
 //! The profile manager: a native GPUI window, never a web page, so websites
-//! cannot reach it (stage 1). The Person renames, recolours, opens and
-//! deletes profiles here, and creates new ones.
+//! cannot reach it (stage 1). Create, open, edit, and delete local profiles.
+
+mod avatars;
 
 use aeri_core::ids::ProfileId;
 use aeri_core::store::{ACCENTS, Profile};
@@ -27,6 +28,7 @@ pub struct Listed {
 struct Row {
     listed: Listed,
     name: Entity<TextInput>,
+    avatar: FocusHandle,
 }
 
 pub struct ProfileManager {
@@ -34,6 +36,7 @@ pub struct ProfileManager {
     rows: Vec<Row>,
     new_name: Entity<TextInput>,
     new_accent: u32,
+    avatar_picker: Option<avatars::AvatarPicker>,
 }
 
 impl ProfileManager {
@@ -64,6 +67,7 @@ impl ProfileManager {
             rows: Vec::new(),
             new_name,
             new_accent: suggested_accent,
+            avatar_picker: None,
         };
         this.set_profiles(profiles, suggested_accent, window, cx);
         this
@@ -97,12 +101,22 @@ impl ProfileManager {
             };
             self.rows.push(row);
         }
+        if let Some(picker) = &self.avatar_picker
+            && !self
+                .rows
+                .iter()
+                .any(|row| row.listed.profile.id == picker.profile)
+        {
+            self.avatar_picker = None;
+        }
         self.new_accent = suggested_accent;
         cx.notify();
     }
 
     /// Puts the keyboard in the new profile's name field.
     pub fn focus_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.avatar_picker = None;
+        cx.notify();
         window.focus(&self.new_name.focus_handle(cx), cx);
     }
 
@@ -132,7 +146,11 @@ impl ProfileManager {
             },
         )
         .detach();
-        Row { listed, name }
+        Row {
+            listed,
+            name,
+            avatar: cx.focus_handle().tab_stop(true),
+        }
     }
 
     fn create(&mut self, name: String, cx: &mut Context<Self>) {
@@ -229,7 +247,19 @@ impl ProfileManager {
                             });
                         },
                         cx,
-                    )),
+                    ))
+                    .child(
+                        button(("choose-avatar", ix), "Choose avatar…", &t)
+                            .track_focus(&row.avatar)
+                            .self_start()
+                            .aria_label(SharedString::from(format!(
+                                "Choose avatar for {}",
+                                profile.name
+                            )))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.choose_avatar(id, window, cx);
+                            })),
+                    ),
             )
             .child(
                 button(
@@ -279,6 +309,9 @@ fn button(id: impl Into<gpui::ElementId>, label: &'static str, t: &Tokens) -> St
     let t = *t;
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        .focusable()
+        .tab_stop(true)
         .flex_none()
         .h(px(28.))
         .px(px(12.))
@@ -286,6 +319,9 @@ fn button(id: impl Into<gpui::ElementId>, label: &'static str, t: &Tokens) -> St
         .items_center()
         .rounded(px(7.))
         .bg(theme::c(t.hover))
+        .border_1()
+        .border_color(theme::ca(t.accent, 0.))
+        .focus_visible(move |style| style.border_color(theme::c(t.accent)))
         .text_size(px(13.))
         .text_color(theme::c(t.text))
         .hover(|style| style.bg(theme::c(t.pressed)))
@@ -302,6 +338,14 @@ impl Focusable for ProfileManager {
 impl Render for ProfileManager {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme::tokens(cx);
+        if let Some(picker) = &self.avatar_picker
+            && let Some(row) = self
+                .rows
+                .iter()
+                .find(|row| row.listed.profile.id == picker.profile)
+        {
+            return self.render_avatar_picker(picker, &row.listed.profile, &t, cx);
+        }
         let rows: Vec<AnyElement> = self
             .rows
             .iter()
@@ -383,6 +427,7 @@ impl Render for ProfileManager {
                     .children(rows),
             )
             .child(new_profile)
+            .into_any_element()
     }
 }
 

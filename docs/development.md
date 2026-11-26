@@ -113,6 +113,28 @@ New blank tabs show Aeri Home. Type a search or address directly into Home's
 field and press Return to browse in that tab. Home also links to Bookmarks,
 History, and Settings. **⌘T** and **⌘L** still open the floating composer.
 
+### Profile avatars
+
+Aeri assigns each profile a [Blobatar](https://blobatar.dev/) from a bundled
+set based on its local profile ID. In **Profiles → Manage Profiles…**, use
+**Choose avatar…** to select any of the 64 faces and **Use automatic avatar**
+to reset it. Choices save immediately. Renaming a profile or changing its
+accent does not change its face. This works offline and does not use website
+accounts.
+
+The asset pack at `apps/aeri/resources/blobatar.bin` is generated only when
+updating the avatars. From the repository root, set `repo=$PWD`, then in a
+scratch directory run:
+
+```sh
+bun add --exact blobatar@2.7.0 @resvg/resvg-js@2.6.2
+cp "$repo/xtask/blobatar.mjs" .
+bun blobatar.mjs "$repo/apps/aeri/resources/blobatar.bin"
+```
+
+Keep the avatar count and seed order fixed to preserve existing assignments.
+The [upstream MIT notice](../apps/aeri/resources/Blobatar-LICENSE.txt) ships with Aeri.
+
 Development switches:
 
 | Variable or flag | Effect |

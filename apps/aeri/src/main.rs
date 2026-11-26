@@ -5,6 +5,7 @@
 //! initializes inside GPUI's `run` callback.
 
 mod address_bar;
+mod blobatar;
 mod brand;
 mod chrome_overlay;
 mod find_bar;

@@ -96,7 +96,6 @@ impl Shell {
                     .is_some_and(|db| db.is_bookmarked(&tab.url).unwrap_or(false))
             })
         });
-        let several = self.profiles.len() > 1;
         let extensions = !open.extensions.is_empty();
         let _ = w.frame_window.update(cx, |frame, window, cx| {
             frame.set_home(home, window, cx);
@@ -105,7 +104,7 @@ impl Shell {
             frame.set_player(player, cx);
             frame.set_spaces(spaces, cx);
             frame.set_notices(popup_blocked, downloads, cx);
-            frame.set_doors(several, extensions, bookmarked == Some(true), cx);
+            frame.set_doors(extensions, bookmarked == Some(true), cx);
             if let Some(tab) = &model {
                 frame.show_history(tab.can_go_back, tab.can_go_forward, cx);
             }

@@ -7,6 +7,7 @@ use aeri_core::appearance::Recipe;
 use aeri_core::credentials::PasswordProvider;
 use aeri_core::ids::{ProfileId, SpaceId, TabId};
 use aeri_core::keymap::Shortcut;
+use aeri_core::store::AvatarSlot;
 
 use super::Pick;
 use super::trust::DownloadPick;
@@ -147,6 +148,10 @@ pub enum AppMsg {
     SetAccent {
         profile: ProfileId,
         accent: u32,
+    },
+    SetAvatar {
+        profile: ProfileId,
+        avatar: Option<AvatarSlot>,
     },
     /// Confirmed by the Person.
     DeleteProfile {
