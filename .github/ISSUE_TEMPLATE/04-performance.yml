@@ -1,0 +1,24 @@
+name: Performance
+description: Report slow interactions, high memory or CPU use, or battery drain.
+labels: [performance, needs triage]
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: Aeri version, OS version, and device model
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: Steps and workload
+      description: Include roughly how many tabs and windows were open and whether Aeri was idle or in use.
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: What did you observe?
+      description: Include delays, CPU use, memory use, or battery impact if measured. Remove private information from attachments.
+    validations:
+      required: true

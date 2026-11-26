@@ -5,13 +5,14 @@ Bug reports, documentation fixes, and code contributions are welcome. Be respect
 ## Open an issue
 
 - Search [existing issues](https://github.com/kuya-egg/aeri-browser/issues) before opening a new one.
+- [Choose an issue form](https://github.com/kuya-egg/aeri-browser/issues/new/choose) to apply the matching labels automatically.
 - For a bug, include the Aeri version or commit, your operating system and version, steps to reproduce, and what you expected versus what happened. For a site-specific issue, include a public URL or a minimal example if you can share it.
 - For a larger feature or architecture change, open an issue first to discuss the scope. Small fixes can go straight to a pull request.
 - Don’t post passwords, cookies, tokens, private URLs, or unsanitized logs and screenshots. For a suspected security or privacy vulnerability, don’t post the details publicly. Use the repository’s [Security tab](https://github.com/kuya-egg/aeri-browser/security) if private reporting is available; otherwise, open an issue asking for a private contact without describing the vulnerability.
 
 ## Prepare a pull request
 
-1. Fork the repo and branch from `main`. Use the setup for your platform below.
+1. Fork the repo, branch from `dev`, and target `dev` with your pull request. Use the setup for your platform below.
 2. Keep the PR focused on one change. Add a regression test for bug fixes where practical, and use local fixtures instead of live websites in automated tests.
 3. Run the checks below for code changes. For UI changes, launch the bundle and include screenshots or a short recording. Describe what you tested and anything you couldn’t verify.
 4. Link the related issue if there is one. Update the relevant docs or changelog for user-visible changes. Keep third-party license notices and attribute borrowed code and assets.

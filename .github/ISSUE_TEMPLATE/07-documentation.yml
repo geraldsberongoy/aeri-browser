@@ -1,0 +1,16 @@
+name: Documentation
+description: Flag missing, incorrect, or unclear documentation.
+labels: [documentation, needs triage]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Page, file, or topic
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: What should change?
+    validations:
+      required: true

@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest a new feature or an improvement to Aeri.
+labels: [enhancement, needs triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task and what gets in your way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should Aeri do instead?
+    validations:
+      required: true

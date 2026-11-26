@@ -1,0 +1,25 @@
+name: Bug report
+description: Report an Aeri feature that does not work as expected.
+labels: [bug, needs triage]
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: Aeri and OS versions
+      placeholder: Aeri 0.1.0 preview, macOS 27.2 on Apple Silicon
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include any settings that affect the bug, such as sidebar position or page layout.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: You can attach screenshots or logs. Remove passwords, cookies, tokens, and other private information first.
+    validations:
+      required: true
