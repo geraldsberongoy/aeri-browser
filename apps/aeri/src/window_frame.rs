@@ -26,7 +26,9 @@ pub use player::{PlayerTab, TabLook};
 
 use aeri_core::appearance::Rgba;
 use aeri_core::ids::{SpaceId, TabId};
-use aeri_core::layout::{DEFAULT_SIDEBAR, Layout, Side, TabPlace, clamp_width};
+use aeri_core::layout::{
+    DEFAULT_SIDEBAR, ICON_COLUMN, Layout, MIN_SIDEBAR, Side, TabPlace, clamp_width,
+};
 use aeri_core::store::Profile;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
@@ -271,11 +273,23 @@ impl WindowFrame {
         } else {
             moved
         };
-        let wanted = clamp_width((width + moved).round().max(0.) as u16);
-        if wanted != self.layout.sidebar_width {
+        let raw = (width + moved).max(0.);
+        // Past halfway between the icon column and the narrowest sidebar,
+        // the column snaps to icons only; the full width is kept for later.
+        let snap = (ICON_COLUMN as f32 + f32::from(MIN_SIDEBAR)) / 2.;
+        let rail = self.layout.tabs == TabPlace::Side && raw < snap;
+        let wanted = if rail {
+            self.layout.sidebar_width
+        } else {
+            clamp_width(raw.round() as u16)
+        };
+        if wanted != self.layout.sidebar_width || rail != self.layout.rail {
+            // `rail` comes back with the shell's layout, which starts the
+            // glide; set here, the page would stay held at the old width.
             self.layout.sidebar_width = wanted;
             self.send(AppMsg::Chrome(ChromeMsg::Width {
                 width: wanted,
+                rail: Some(rail),
                 done: false,
             }));
         }
@@ -287,6 +301,7 @@ impl WindowFrame {
         if self.resizing.take().is_some() {
             self.send(AppMsg::Chrome(ChromeMsg::Width {
                 width: self.layout.sidebar_width,
+                rail: None,
                 done: true,
             }));
             cx.notify();
@@ -299,6 +314,7 @@ impl WindowFrame {
         self.layout.sidebar_width = DEFAULT_SIDEBAR;
         self.send(AppMsg::Chrome(ChromeMsg::Width {
             width: DEFAULT_SIDEBAR,
+            rail: Some(false),
             done: true,
         }));
         cx.notify();
